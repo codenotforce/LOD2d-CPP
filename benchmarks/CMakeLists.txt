@@ -1,0 +1,2 @@
+add_executable(bench_refine bench_refine.cpp)
+target_link_libraries(bench_refine PRIVATE lod2d_core)
