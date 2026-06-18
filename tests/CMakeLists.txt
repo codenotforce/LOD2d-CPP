@@ -9,3 +9,7 @@ add_test(NAME golden_mesh COMMAND test_golden)
 add_executable(test_dg test_dg.cpp)
 target_link_libraries(test_dg PRIVATE lod2d_core)
 add_test(NAME dg_assembly COMMAND test_dg)
+
+add_executable(test_qi test_qi.cpp)
+target_link_libraries(test_qi PRIVATE lod2d_core)
+add_test(NAME quasi_interp COMMAND test_qi)

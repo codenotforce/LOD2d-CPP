@@ -104,7 +104,8 @@ lod2d-cpp/
 | Area computation | ✅ Phase A | `src/mesh/edges.cpp` | 5/5 |
 | Red refinement + prolongation | ✅ Phase B | `src/mesh/refine.cpp` | 36/36 golden |
 | DG assembly | ✅ Phase C | `src/fem/assemble_dg.cpp` | 10/10 golden |
-| Quasi‑interpolation | ⬜ Phase D | `src/lod/quasi_interp.cpp` | — |
+| Quasi‑interpolation | ✅ Phase D | `src/lod/quasi_interp.cpp` | 3793/3793 golden |
+| Patch construction | ⬜ Phase E | `src/lod/patches.cpp` | — |
 | Patch construction | ⬜ Phase E | `src/lod/patches.cpp` | — |
 | Corrector solver | ⬜ Phase F | `src/lod/corrector.cpp` | — |
 | Coarse LOD solve | ⬜ Phase G | `src/solver/coarse_solve.cpp` | — |
@@ -129,6 +130,13 @@ P_node · P_elem · P_dg — all exact match across 4 levels
 Coefficient‑aware element stiffness · global sparse assembly
 Exact match to MATLAB output (values, nnz, dimensions)
 10/10 PASS (3 levels × 3 checks + 1 deterministic test)
+```
+
+### Phase D — Quasi‑Interpolation
+```
+Fine DG mass · inverse coarse DG mass · L2 projection · averaging
+All 3793 golden positions match to 1.7e-16
+2/2 PASS (dimensions + values)
 ```
 
 ## Migration Plan
