@@ -190,10 +190,10 @@ compute_corrector(int k,
         for (Eigen::SparseMatrix<double>::InnerIterator it(rhsp, k_rh); it; ++it)
             RHS(it.row(), nd + it.col()) = it.value();
 
-    Eigen::MatrixXd X = Sph.toDense().ldlt().solve(RHS);
+    Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph); Eigen::MatrixXd X(Nph, nd+d+1); for (int jj=0; jj<nd+d+1; ++jj) X.col(jj) = llt.solve(RHS.col(jj));
 
     // ---- 8. mu = (IHp * X1) \ (IHp * X2) ----
-    Eigen::MatrixXd IHp_dense = IHp.toDense();
+    Eigen::MatrixXd IHp_dense = IHp;
     Eigen::MatrixXd X1 = X.leftCols(nd);
     Eigen::MatrixXd X2 = X.rightCols(d+1);
     Eigen::MatrixXd mu = (IHp_dense * X1).colPivHouseholderQr().solve(IHp_dense * X2);
