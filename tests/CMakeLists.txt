@@ -17,3 +17,7 @@ add_test(NAME quasi_interp COMMAND test_qi)
 add_executable(test_patch test_patch.cpp)
 target_link_libraries(test_patch PRIVATE lod2d_core)
 add_test(NAME patches COMMAND test_patch)
+
+add_executable(test_corr test_corr.cpp)
+target_link_libraries(test_corr PRIVATE lod2d_core)
+add_test(NAME corrector COMMAND test_corr)
