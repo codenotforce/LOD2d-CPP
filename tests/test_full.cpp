@@ -145,9 +145,9 @@ int main() {
     Eigen::SparseMatrix<double> SHLOD0 = G0.transpose() * T * G0;
 
     // RHS: G0' * cg2dgh' * Mhdg * cg2dgh * (P1 * f)
-    // f(x) = 1 → f_vec = ones(Nh,1)
-    Eigen::VectorXd f_vec = Eigen::VectorXd::Ones(Nh);
-    Eigen::VectorXd rhs = G0.transpose() * (cg2dgh.transpose() * (Mhdg * (cg2dgh * (f_out.P_node * f_vec))));
+    // f(TH.p) = ones(NH,1); P1 * f_coarse = fine-scale prolongation
+    Eigen::VectorXd f_coarse = Eigen::VectorXd::Ones(NH);
+    Eigen::VectorXd rhs = G0.transpose() * (cg2dgh.transpose() * (Mhdg * (cg2dgh * (f_out.P_node * f_coarse))));
 
     // Solve
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llts(SHLOD0);
@@ -189,7 +189,7 @@ int main() {
         double sum=0;
         for (int k2=0; k2<Mh.outerSize(); ++k2)
             for (Eigen::SparseMatrix<double>::InnerIterator it(Mh, k2); it; ++it)
-                if (static_cast<int>(it.row())==dofh[j]) sum += it.value() * f_vec(it.col());
+                if (static_cast<int>(it.row())==dofh[j]) sum += it.value();  // f=1 at all fine vertices
         rhs_ref(j) = sum;
     }
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt_ref(Sh_free);
