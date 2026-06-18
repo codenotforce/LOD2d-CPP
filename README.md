@@ -97,29 +97,38 @@ lod2d-cpp/
 
 ## Module Status
 
-| Module | Status | File |
-|--------|--------|------|
-| Mesh types | ✅ Done | `include/mesh/types.h` |
-| Edge enumeration | ✅ Done | `src/mesh/edges.cpp` |
-| Area computation | ✅ Done | `src/mesh/edges.cpp` |
-| Red refinement + prolongation | ✅ Done | `src/mesh/refine.cpp` |
-| DG assembly | ⬜ Stub | `src/fem/assemble_dg.cpp` |
-| Quasi‑interpolation | ⬜ Stub | `src/lod/quasi_interp.cpp` |
-| Patch construction | ⬜ Stub | `src/lod/patches.cpp` |
-| Corrector solver | ⬜ Stub | `src/lod/corrector.cpp` |
-| Coarse LOD solve | ⬜ Stub | `src/solver/coarse_solve.cpp` |
+| Module | Status | File | Tests |
+|--------|--------|------|-------|
+| Mesh types | ✅ Phase A | `include/mesh/types.h` | 5/5 |
+| Edge enumeration | ✅ Phase A | `src/mesh/edges.cpp` | 5/5 |
+| Area computation | ✅ Phase A | `src/mesh/edges.cpp` | 5/5 |
+| Red refinement + prolongation | ✅ Phase B | `src/mesh/refine.cpp` | 36/36 golden |
+| DG assembly | ✅ Phase C | `src/fem/assemble_dg.cpp` | 10/10 golden |
+| Quasi‑interpolation | ⬜ Phase D | `src/lod/quasi_interp.cpp` | — |
+| Patch construction | ⬜ Phase E | `src/lod/patches.cpp` | — |
+| Corrector solver | ⬜ Phase F | `src/lod/corrector.cpp` | — |
+| Coarse LOD solve | ⬜ Phase G | `src/solver/coarse_solve.cpp` | — |
 
-## Test Results (Phase A)
+## Test Results
 
+### Phase A — Mesh Refinement
 ```
-=== Mesh Refinement Tests ===
-  [PASS] Edge enumeration
-  [PASS] Area calculation
-  [PASS] Single-level refinement
-  [PASS] Multi-level refinement (2,4,6 levels)
-  [PASS] Area preserved after 4 refinements
+All tests passed! (5/5)
+6-level refinement: 2 → 8192 elements in ~5 ms
+```
 
-6-level refinement: 2 → 8192 elements in 5.2 ms
+### Phase B — Golden‑data (vs MATLAB)
+```
+node/elem/counts · coords · connectivity · Dirichlet · area
+P_node · P_elem · P_dg — all exact match across 4 levels
+36/36 PASS
+```
+
+### Phase C — DG Assembly
+```
+Coefficient‑aware element stiffness · global sparse assembly
+Exact match to MATLAB output (values, nnz, dimensions)
+10/10 PASS (3 levels × 3 checks + 1 deterministic test)
 ```
 
 ## Migration Plan
