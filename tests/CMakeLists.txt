@@ -13,3 +13,7 @@ add_test(NAME dg_assembly COMMAND test_dg)
 add_executable(test_qi test_qi.cpp)
 target_link_libraries(test_qi PRIVATE lod2d_core)
 add_test(NAME quasi_interp COMMAND test_qi)
+
+add_executable(test_patch test_patch.cpp)
+target_link_libraries(test_patch PRIVATE lod2d_core)
+add_test(NAME patches COMMAND test_patch)
