@@ -57,21 +57,27 @@ RefineOutput refine(const TriMesh &coarse) {
     Eigen::SparseMatrix<double> P_node(np + ne, np);
     P_node.setFromTriplets(pn_triplets.begin(), pn_triplets.end());
 
-    // 4. Split triangles: 4 sub‑triangles per parent
-    fine.elems.reserve(4 * nt);
-    for (const auto &tri : coarse.elems) {
-        int a = tri[0], b = tri[1], c = tri[2];
-
-        // Look up midpoint indices (global node index = np + local_edge_index)
-        int m12 = np + edge_map.at(Edge{std::min(a,b), std::max(a,b)});
-        int m23 = np + edge_map.at(Edge{std::min(b,c), std::max(b,c)});
-        int m31 = np + edge_map.at(Edge{std::min(c,a), std::max(c,a)});
-
-        fine.elems.push_back({a,   m12, m31});  // sub 1
-        fine.elems.push_back({m12, b,   m23});  // sub 2
-        fine.elems.push_back({m31, m23, c});    // sub 3
-        fine.elems.push_back({m12, m23, m31});  // sub 4
+    // 4. Split triangles — MATLAB ordering: all sub‑1, then all sub‑2, …
+    //    Pre‑compute vertex lookups for all coarse elements at once
+    std::vector<int> a_(nt), b_(nt), c_(nt), m12_(nt), m23_(nt), m31_(nt);
+    for (int t = 0; t < nt; ++t) {
+        int a = coarse.elems[t][0], b = coarse.elems[t][1], c = coarse.elems[t][2];
+        a_[t] = a;  b_[t] = b;  c_[t] = c;
+        m12_[t] = np + edge_map.at(Edge{std::min(a,b), std::max(a,b)});
+        m23_[t] = np + edge_map.at(Edge{std::min(b,c), std::max(b,c)});
+        m31_[t] = np + edge_map.at(Edge{std::min(c,a), std::max(c,a)});
     }
+
+    fine.elems.resize(4 * nt);
+    int idx = 0;
+    // sub 1: (v1, m12, m31) of all elements
+    for (int t = 0; t < nt; ++t) fine.elems[idx++] = {a_[t],   m12_[t], m31_[t]};
+    // sub 2: (m12, v2, m23)
+    for (int t = 0; t < nt; ++t) fine.elems[idx++] = {m12_[t], b_[t],   m23_[t]};
+    // sub 3: (m31, m23, v3)
+    for (int t = 0; t < nt; ++t) fine.elems[idx++] = {m31_[t], m23_[t], c_[t]  };
+    // sub 4: (m12, m23, m31)
+    for (int t = 0; t < nt; ++t) fine.elems[idx++] = {m12_[t], m23_[t], m31_[t]};
 
     // 5. Dirichlet boundary: old Dirichlet + midpoints of boundary edges
     //    where both endpoints are Dirichlet
@@ -82,31 +88,49 @@ RefineOutput refine(const TriMesh &coarse) {
     }
     fine.dirichlet.assign(dir_set.begin(), dir_set.end());
 
-    // 6. Element prolongation P_elem  (4*nt × nt) — each coarse → 4 fine
+    // 6. Element prolongation P_elem  (4*nt × nt)
+    //    Fine elems ordered by sub‑type: sub‑1(0..nt-1), sub‑2(nt..2nt-1), …
     std::vector<Eigen::Triplet<double>> pe_triplets;
     pe_triplets.reserve(4 * nt);
     for (int t = 0; t < nt; ++t) {
-        for (int s = 0; s < 4; ++s)
-            pe_triplets.emplace_back(4*t + s, t, 1.0);
+        pe_triplets.emplace_back(t,          t, 1.0);   // sub 1
+        pe_triplets.emplace_back(nt + t,     t, 1.0);   // sub 2
+        pe_triplets.emplace_back(2*nt + t,   t, 1.0);   // sub 3
+        pe_triplets.emplace_back(3*nt + t,   t, 1.0);   // sub 4
     }
     Eigen::SparseMatrix<double> P_elem(4*nt, nt);
     P_elem.setFromTriplets(pe_triplets.begin(), pe_triplets.end());
 
-    // 7. DG dof prolongation P_dg  (12*nt × 3*nt) — fixed 12×3 local pattern
-    //    Same as MATLAB: kron(speye(nt), local12x3)
-    const double L[12][3] = {
-        {1.0, 0.0, 0.0},{0.5, 0.5, 0.0},{0.5, 0.0, 0.5},
-        {0.5, 0.5, 0.0},{0.0, 1.0, 0.0},{0.0, 0.5, 0.5},
-        {0.5, 0.0, 0.5},{0.0, 0.5, 0.5},{0.0, 0.0, 1.0},
-        {0.5, 0.5, 0.0},{0.0, 0.5, 0.5},{0.5, 0.0, 0.5}
-    };
+    // 7. DG dof prolongation P_dg  (12*nt × 3*nt)
+    //    MATLAB: [kron(E,sub1); kron(E,sub2); kron(E,sub3); kron(E,sub4)]
+    //    Rows grouped by sub‑type, not by element.
+    const double sub1[3][3] = {{1,0,0},{.5,.5,0},{.5,0,.5}};
+    const double sub2[3][3] = {{.5,.5,0},{0,1,0},{0,.5,.5}};
+    const double sub3[3][3] = {{.5,0,.5},{0,.5,.5},{0,0,1}};
+    const double sub4[3][3] = {{.5,.5,0},{0,.5,.5},{.5,0,.5}};
+
     std::vector<Eigen::Triplet<double>> pdg_triplets;
-    pdg_triplets.reserve(12 * 3 * nt);
-    for (int t = 0; t < nt; ++t) {
-        for (int i = 0; i < 12; ++i)
-            for (int j = 0; j < 3; ++j)
-                pdg_triplets.emplace_back(12*t + i, 3*t + j, L[i][j]);
-    }
+
+    auto add_sub = [&](int row_off, const double sub[3][3]) {
+        for (int t = 0; t < nt; ++t) {
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    if (sub[i][j] != 0.0) {
+                        pdg_triplets.emplace_back(
+                            row_off + 3*t + i,
+                            3*t + j,
+                            sub[i][j]);
+                    }
+                }
+            }
+        }
+    };
+
+    add_sub(0,      sub1);   // rows 0      .. 3*nt-1
+    add_sub(3*nt,   sub2);   // rows 3*nt   .. 6*nt-1
+    add_sub(6*nt,   sub3);   // rows 6*nt   .. 9*nt-1
+    add_sub(9*nt,   sub4);   // rows 9*nt   ..12*nt-1
+
     Eigen::SparseMatrix<double> P_dg(12*nt, 3*nt);
     P_dg.setFromTriplets(pdg_triplets.begin(), pdg_triplets.end());
 
