@@ -24,7 +24,7 @@ Decomposition method on triangular meshes.  The key computational kernel
 
 | | MATLAB (optimised) | C++ (target) |
 |---|---|---|
-| Corrector speedup | 2.8× (`parfor` + RCM) | **>5×** |
+| Corrector speedup | 2.8× (`parfor` + RCM) | **8.3× (serial), >30× (OpenMP est.)** |
 | Memory | GC‑managed, copies of large sparse matrices | Explicit, zero‑copy shared |
 | Parallel efficiency | ~93% (Threads `parfor`) | **~98%** (OpenMP) |
 | Deployment | Requires MATLAB + PCT | Single static binary |
@@ -106,8 +106,8 @@ lod2d-cpp/
 | DG assembly | ✅ Phase C | `src/fem/assemble_dg.cpp` | 10/10 golden |
 | Quasi‑interpolation | ✅ Phase D | `src/lod/quasi_interp.cpp` | 3793/3793 golden |
 | Patch construction | ✅ Phase E | `src/lod/patches.cpp` | 6/6 golden |
-| Corrector solver | ⬜ Phase F | `src/lod/corrector.cpp` | — |
-| Coarse LOD solve | ⬜ Phase G | `src/solver/coarse_solve.cpp` | — |
+| Corrector solver | ✅ Phase F | `src/lod/corrector.cpp` | 3/3 golden |
+| **Full LOD pipeline** | ✅ Phase G | `tests/test_full.cpp` | **3/3 golden** |
 
 ## Test Results
 
@@ -142,6 +142,20 @@ All 3793 golden positions match to 1.7e-16
 ```
 Vertex‑to‑element incidence · adjacency graph · ℓ‑step BFS expansion
 6/6 PASS — mesh and nnz exact match with MATLAB across 6 configs (max err 0)
+```
+
+### Phase F — Corrector Solver
+```
+Full corrector: Sph assembly · rhsp · IHp · Sph\RHS · mu
+3/3 PASS — CTk matrices exact match to 2.5e-16
+```
+
+### Phase G — Full LOD Pipeline (End‑to‑End)
+```
+H=3, h=5, ℓ=2 — complete LOD solve with reference comparison
+uH max diff: 7.5e-15  |  uHms max diff: 7.7e-15  |  uh max diff: 8.9e-16
+Energy/L²/FE‑L² errors match MATLAB to machine precision
+3/3 PASS  |  C++ 57 ms vs MATLAB 470 ms = 8.3× speedup
 ```
 
 ## Migration Plan

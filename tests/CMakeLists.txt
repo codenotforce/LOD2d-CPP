@@ -21,3 +21,8 @@ add_test(NAME patches COMMAND test_patch)
 add_executable(test_corr test_corr.cpp)
 target_link_libraries(test_corr PRIVATE lod2d_core)
 add_test(NAME corrector COMMAND test_corr)
+
+add_executable(test_full test_full.cpp)
+target_link_libraries(test_full PRIVATE lod2d_core)
+target_link_libraries(test_full PRIVATE OpenMP::OpenMP_CXX)
+add_test(NAME full_lod COMMAND test_full)
