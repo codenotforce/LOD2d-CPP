@@ -71,9 +71,11 @@ int main() {
     cg2dgh.setFromTriplets(cg_t.begin(), cg_t.end());
 
     // Operators
-    Eigen::SparseMatrix<double> Shdg  = assemble_dg(fine, Ah);
+    auto element_stiffness = assemble_element_stiffness(fine, Ah);
+    Eigen::SparseMatrix<double> Shdg = assemble_dg_from_element_stiffness(element_stiffness);
     auto IH    = build_quasi_interp(coarse, fine, f_out.P_dg, cg2dgh, Nh, NH);
     auto patch = build_patches(coarse, ell);
+    auto fine_element_children = build_fine_element_children(f_out.P_elem, NTH);
 
     // Mass matrix Mhdg for coarse solve
     auto areas = compute_area(fine);
@@ -93,7 +95,8 @@ int main() {
     for (int k=0; k<NTH; ++k) {
         CT[k] = compute_corrector(k, patch, coarse, NH, nngH,
             f_out.P_elem, fine, Nh, nngh, dghidx, cg2dgh, Shdg,
-            f_out.P_dg, dgHidx, IH, d);
+            f_out.P_dg, dgHidx, IH, d, CorrectorSolver::EigenLLT,
+            &element_stiffness, &fine_element_children);
     }
 
     // Global correction C_ell = cell2mat(CT) * cg2dgH

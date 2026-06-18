@@ -9,6 +9,8 @@
 #include <cmath>
 #include <chrono>
 #include <unordered_map>
+#include <string>
+#include <stdexcept>
 #include <Eigen/Dense>
 #ifdef _OPENMP
 #include <omp.h>
@@ -17,9 +19,39 @@
 using namespace lod2d;
 namespace chr = std::chrono;
 
-int main() {
+namespace {
+
+CorrectorSolver parse_solver(int argc, char **argv) {
+    std::string arg = "--solver=eigen";
+    if (argc > 1) arg = argv[1];
+    if (arg.rfind("--solver=", 0) != 0) {
+        throw std::invalid_argument("usage: bench_H4h8 [--solver=eigen|cholmod]");
+    }
+
+    std::string value = arg.substr(std::string("--solver=").size());
+    if (value == "eigen") return CorrectorSolver::EigenLLT;
+    if (value == "cholmod") return CorrectorSolver::Cholmod;
+    throw std::invalid_argument("unknown solver: " + value);
+}
+
+const char *solver_name(CorrectorSolver solver) {
+    return solver == CorrectorSolver::Cholmod ? "cholmod" : "eigen";
+}
+
+} // namespace
+
+int main(int argc, char **argv) {
+    CorrectorSolver solver;
+    try {
+        solver = parse_solver(argc, argv);
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << "\n";
+        return 2;
+    }
+
     int H=4, h=8, ell=2, d=2;
-    std::cout << "=== C++ LOD H=" << H << " h=" << h << " ===\n";
+    std::cout << "=== C++ LOD H=" << H << " h=" << h
+              << " solver=" << solver_name(solver) << " ===\n";
 
     std::ifstream af("benchmarks/data_H4h8.txt");
     int nAh; af >> nAh;
@@ -49,9 +81,11 @@ int main() {
     Eigen::SparseMatrix<double> cg2dgh(3*NTh_f,Nh); cg2dgh.setFromTriplets(cg_t.begin(),cg_t.end());
 
     auto tp0=chr::high_resolution_clock::now();
-    Eigen::SparseMatrix<double> Shdg=assemble_dg(fine,Ah);
+    auto element_stiffness=assemble_element_stiffness(fine,Ah);
+    Eigen::SparseMatrix<double> Shdg=assemble_dg_from_element_stiffness(element_stiffness);
     auto IH=build_quasi_interp(coarse,fine,f_out.P_dg,cg2dgh,Nh,NH);
     auto patch=build_patches(coarse,ell);
+    auto fine_element_children=build_fine_element_children(f_out.P_elem,NTH);
     auto areas=compute_area(fine);
     double M3[3][3]={{2,1,1},{1,2,1},{1,1,2}};
     std::vector<Eigen::Triplet<double>> mh_t;
@@ -65,10 +99,10 @@ int main() {
     std::vector<Eigen::SparseMatrix<double>> CT(NTH);
     #pragma omp parallel for schedule(dynamic)
     for(int k=0;k<NTH;++k)
-        CT[k]=compute_corrector(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d);
+        CT[k]=compute_corrector(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,solver,&element_stiffness,&fine_element_children);
     auto tc1=chr::high_resolution_clock::now();
     double tc=chr::duration<double,std::milli>(tc1-tc0).count();
-    std::cout<<"Correctors: "<<tc<<" ms";
+    std::cout<<"Correctors ("<<solver_name(solver)<<"): "<<tc<<" ms";
 #ifdef _OPENMP
     std::cout<<" ("<<omp_get_max_threads()<<" threads)";
 #endif

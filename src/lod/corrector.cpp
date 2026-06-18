@@ -4,9 +4,24 @@
 #include <vector>
 #include <set>
 #include <algorithm>
-// #include "solver/cholmod_wrapper.h"  // disabled until debugged
+#include <stdexcept>
+#include "solver/cholmod_wrapper.h"
 
 namespace lod2d {
+
+FineElementChildren build_fine_element_children(
+    const Eigen::SparseMatrix<double> &P0,
+    int coarse_element_count) {
+    FineElementChildren children(coarse_element_count);
+    for (int coarse_elem = 0; coarse_elem < P0.outerSize(); ++coarse_elem) {
+        if (coarse_elem >= coarse_element_count) break;
+        for (Eigen::SparseMatrix<double>::InnerIterator it(P0, coarse_elem); it; ++it) {
+            if (it.value() != 0.0)
+                children[coarse_elem].push_back(static_cast<int>(it.row()));
+        }
+    }
+    return children;
+}
 
 Eigen::SparseMatrix<double>
 compute_corrector(int k,
@@ -20,14 +35,44 @@ compute_corrector(int k,
     const Eigen::SparseMatrix<double> &P1dg,
     const std::vector<std::array<int,3>> &dgHidx,
     const Eigen::SparseMatrix<double> &IH,
-    int d) {
+    int d,
+    CorrectorSolver solver,
+    const ElementStiffnessBlocks *element_stiffness,
+    const FineElementChildren *fine_element_children) {
+    if (element_stiffness && element_stiffness->size() != fine.elems.size())
+        throw std::invalid_argument("element_stiffness size must match fine element count");
+    if (fine_element_children && fine_element_children->size() != coarse.elems.size())
+        throw std::invalid_argument("fine_element_children size must match coarse element count");
 
-    // ---- 1. Coarse patch DOFs ----
-    Eigen::VectorXd pk = patch.col(k);
-    // tpH: which coarse elements are in patch
+    // ---- 1. Coarse patch DOFs and fine patch elements ----
     std::vector<int> tpH_list;
-    for (int j = 0; j < pk.size(); ++j)
-        if (pk[j] != 0.0) tpH_list.push_back(j);
+    std::vector<int> fine_patch_elems;
+    std::vector<int> fine_target_elems;  // tTh = P0*patch(:,k) > 1
+
+    if (fine_element_children) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(patch, k); it; ++it) {
+            if (it.value() == 0.0) continue;
+            const int coarse_elem = static_cast<int>(it.row());
+            tpH_list.push_back(coarse_elem);
+
+            const auto &children = (*fine_element_children)[coarse_elem];
+            fine_patch_elems.insert(fine_patch_elems.end(), children.begin(), children.end());
+            if (it.value() > 1.0)
+                fine_target_elems.insert(fine_target_elems.end(), children.begin(), children.end());
+        }
+    } else {
+        Eigen::VectorXd pk = patch.col(k);
+        for (int j = 0; j < pk.size(); ++j)
+            if (pk[j] != 0.0) tpH_list.push_back(j);
+
+        Eigen::VectorXd tph_vec = P0 * pk;
+        for (int e = 0; e < tph_vec.size(); ++e) {
+            if (tph_vec[e] != 0.0) {
+                fine_patch_elems.push_back(e);
+                if (tph_vec[e] > 1.0) fine_target_elems.push_back(e);
+            }
+        }
+    }
 
     // dofpH: unique vertices of patch coarse elements, excluding boundary
     std::vector<int> vtx_count(NH, 0);
@@ -40,17 +85,6 @@ compute_corrector(int k,
             dofpH.push_back(v);
 
     // ---- 2. Fine patch DOFs ----
-    // tph = P0 * patch(:,k) → which fine elements are in patch
-    Eigen::VectorXd tph_vec = P0 * pk;
-    std::vector<int> fine_patch_elems;
-    std::vector<int> fine_target_elems;  // tTh = P0*pk > 1
-    for (int e = 0; e < tph_vec.size(); ++e) {
-        if (tph_vec[e] != 0.0) {
-            fine_patch_elems.push_back(e);
-            if (tph_vec[e] > 1.0) fine_target_elems.push_back(e);
-        }
-    }
-
     // dofph: interior fine vertices in patch
     std::vector<int> fine_vtx_count(Nh, 0);
     for (int e : fine_patch_elems)
@@ -71,18 +105,23 @@ compute_corrector(int k,
     int Nph = static_cast<int>(dofph.size());
     std::vector<Eigen::Triplet<double>> sph_t;
     for (int e : fine_patch_elems) {
-        int dg0 = 3*e;
-        double Ke[3][3] = {{0}};
-        for (int ci = 0; ci < 3; ++ci)
-            for (Eigen::SparseMatrix<double>::InnerIterator it(Shdg, dg0+ci); it; ++it)
-                if (it.row() >= dg0 && it.row() < dg0+3)
-                    Ke[it.row()-dg0][ci] = it.value();
+        Eigen::Matrix3d Ke;
+        if (element_stiffness) {
+            Ke = (*element_stiffness)[e];
+        } else {
+            int dg0 = 3*e;
+            Ke.setZero();
+            for (int ci = 0; ci < 3; ++ci)
+                for (Eigen::SparseMatrix<double>::InnerIterator it(Shdg, dg0+ci); it; ++it)
+                    if (it.row() >= dg0 && it.row() < dg0+3)
+                        Ke(it.row()-dg0, ci) = it.value();
+        }
 
         for (int i = 0; i < 3; ++i) {
             int li = dofph_map[fine.elems[e][i]]; if (li < 0) continue;
             for (int j = 0; j < 3; ++j) {
                 int lj = dofph_map[fine.elems[e][j]]; if (lj < 0) continue;
-                if (Ke[i][j] != 0.0) sph_t.emplace_back(li, lj, Ke[i][j]);
+                if (Ke(i, j) != 0.0) sph_t.emplace_back(li, lj, Ke(i, j));
             }
         }
     }
@@ -93,18 +132,23 @@ compute_corrector(int k,
     std::vector<Eigen::Triplet<double>> rhs_t;
     for (int e : fine_target_elems) {
         int dg0 = 3*e;
-        double Ke[3][3] = {{0}};
-        for (int ci = 0; ci < 3; ++ci)
-            for (Eigen::SparseMatrix<double>::InnerIterator it(Shdg, dg0+ci); it; ++it)
-                if (it.row() >= dg0 && it.row() < dg0+3)
-                    Ke[it.row()-dg0][ci] = it.value();
+        Eigen::Matrix3d Ke;
+        if (element_stiffness) {
+            Ke = (*element_stiffness)[e];
+        } else {
+            Ke.setZero();
+            for (int ci = 0; ci < 3; ++ci)
+                for (Eigen::SparseMatrix<double>::InnerIterator it(Shdg, dg0+ci); it; ++it)
+                    if (it.row() >= dg0 && it.row() < dg0+3)
+                        Ke(it.row()-dg0, ci) = it.value();
+        }
 
         for (int i = 0; i < 3; ++i) {
             int li = dofph_map[fine.elems[e][i]]; if (li < 0) continue;
             for (int j = 0; j < d+1; ++j) {
                 double val = 0;
                 for (int r = 0; r < 3; ++r)
-                    val += Ke[i][r] * P1dg.coeff(dg0+r, dgHidx[k][j]);
+                    val += Ke(i, r) * P1dg.coeff(dg0+r, dgHidx[k][j]);
                 if (val != 0.0) rhs_t.emplace_back(li, j, val);
             }
         }
@@ -135,9 +179,13 @@ compute_corrector(int k,
         for (Eigen::SparseMatrix<double>::InnerIterator it(rhsp, k_rh); it; ++it)
             RHS(it.row(), nd + it.col()) = it.value();
 
-    Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph);
     Eigen::MatrixXd X(Nph, nd+d+1);
-    for (int jj = 0; jj < nd+d+1; ++jj) X.col(jj) = llt.solve(RHS.col(jj));
+    if (solver == CorrectorSolver::Cholmod) {
+        X = solve_cholmod(Sph, RHS);
+    } else {
+        Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph);
+        for (int jj = 0; jj < nd+d+1; ++jj) X.col(jj) = llt.solve(RHS.col(jj));
+    }
 
     // ---- 8. mu = (IHp * X1) \ (IHp * X2) ----
     Eigen::MatrixXd IHp_dense = IHp;

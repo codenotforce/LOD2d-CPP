@@ -1,18 +1,19 @@
 #include "fem/assemble_dg.h"
+#include <Eigen/Dense>
 #include <Eigen/Sparse>
-#include <vector>
 #include <cmath>
+#include <stdexcept>
+#include <vector>
 
 namespace lod2d {
 
-Eigen::SparseMatrix<double> assemble_dg(const TriMesh &mesh,
-                                         const std::vector<double> &coeff) {
-    int nt = static_cast<int>(mesh.elems.size());
-    int ndof = 3 * nt;
+ElementStiffnessBlocks assemble_element_stiffness(const TriMesh &mesh,
+                                                   const std::vector<double> &coeff) {
+    const int nt = static_cast<int>(mesh.elems.size());
+    if (coeff.size() != mesh.elems.size())
+        throw std::invalid_argument("assemble_element_stiffness coefficient count must match element count");
 
-    std::vector<Eigen::Triplet<double>> triplets;
-    triplets.reserve(9 * nt);
-
+    ElementStiffnessBlocks blocks(nt);
     for (int t = 0; t < nt; ++t) {
         int a = mesh.elems[t][0];
         int b = mesh.elems[t][1];
@@ -37,11 +38,28 @@ Eigen::SparseMatrix<double> assemble_dg(const TriMesh &mesh,
         };
 
         double cA = coeff[t] * area;
-        int dg[3] = {3*t, 3*t + 1, 3*t + 2};
-
         for (int j = 0; j < 3; ++j) {
             for (int k = 0; k < 3; ++k) {
-                double val = cA * (G[j][0] * G[k][0] + G[j][1] * G[k][1]);
+                blocks[t](j, k) = cA * (G[j][0] * G[k][0] + G[j][1] * G[k][1]);
+            }
+        }
+    }
+    return blocks;
+}
+
+Eigen::SparseMatrix<double> assemble_dg_from_element_stiffness(
+    const ElementStiffnessBlocks &element_stiffness) {
+    const int nt = static_cast<int>(element_stiffness.size());
+    const int ndof = 3 * nt;
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(9 * nt);
+
+    for (int t = 0; t < nt; ++t) {
+        int dg[3] = {3*t, 3*t + 1, 3*t + 2};
+        for (int j = 0; j < 3; ++j) {
+            for (int k = 0; k < 3; ++k) {
+                const double val = element_stiffness[t](j, k);
                 if (val != 0.0)
                     triplets.emplace_back(dg[j], dg[k], val);
             }
@@ -51,6 +69,11 @@ Eigen::SparseMatrix<double> assemble_dg(const TriMesh &mesh,
     Eigen::SparseMatrix<double> S(ndof, ndof);
     S.setFromTriplets(triplets.begin(), triplets.end());
     return S;
+}
+
+Eigen::SparseMatrix<double> assemble_dg(const TriMesh &mesh,
+                                         const std::vector<double> &coeff) {
+    return assemble_dg_from_element_stiffness(assemble_element_stiffness(mesh, coeff));
 }
 
 } // namespace lod2d

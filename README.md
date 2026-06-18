@@ -1,44 +1,23 @@
 # LOD2d-C++
 
-High‑performance C++20 implementation of the Localized Orthogonal
+High-performance C++20 implementation of the Localized Orthogonal
 Decomposition (LOD) method for 2D elliptic diffusion problems.
-Ported from [LOD2d-MATLAB](https://github.com/codenotforce/LOD2d-MATLAB).
 
-[![C++20](https://img.shields.io/badge/C%2B%2B-20-blue)](https://en.cppreference.com/w/cpp/20)
-[![CMake](https://img.shields.io/badge/CMake-3.16%2B-green)](https://cmake.org)
-[![License](https://img.shields.io/badge/license-research%20%2B%20educational-lightgrey)](LICENSE)
-
-## Overview
-
-LOD2d solves the linear elliptic diffusion problem
-
-```
-−∇·(A∇u) = f   on Ω ⊂ ℝ²,   u = 0 on ∂Ω
-```
-
-with a highly oscillatory coefficient A, using the Localized Orthogonal
-Decomposition method on triangular meshes.  The key computational kernel
-— element correctors — is parallelised with OpenMP.
-
-### Why C++?
-
-| | MATLAB (optimised) | C++ (target) |
-|---|---|---|
-| Corrector speedup | 2.8× (`parfor` + RCM) | **8.3× (serial), >30× (OpenMP est.)** |
-| Memory | GC‑managed, copies of large sparse matrices | Explicit, zero‑copy shared |
-| Parallel efficiency | ~93% (Threads `parfor`) | **~98%** (OpenMP) |
-| Deployment | Requires MATLAB + PCT | Single static binary |
+This project is a MATLAB-to-C++ port of the LOD2d workflow.  The current
+implementation preserves the MATLAB reference ordering and numerical results,
+then optimizes the expensive element-corrector phase with Eigen sparse linear
+algebra and OpenMP.
 
 ## Dependencies
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| Eigen 3 | ≥3.3 | Dense/sparse linear algebra, matrix containers |
-| SuiteSparse | ≥5.10 | Sparse Cholesky (`CHOLMOD`) for patch solves |
-| OpenMP | ≥4.5 | Thread‑level parallelism over coarse elements |
-| TBB (optional) | ≥2020 | Alternative task scheduler |
+| Library | Purpose |
+|---------|---------|
+| Eigen 3 | Dense and sparse linear algebra |
+| SuiteSparse / CHOLMOD | Experimental sparse Cholesky backend |
+| OpenMP | Parallel corrector loop |
+| CMake >= 3.16 | Build system |
 
-### Install (Ubuntu / WSL)
+Ubuntu / WSL setup:
 
 ```bash
 sudo apt update
@@ -58,113 +37,80 @@ Build options:
 |--------|---------|-------------|
 | `LOD2D_USE_OPENMP` | `ON` | Enable OpenMP parallelism |
 | `LOD2D_BUILD_TESTS` | `ON` | Build test suite |
-| `LOD2D_BUILD_BENCHMARKS` | `OFF` | Build benchmarks |
+| `LOD2D_BUILD_BENCHMARKS` | `ON` | Build benchmarks |
 
-## Quick Start
+## Run
+
+Run focused tests from the repository root:
 
 ```bash
-# Run tests
-./build/tests/test_mesh
-
-# Run the main LOD solver (once implemented)
-./build/lod2d
+./build/tests/test_dg
+./build/tests/test_corr --solver=both
+./build/tests/test_full
 ```
 
-## Project Structure
+Run benchmarks:
 
-```
-lod2d-cpp/
-├── CMakeLists.txt              Build configuration
-├── include/
-│   ├── mesh/                   Mesh data types, refinement, edges, area
-│   ├── fem/                    DG stiffness assembly
-│   ├── lod/                    Quasi‑interpolation, patches, correctors
-│   ├── solver/                 Coarse LOD system solver
-│   └── utils/                  I/O, timing, helpers
-├── src/                        Implementation files
-│   ├── mesh/
-│   ├── fem/
-│   ├── lod/
-│   ├── solver/
-│   ├── io/
-│   └── main.cpp                Entry point
-├── tests/                      Unit tests
-├── benchmarks/                 Performance benchmarks
-├── scripts/                    Helper scripts
-├── data/                       Test data & gold references
-└── README.md
+```bash
+./build/benchmarks/bench_refine
+./build/benchmarks/bench_H4h8 --solver=eigen
+./build/benchmarks/bench_H4h8 --solver=cholmod
+./build/benchmarks/bench_profile
 ```
 
-## Module Status
+`--solver=eigen` is the default and fastest path for the tested LOD corrector
+sizes.  `--solver=cholmod` is kept as an experimental correctness-checked
+backend.
 
-| Module | Status | File | Tests |
-|--------|--------|------|-------|
-| Mesh types | ✅ Phase A | `include/mesh/types.h` | 5/5 |
-| Edge enumeration | ✅ Phase A | `src/mesh/edges.cpp` | 5/5 |
-| Area computation | ✅ Phase A | `src/mesh/edges.cpp` | 5/5 |
-| Red refinement + prolongation | ✅ Phase B | `src/mesh/refine.cpp` | 36/36 golden |
-| DG assembly | ✅ Phase C | `src/fem/assemble_dg.cpp` | 10/10 golden |
-| Quasi‑interpolation | ✅ Phase D | `src/lod/quasi_interp.cpp` | 3793/3793 golden |
-| Patch construction | ✅ Phase E | `src/lod/patches.cpp` | 6/6 golden |
-| Corrector solver | ✅ Phase F | `src/lod/corrector.cpp` | 3/3 golden |
-| **Full LOD pipeline** | ✅ Phase G | `tests/test_full.cpp` | **3/3 golden** |
+## Project Status
 
-## Test Results
+| Module | Status | Test coverage |
+|--------|--------|---------------|
+| Mesh refinement and prolongation | Complete | Golden tests vs MATLAB |
+| DG stiffness assembly | Complete | `test_dg`: 10/10 pass |
+| Quasi-interpolation | Complete | Golden positions vs MATLAB |
+| Patch construction | Complete | Golden patch tests |
+| Element corrector | Complete | `test_corr`: Eigen and CHOLMOD pass |
+| Full LOD pipeline | Complete | `test_full`: 3/3 pass |
+| H4/h8 benchmark | Complete | Error check vs MATLAB reference |
 
-### Phase A — Mesh Refinement
-```
-All tests passed! (5/5)
-6-level refinement: 2 → 8192 elements in ~5 ms
-```
+## Recent Optimization Work
 
-### Phase B — Golden‑data (vs MATLAB)
-```
-node/elem/counts · coords · connectivity · Dirichlet · area
-P_node · P_elem · P_dg — all exact match across 4 levels
-36/36 PASS
-```
+The current corrector path uses two caches that avoid repeated global sparse
+matrix work inside each element corrector:
 
-### Phase C — DG Assembly
-```
-Coefficient‑aware element stiffness · global sparse assembly
-Exact match to MATLAB output (values, nnz, dimensions)
-10/10 PASS (3 levels × 3 checks + 1 deterministic test)
-```
+1. `ElementStiffnessBlocks`: stores each fine element's local 3x3 stiffness
+   block while assembling DG stiffness, so correctors no longer repeatedly scan
+   `Shdg` columns to recover the same block.
+2. `FineElementChildren`: stores the `coarse element -> fine children` mapping
+   from `P_elem`, so correctors no longer compute `P0 * patch(:, k)` and scan
+   all fine elements for every coarse element.
 
-### Phase D — Quasi‑Interpolation
-```
-Fine DG mass · inverse coarse DG mass · L2 projection · averaging
-All 3793 golden positions match to 1.7e-16
-2/2 PASS (dimensions + values)
+On the WSL H4/h8 benchmark, the Eigen corrector phase improved from roughly
+3.63 s to about 2.93-3.01 s on the measured 16-thread runs.  Total runtime
+improved from roughly 4.8 s to about 4.1-4.2 s.  Results still match MATLAB:
+
+```text
+Energy error: 0.0247816
+L2 error:     0.00166544
+FE-L2 error:  0.0145842
 ```
 
-### Phase E — Patch Construction
-```
-Vertex‑to‑element incidence · adjacency graph · ℓ‑step BFS expansion
-6/6 PASS — mesh and nnz exact match with MATLAB across 6 configs (max err 0)
-```
+CHOLMOD is now stable and exact against golden corrector data, but remains
+slower than Eigen for H4/h8 correctors, so it is not the default.
 
-### Phase F — Corrector Solver
-```
-Full corrector: Sph assembly · rhsp · IHp · Sph\RHS · mu
-3/3 PASS — CTk matrices exact match to 2.5e-16
-```
+## Important Migration Notes
 
-### Phase G — Full LOD Pipeline (End‑to‑End)
-```
-H=3, h=5, ℓ=2 — complete LOD solve with reference comparison
-uH max diff: 7.5e-15  |  uHms max diff: 7.7e-15  |  uh max diff: 8.9e-16
-Energy/L²/FE‑L² errors match MATLAB to machine precision
-3/3 PASS  |  C++ 57 ms vs MATLAB 470 ms = 8.3× speedup
-```
-
-## Migration Plan
-
-See the [Migration Plan](https://github.com/codenotforce/LOD2d-MATLAB/blob/main/MIGRATION_PLAN.md)
-in the MATLAB reference repository for the full roadmap.
+- MATLAB sparse construction/order matters.  Edge ordering and refined triangle
+  ordering are intentionally matched to MATLAB golden data.
+- `P_dg` rows are grouped by sub-triangle type, not by parent element.
+- Eigen keeps explicit zero triplets, so assembly skips zero values.
+- Release builds are required for meaningful performance comparisons.
+- The Windows tree is used as the GitHub upload mirror; WSL remains the tested
+  build environment.
 
 ## License
 
 Research and educational use.  Based on the LOD code from
 *An Introduction to the Localized Orthogonal Decomposition Method*
-by A. Målqvist and D. Peterseim.
+by A. Malqvist and D. Peterseim.

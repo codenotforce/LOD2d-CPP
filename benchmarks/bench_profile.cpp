@@ -53,9 +53,11 @@ int main() {
     std::vector<Eigen::Triplet<double>> cg_t;
     for(int e=0;e<NTh_f;++e)for(int i=0;i<3;++i)cg_t.emplace_back(3*e+i,fine.elems[e][i],1.0);
     Eigen::SparseMatrix<double> cg2dgh(3*NTh_f,Nh); cg2dgh.setFromTriplets(cg_t.begin(),cg_t.end());
-    Eigen::SparseMatrix<double> Shdg=assemble_dg(fine,Ah);
+    auto element_stiffness=assemble_element_stiffness(fine,Ah);
+    Eigen::SparseMatrix<double> Shdg=assemble_dg_from_element_stiffness(element_stiffness);
     Eigen::SparseMatrix<double> IH=build_quasi_interp(coarse,fine,f_out.P_dg,cg2dgh,Nh,NH);
     Eigen::SparseMatrix<double> patch=build_patches(coarse,ell);
+    auto fine_element_children=build_fine_element_children(f_out.P_elem,NTH);
     auto areas=compute_area(fine);
     double M3[3][3]={{2,1,1},{1,2,1},{1,1,2}};
     std::vector<Eigen::Triplet<double>> mh_t;
@@ -70,7 +72,7 @@ int main() {
     std::vector<Eigen::SparseMatrix<double>> CT(NTH);
     #pragma omp parallel for schedule(dynamic)
     for(int k=0;k<NTH;++k)
-        CT[k]=compute_corrector(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d);
+        CT[k]=compute_corrector(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,CorrectorSolver::EigenLLT,&element_stiffness,&fine_element_children);
     auto t3b = chr::high_resolution_clock::now();
     double t3 = chr::duration<double,std::milli>(t3b-t3a).count();
 #ifdef _OPENMP
