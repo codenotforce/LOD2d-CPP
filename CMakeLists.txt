@@ -14,6 +14,17 @@ option(LOD2D_BUILD_BENCHMARKS "Build benchmarks" ON)
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(OpenMP)
 find_package(SuiteSparse QUIET)
+if(NOT SuiteSparse_FOUND)
+    # Fallback: find CHOLMOD directly
+    find_library(CHOLMOD_LIB cholmod)
+    find_path(CHOLMOD_INC suitesparse/cholmod.h PATH_SUFFIXES suitesparse)
+    if(CHOLMOD_LIB AND CHOLMOD_INC)
+        add_library(CHOLMOD::CHOLMOD UNKNOWN IMPORTED)
+        set_target_properties(CHOLMOD::CHOLMOD PROPERTIES
+            IMPORTED_LOCATION ${CHOLMOD_LIB}
+            INTERFACE_INCLUDE_DIRECTORIES ${CHOLMOD_INC})
+    endif()
+endif()
 find_package(TBB QUIET)
 
 # ---- Compiler flags ----
@@ -41,6 +52,8 @@ target_link_libraries(lod2d_core PUBLIC Eigen3::Eigen)
 if(SuiteSparse_FOUND)
     target_link_libraries(lod2d_core PUBLIC
         SuiteSparse::CHOLMOD SuiteSparse::AMD SuiteSparse::COLAMD)
+elseif(CHOLMOD_LIB)
+    target_link_libraries(lod2d_core PUBLIC CHOLMOD::CHOLMOD)
 endif()
 if(LOD2D_USE_OPENMP AND OpenMP_FOUND)
     target_link_libraries(lod2d_core PUBLIC OpenMP::OpenMP_CXX)
