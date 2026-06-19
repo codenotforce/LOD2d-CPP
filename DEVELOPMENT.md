@@ -1,4 +1,4 @@
-# LOD2d-C++ Development Log
+﻿# LOD2d-C++ Development Log
 
 This file records the MATLAB-to-C++ migration decisions, correctness traps, and
 performance experiments.
@@ -28,17 +28,29 @@ OMP_NUM_THREADS=16 ./build/benchmarks/bench_H4h9 --solver=cholmod
 ./build/benchmarks/bench_refine
 ```
 
-Latest results:
+Latest test results:
 
 - `test_dg`: 10 PASS, 0 FAIL
 - `test_corr --solver=both`: 6 PASS, 0 FAIL
 - `test_full`: 3 PASS, 0 FAIL
-- H4/h8 Eigen correctors: below 1 s in representative 16-thread runs after
-  multi-RHS and scratch-buffer optimization
-- H4/h9 Eigen correctors: about 6.1 s on a clean 16-thread run
-- H4/h9 total runtime: about 13.2 s on the same run
-- H4/h9 errors: `E=0.0257411`, `L2=0.00175159`, `FE=0.0157131`
-- H4/h9 CHOLMOD correctors: about 5.0 s, but total runtime was about 17.1 s
+
+### H=4, h=9, ell=2 (7-run median, OMP_NUM_THREADS=16)
+
+| Version | Median | Range |
+|---------|--------|-------|
+| **C++ 16t** | **9.79 s** | 9.48-10.01 s |
+| MATLAB parallel (4w) | 23.57 s | 22.90-24.07 s |
+| MATLAB serial | 49.39 s | 48.19-52.17 s |
+
+Speedup: C++ 5.0x vs MATLAB serial, 2.4x vs MATLAB parallel.
+
+### H=4, h=8, ell=2 (20-run median, OMP_NUM_THREADS=16)
+
+| Version | Median | Range |
+|---------|--------|-------|
+| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
+
+Errors identical to MATLAB across all versions.
 
 Eigen remains the default corrector solver.
 

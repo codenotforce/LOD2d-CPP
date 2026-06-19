@@ -17,4 +17,12 @@ Eigen::SparseMatrix<double> assemble_dg_from_element_stiffness(
 Eigen::SparseMatrix<double> assemble_dg(const TriMesh &mesh,
                                          const std::vector<double> &coeff);
 
+Eigen::SparseMatrix<double> assemble_cg_from_element_stiffness(
+    const TriMesh &mesh,
+    const ElementStiffnessBlocks &element_stiffness);
+
+Eigen::SparseMatrix<double> assemble_cg_mass(
+    const TriMesh &mesh,
+    const std::vector<double> &areas);
+
 } // namespace lod2d

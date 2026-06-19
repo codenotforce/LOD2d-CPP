@@ -77,17 +77,9 @@ int main() {
     auto patch = build_patches(coarse, ell);
     auto fine_element_children = build_fine_element_children(f_out.P_elem, NTH);
 
-    // Mass matrix Mhdg for coarse solve
     auto areas = compute_area(fine);
-    double M3[3][3]={{2,1,1},{1,2,1},{1,1,2}};
-    std::vector<Eigen::Triplet<double>> mh_t;
-    for (int e=0; e<NTh_f; ++e) {
-        double s=areas[e]/12.0;
-        for (int i=0;i<3;++i) for (int j=0;j<3;++j)
-            mh_t.emplace_back(3*e+i, 3*e+j, s*M3[i][j]);
-    }
-    Eigen::SparseMatrix<double> Mhdg(3*NTh_f, 3*NTh_f);
-    Mhdg.setFromTriplets(mh_t.begin(), mh_t.end());
+    Eigen::SparseMatrix<double> Sh = assemble_cg_from_element_stiffness(fine, element_stiffness);
+    Eigen::SparseMatrix<double> Mh = assemble_cg_mass(fine, areas);
 
     // Correctors
     std::vector<Eigen::SparseMatrix<double>> CT(NTH);
@@ -99,58 +91,47 @@ int main() {
             &element_stiffness, &fine_element_children);
     }
 
-    // Global correction C_ell = cell2mat(CT) * cg2dgH
-    // cg2dgH: NTH*3 × NH, coarse DG→CG
-    int NHdg_c = 3*NTH;
-    std::vector<Eigen::Triplet<double>> cg2dg_t;
-    for (int e=0; e<NTH; ++e)
-        for (int i=0; i<3; ++i)
-            cg2dg_t.emplace_back(3*e+i, coarse.elems[e][i], 1.0);
-    Eigen::SparseMatrix<double> cg2dgH(NHdg_c, NH);
-    cg2dgH.setFromTriplets(cg2dg_t.begin(), cg2dg_t.end());
-
-    // C_ell = [CT0 CT1 ... CT_{NTH-1}] * cg2dgH
-    // Build horizontal concatenation
-    std::vector<Eigen::Triplet<double>> cell_t;
+    // G = P_node - C_ell, assembled directly without cell_mat * cg2dgH.
+    std::vector<Eigen::Triplet<double>> g_t;
+    g_t.reserve(f_out.P_node.nonZeros());
+    for (int c=0; c<f_out.P_node.outerSize(); ++c)
+        for (Eigen::SparseMatrix<double>::InnerIterator it(f_out.P_node, c); it; ++it)
+            g_t.emplace_back(it.row(), it.col(), it.value());
     for (int k=0; k<NTH; ++k) {
         for (int c=0; c<CT[k].outerSize(); ++c)
             for (Eigen::SparseMatrix<double>::InnerIterator it(CT[k], c); it; ++it)
-                cell_t.emplace_back(it.row(), k*(d+1) + static_cast<int>(it.col()), it.value());
+                g_t.emplace_back(it.row(), coarse.elems[k][static_cast<int>(it.col())], -it.value());
     }
-    Eigen::SparseMatrix<double> cell_mat(Nh, NTH*(d+1));
-    cell_mat.setFromTriplets(cell_t.begin(), cell_t.end());
-    Eigen::SparseMatrix<double> C_ell = cell_mat * cg2dgH;
-
-    // G = P1 - C_ell
-    Eigen::SparseMatrix<double> G = f_out.P_node - C_ell;
+    Eigen::SparseMatrix<double> G(Nh, NH);
+    G.setFromTriplets(g_t.begin(), g_t.end());
 
     // Coarse LOD system
     std::vector<int> dofH;
-    for (int i=0; i<NH; ++i) {
-        bool is_dir = false;
-        for (int dv : coarse.dirichlet) if (dv == i) { is_dir=true; break; }
-        if (!is_dir) dofH.push_back(i);
-    }
+    std::vector<int> dofH_map(NH, -1);
+    std::vector<char> is_dirH(NH, false);
+    for (int dv : coarse.dirichlet) is_dirH[dv] = true;
+    for (int i=0; i<NH; ++i)
+        if (!is_dirH[i]) {
+            dofH_map[i] = static_cast<int>(dofH.size());
+            dofH.push_back(i);
+        }
     int nFree = static_cast<int>(dofH.size());
 
     // G0 = G(:, dofH)
     std::vector<Eigen::Triplet<double>> g0_t;
     for (int k=0; k<G.outerSize(); ++k)
         for (Eigen::SparseMatrix<double>::InnerIterator it(G, k); it; ++it)
-            for (int j=0; j<nFree; ++j)
-                if (static_cast<int>(it.col()) == dofH[j])
-                    g0_t.emplace_back(it.row(), j, it.value());
+            if (dofH_map[it.col()] >= 0)
+                g0_t.emplace_back(it.row(), dofH_map[it.col()], it.value());
     Eigen::SparseMatrix<double> G0(Nh, nFree);
     G0.setFromTriplets(g0_t.begin(), g0_t.end());
 
-    // SHLOD0 = G0' * cg2dgh' * Shdg * cg2dgh * G0
-    Eigen::SparseMatrix<double> T = cg2dgh.transpose() * Shdg * cg2dgh;
-    Eigen::SparseMatrix<double> SHLOD0 = G0.transpose() * T * G0;
+    Eigen::SparseMatrix<double> SHLOD0 = G0.transpose() * Sh * G0;
 
     // RHS: G0' * cg2dgh' * Mhdg * cg2dgh * (P1 * f)
     // f(TH.p) = ones(NH,1); P1 * f_coarse = fine-scale prolongation
     Eigen::VectorXd f_coarse = Eigen::VectorXd::Ones(NH);
-    Eigen::VectorXd rhs = G0.transpose() * (cg2dgh.transpose() * (Mhdg * (cg2dgh * (f_out.P_node * f_coarse))));
+    Eigen::VectorXd rhs = G0.transpose() * (Mh * (f_out.P_node * f_coarse));
 
     // Solve
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llts(SHLOD0);
@@ -163,24 +144,22 @@ int main() {
 
     // Reference
     std::vector<int> dofh;
-    for (int i=0; i<Nh; ++i) {
-        bool is_dir = false;
-        for (int dv : fine.dirichlet) if (dv==i) { is_dir=true; break; }
-        if (!is_dir) dofh.push_back(i);
-    }
+    std::vector<int> dofh_map(Nh, -1);
+    std::vector<char> is_dirh(Nh, false);
+    for (int dv : fine.dirichlet) is_dirh[dv] = true;
+    for (int i=0; i<Nh; ++i)
+        if (!is_dirh[i]) {
+            dofh_map[i] = static_cast<int>(dofh.size());
+            dofh.push_back(i);
+        }
     int nFree_f = static_cast<int>(dofh.size());
-    Eigen::SparseMatrix<double> Sh = cg2dgh.transpose() * Shdg * cg2dgh;
-    Eigen::SparseMatrix<double> Mh = cg2dgh.transpose() * Mhdg * cg2dgh;
 
-    // Sh_free = Sh(dofh, dofh), Mh_free = Mh(dofh, :)
-    std::vector<Eigen::Triplet<double>> sh_t, mh_free;
+    // Sh_free = Sh(dofh, dofh)
+    std::vector<Eigen::Triplet<double>> sh_t;
     for (int k=0; k<Sh.outerSize(); ++k)
         for (Eigen::SparseMatrix<double>::InnerIterator it(Sh, k); it; ++it) {
-            int ri=-1, ci=-1;
-            for (int j=0; j<nFree_f; ++j) {
-                if (dofh[j]==static_cast<int>(it.row())) ri=j;
-                if (dofh[j]==static_cast<int>(it.col())) ci=j;
-            }
+            int ri = dofh_map[it.row()];
+            int ci = dofh_map[it.col()];
             if (ri>=0 && ci>=0) sh_t.emplace_back(ri, ci, it.value());
         }
     Eigen::SparseMatrix<double> Sh_free(nFree_f, nFree_f);
@@ -188,13 +167,10 @@ int main() {
 
     // RHS_ref = Mh(dofh, :) * f
     Eigen::VectorXd rhs_ref = Eigen::VectorXd::Zero(nFree_f);
-    for (int j=0; j<nFree_f; ++j) {
-        double sum=0;
-        for (int k2=0; k2<Mh.outerSize(); ++k2)
-            for (Eigen::SparseMatrix<double>::InnerIterator it(Mh, k2); it; ++it)
-                if (static_cast<int>(it.row())==dofh[j]) sum += it.value();  // f=1 at all fine vertices
-        rhs_ref(j) = sum;
-    }
+    for (int k2=0; k2<Mh.outerSize(); ++k2)
+        for (Eigen::SparseMatrix<double>::InnerIterator it(Mh, k2); it; ++it)
+            if (dofh_map[it.row()] >= 0)
+                rhs_ref(dofh_map[it.row()]) += it.value();  // f=1 at all fine vertices
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt_ref(Sh_free);
     Eigen::VectorXd uh_free = llt_ref.solve(rhs_ref);
     Eigen::VectorXd uh = Eigen::VectorXd::Zero(Nh);

@@ -76,4 +76,60 @@ Eigen::SparseMatrix<double> assemble_dg(const TriMesh &mesh,
     return assemble_dg_from_element_stiffness(assemble_element_stiffness(mesh, coeff));
 }
 
+Eigen::SparseMatrix<double> assemble_cg_from_element_stiffness(
+    const TriMesh &mesh,
+    const ElementStiffnessBlocks &element_stiffness) {
+    const int nt = static_cast<int>(mesh.elems.size());
+    if (element_stiffness.size() != mesh.elems.size())
+        throw std::invalid_argument("assemble_cg_from_element_stiffness block count must match element count");
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(9 * nt);
+
+    for (int t = 0; t < nt; ++t) {
+        for (int i = 0; i < 3; ++i) {
+            const int gi = mesh.elems[t][i];
+            for (int j = 0; j < 3; ++j) {
+                const double val = element_stiffness[t](i, j);
+                if (val != 0.0)
+                    triplets.emplace_back(gi, mesh.elems[t][j], val);
+            }
+        }
+    }
+
+    Eigen::SparseMatrix<double> S(mesh.nodes.size(), mesh.nodes.size());
+    S.setFromTriplets(triplets.begin(), triplets.end());
+    return S;
+}
+
+Eigen::SparseMatrix<double> assemble_cg_mass(
+    const TriMesh &mesh,
+    const std::vector<double> &areas) {
+    const int nt = static_cast<int>(mesh.elems.size());
+    if (areas.size() != mesh.elems.size())
+        throw std::invalid_argument("assemble_cg_mass area count must match element count");
+
+    static constexpr double M3[3][3] = {
+        {2.0, 1.0, 1.0},
+        {1.0, 2.0, 1.0},
+        {1.0, 1.0, 2.0}
+    };
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(9 * nt);
+
+    for (int t = 0; t < nt; ++t) {
+        const double scale = areas[t] / 12.0;
+        for (int i = 0; i < 3; ++i) {
+            const int gi = mesh.elems[t][i];
+            for (int j = 0; j < 3; ++j)
+                triplets.emplace_back(gi, mesh.elems[t][j], scale * M3[i][j]);
+        }
+    }
+
+    Eigen::SparseMatrix<double> M(mesh.nodes.size(), mesh.nodes.size());
+    M.setFromTriplets(triplets.begin(), triplets.end());
+    return M;
+}
+
 } // namespace lod2d

@@ -59,10 +59,8 @@ int main() {
     Eigen::SparseMatrix<double> patch=build_patches(coarse,ell);
     auto fine_element_children=build_fine_element_children(f_out.P_elem,NTH);
     auto areas=compute_area(fine);
-    double M3[3][3]={{2,1,1},{1,2,1},{1,1,2}};
-    std::vector<Eigen::Triplet<double>> mh_t;
-    for(int e=0;e<NTh_f;++e){double s=areas[e]/12.0;for(int i=0;i<3;++i)for(int j=0;j<3;++j)mh_t.emplace_back(3*e+i,3*e+j,s*M3[i][j]);}
-    Eigen::SparseMatrix<double> Mhdg(3*NTh_f,3*NTh_f); Mhdg.setFromTriplets(mh_t.begin(),mh_t.end());
+    Eigen::SparseMatrix<double> Sh=assemble_cg_from_element_stiffness(fine,element_stiffness);
+    Eigen::SparseMatrix<double> Mh=assemble_cg_mass(fine,areas);
     auto t2b = chr::high_resolution_clock::now();
     double t2 = chr::duration<double,std::milli>(t2b-t2a).count();
     std::cout << "2. Operators: " << t2 << " ms (DG:" << Shdg.nonZeros() << "nz IH:" << IH.nonZeros() << "nz patch:" << patch.nonZeros() << "nz)\n";
@@ -83,33 +81,34 @@ int main() {
 
     // 4. C_ell + G
     auto t4a = chr::high_resolution_clock::now();
-    std::vector<Eigen::Triplet<double>> cgH_t;
-    for(int e=0;e<NTH;++e)for(int i=0;i<3;++i)cgH_t.emplace_back(3*e+i,coarse.elems[e][i],1.0);
-    Eigen::SparseMatrix<double> cg2dgH(3*NTH,NH); cg2dgH.setFromTriplets(cgH_t.begin(),cgH_t.end());
-    std::vector<Eigen::Triplet<double>> cell_t;
+    std::vector<Eigen::Triplet<double>> g_t;
+    g_t.reserve(f_out.P_node.nonZeros());
+    for(int c=0;c<f_out.P_node.outerSize();++c)
+        for(Eigen::SparseMatrix<double>::InnerIterator it(f_out.P_node,c);it;++it)
+            g_t.emplace_back(it.row(),it.col(),it.value());
     for(int k=0;k<NTH;++k)
         for(int c=0;c<CT[k].outerSize();++c)
             for(Eigen::SparseMatrix<double>::InnerIterator it(CT[k],c);it;++it)
-                cell_t.emplace_back(it.row(),k*(d+1)+(int)it.col(),it.value());
-    Eigen::SparseMatrix<double> cell_mat(Nh,NTH*(d+1)); cell_mat.setFromTriplets(cell_t.begin(),cell_t.end());
-    Eigen::SparseMatrix<double> G = f_out.P_node - cell_mat * cg2dgH;
+                g_t.emplace_back(it.row(),coarse.elems[k][static_cast<int>(it.col())],-it.value());
+    Eigen::SparseMatrix<double> G(Nh,NH); G.setFromTriplets(g_t.begin(),g_t.end());
     auto t4b = chr::high_resolution_clock::now();
     double t4 = chr::duration<double,std::milli>(t4b-t4a).count();
     std::cout << "4. C_ell + G: " << t4 << " ms\n";
 
     // 5. Coarse LOD solve
     auto t5a = chr::high_resolution_clock::now();
-    std::vector<int> dofH; std::unordered_map<int,int> dofH_map;
-    for(int i=0;i<NH;++i){bool dir=false;for(int dv:coarse.dirichlet)if(dv==i)dir=true;if(!dir){dofH_map[i]=dofH.size();dofH.push_back(i);}}
+    std::vector<int> dofH; std::vector<int> dofH_map(NH,-1);
+    std::vector<char> is_dirH(NH,false);
+    for(int dv:coarse.dirichlet)is_dirH[dv]=true;
+    for(int i=0;i<NH;++i)if(!is_dirH[i]){dofH_map[i]=static_cast<int>(dofH.size());dofH.push_back(i);}
     std::vector<Eigen::Triplet<double>> g0_t;
     for(int k2=0;k2<G.outerSize();++k2)
         for(Eigen::SparseMatrix<double>::InnerIterator it(G,k2);it;++it)
-            if(dofH_map.count(it.col()))g0_t.emplace_back(it.row(),dofH_map[it.col()],it.value());
+            if(dofH_map[it.col()]>=0)g0_t.emplace_back(it.row(),dofH_map[it.col()],it.value());
     Eigen::SparseMatrix<double> G0(Nh,dofH.size()); G0.setFromTriplets(g0_t.begin(),g0_t.end());
-    auto Tmat=cg2dgh.transpose()*Shdg*cg2dgh;
-    Eigen::SparseMatrix<double> SHLOD0=G0.transpose()*Tmat*G0;
+    Eigen::SparseMatrix<double> SHLOD0=G0.transpose()*Sh*G0;
     Eigen::VectorXd f_coarse=Eigen::VectorXd::Ones(NH);
-    Eigen::VectorXd rhs=G0.transpose()*(cg2dgh.transpose()*(Mhdg*(cg2dgh*(f_out.P_node*f_coarse))));
+    Eigen::VectorXd rhs=G0.transpose()*(Mh*(f_out.P_node*f_coarse));
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llts(SHLOD0);
     Eigen::VectorXd uH=Eigen::VectorXd::Zero(NH), uf=llts.solve(rhs);
     for(size_t j=0;j<dofH.size();++j)uH(dofH[j])=uf(j);
@@ -120,21 +119,21 @@ int main() {
 
     // 6. Reference
     auto t6a = chr::high_resolution_clock::now();
-    std::vector<int> dofh; std::unordered_map<int,int> dofh_map;
-    for(int i=0;i<Nh;++i){bool dir=false;for(int dv:fine.dirichlet)if(dv==i)dir=true;if(!dir){dofh_map[i]=dofh.size();dofh.push_back(i);}}
-    Eigen::SparseMatrix<double> Sh=cg2dgh.transpose()*Shdg*cg2dgh;
+    std::vector<int> dofh; std::vector<int> dofh_map(Nh,-1);
+    std::vector<char> is_dirh(Nh,false);
+    for(int dv:fine.dirichlet)is_dirh[dv]=true;
+    for(int i=0;i<Nh;++i)if(!is_dirh[i]){dofh_map[i]=static_cast<int>(dofh.size());dofh.push_back(i);}
     std::vector<Eigen::Triplet<double>> sh_t;
     for(int k2=0;k2<Sh.outerSize();++k2)
         for(Eigen::SparseMatrix<double>::InnerIterator it(Sh,k2);it;++it)
-            if(dofh_map.count(it.row())&&dofh_map.count(it.col()))
+            if(dofh_map[it.row()]>=0&&dofh_map[it.col()]>=0)
                 sh_t.emplace_back(dofh_map[it.row()],dofh_map[it.col()],it.value());
     Eigen::SparseMatrix<double> Sh_free(dofh.size(),dofh.size()); Sh_free.setFromTriplets(sh_t.begin(),sh_t.end());
-    Eigen::SparseMatrix<double> Mh=cg2dgh.transpose()*Mhdg*cg2dgh;
     Eigen::VectorXd f_fine=Eigen::VectorXd::Ones(Nh);
     Eigen::VectorXd rhs_ref=Eigen::VectorXd::Zero(dofh.size());
     for(int k2=0;k2<Mh.outerSize();++k2)
         for(Eigen::SparseMatrix<double>::InnerIterator it(Mh,k2);it;++it)
-            if(dofh_map.count(it.row()))rhs_ref(dofh_map[it.row()])+=it.value()*f_fine(it.col());
+            if(dofh_map[it.row()]>=0)rhs_ref(dofh_map[it.row()])+=it.value()*f_fine(it.col());
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt_ref(Sh_free);
     Eigen::VectorXd uh=Eigen::VectorXd::Zero(Nh), uf2=llt_ref.solve(rhs_ref);
     for(size_t j=0;j<dofh.size();++j)uh(dofh[j])=uf2(j);

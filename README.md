@@ -1,4 +1,4 @@
-# LOD2d-C++
+﻿# LOD2d-C++
 
 High-performance C++20 implementation of the Localized Orthogonal
 Decomposition (LOD) method for 2D elliptic diffusion problems.
@@ -95,24 +95,30 @@ local allocations inside each element corrector:
 5. Local dense `IHp` and triplet `CTk` construction avoid many tiny sparse
    insertions in the hot loop.
 
-On the WSL H4/h9 benchmark, the Eigen corrector phase improved from the
-previous 16-thread median of about 92 s to about 6.1 s.  Total runtime improved
-from about 98.6 s to about 13.2 s, while preserving the MATLAB reference
-errors exactly:
+### Benchmarks (H=4, h=9, ell=2, 7-run median, OMP_NUM_THREADS=16)
 
+| Version | Median | Range | vs Serial |
+|---------|--------|-------|-----------|
+| **C++ 16t** | **9.79 s** | 9.48-10.01 s | **5.0x** |
+| MATLAB parallel (4w) | 23.57 s | 22.90-24.07 s | 2.1x |
+| MATLAB serial | 49.39 s | 48.19-52.17 s | 1.0x |
+
+Errors identical across all versions:
 ```text
-Energy error: 0.0257411
-L2 error:     0.00175159
-FE-L2 error:  0.0157131
+Energy: 0.0257411   L2: 0.00175159   FE-L2: 0.0157131
 ```
 
-On H4/h8, the Eigen corrector phase is now below 1 s in representative
-16-thread runs.  Results still match MATLAB:
+### Benchmarks (H=4, h=8, ell=2, 20-run median, OMP_NUM_THREADS=16)
 
+| Version | Median | Range |
+|---------|--------|-------|
+| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
+| MATLAB parallel (4w) | 3.37 s | (hot cache) |
+| MATLAB serial | 27.0 s | - |
+
+Errors:
 ```text
-Energy error: 0.0247816
-L2 error:     0.00166544
-FE-L2 error:  0.0145842
+Energy: 0.0247816   L2: 0.00166544   FE-L2: 0.0145842
 ```
 
 CHOLMOD is now stable and exact against golden corrector data, but remains
