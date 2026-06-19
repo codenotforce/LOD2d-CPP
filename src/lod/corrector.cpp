@@ -5,6 +5,7 @@
 #include <set>
 #include <algorithm>
 #include <stdexcept>
+#include <limits>
 #include "solver/cholmod_wrapper.h"
 
 namespace lod2d {
@@ -86,24 +87,67 @@ compute_corrector(int k,
 
     // ---- 2. Fine patch DOFs ----
     // dofph: interior fine vertices in patch
-    std::vector<int> fine_vtx_count(Nh, 0);
-    for (int e : fine_patch_elems)
-        for (int vi : fine.elems[e])
+    thread_local std::vector<int> fine_vtx_count;
+    thread_local std::vector<int> fine_vtx_seen;
+    thread_local int fine_vtx_stamp = 0;
+    if (static_cast<int>(fine_vtx_count.size()) != Nh) {
+        fine_vtx_count.assign(Nh, 0);
+        fine_vtx_seen.assign(Nh, 0);
+        fine_vtx_stamp = 0;
+    }
+    if (fine_vtx_stamp == std::numeric_limits<int>::max()) {
+        std::fill(fine_vtx_seen.begin(), fine_vtx_seen.end(), 0);
+        fine_vtx_stamp = 0;
+    }
+    ++fine_vtx_stamp;
+
+    std::vector<int> touched_fine_vertices;
+    touched_fine_vertices.reserve(3 * fine_patch_elems.size());
+    for (int e : fine_patch_elems) {
+        for (int vi : fine.elems[e]) {
+            if (fine_vtx_seen[vi] != fine_vtx_stamp) {
+                fine_vtx_seen[vi] = fine_vtx_stamp;
+                fine_vtx_count[vi] = 0;
+                touched_fine_vertices.push_back(vi);
+            }
             fine_vtx_count[vi]++;
+        }
+    }
     std::vector<int> dofph;
-    for (int v = 0; v < Nh; ++v)
+    dofph.reserve(touched_fine_vertices.size());
+    for (int v : touched_fine_vertices)
         if (fine_vtx_count[v] > 0 && fine_vtx_count[v] == nngh[v])
             dofph.push_back(v);
 
     // Build map: global vertex → local index in dofph
-    std::vector<int> dofph_map(Nh, -1);
-    for (size_t i = 0; i < dofph.size(); ++i) dofph_map[dofph[i]] = static_cast<int>(i);
+    thread_local std::vector<int> dofph_map;
+    thread_local std::vector<int> dofph_seen;
+    thread_local int dofph_stamp = 0;
+    if (static_cast<int>(dofph_map.size()) != Nh) {
+        dofph_map.assign(Nh, -1);
+        dofph_seen.assign(Nh, 0);
+        dofph_stamp = 0;
+    }
+    if (dofph_stamp == std::numeric_limits<int>::max()) {
+        std::fill(dofph_seen.begin(), dofph_seen.end(), 0);
+        dofph_stamp = 0;
+    }
+    ++dofph_stamp;
+    for (size_t i = 0; i < dofph.size(); ++i) {
+        const int v = dofph[i];
+        dofph_map[v] = static_cast<int>(i);
+        dofph_seen[v] = dofph_stamp;
+    }
+    auto local_fine_dof = [&](int v) -> int {
+        return dofph_seen[v] == dofph_stamp ? dofph_map[v] : -1;
+    };
 
     // ---- 3. Sph: direct CG assembly from patch elements (O(|patch|)) ----
     // Shdg is block-diagonal → Ke = 3×3 block at (3e, 3e+1, 3e+2).
     // Sph(v_i, v_j) = sum_{e in patch} Ke(local_i, local_j) for interior v_i, v_j.
     int Nph = static_cast<int>(dofph.size());
     std::vector<Eigen::Triplet<double>> sph_t;
+    sph_t.reserve(9 * fine_patch_elems.size());
     for (int e : fine_patch_elems) {
         Eigen::Matrix3d Ke;
         if (element_stiffness) {
@@ -118,9 +162,9 @@ compute_corrector(int k,
         }
 
         for (int i = 0; i < 3; ++i) {
-            int li = dofph_map[fine.elems[e][i]]; if (li < 0) continue;
+            int li = local_fine_dof(fine.elems[e][i]); if (li < 0) continue;
             for (int j = 0; j < 3; ++j) {
-                int lj = dofph_map[fine.elems[e][j]]; if (lj < 0) continue;
+                int lj = local_fine_dof(fine.elems[e][j]); if (lj < 0) continue;
                 if (Ke(i, j) != 0.0) sph_t.emplace_back(li, lj, Ke(i, j));
             }
         }
@@ -130,6 +174,7 @@ compute_corrector(int k,
 
     // ---- 4. rhsp: direct assembly from target elements (O(|target|)) ----
     std::vector<Eigen::Triplet<double>> rhs_t;
+    rhs_t.reserve(3 * (d + 1) * fine_target_elems.size());
     for (int e : fine_target_elems) {
         int dg0 = 3*e;
         Eigen::Matrix3d Ke;
@@ -144,7 +189,7 @@ compute_corrector(int k,
         }
 
         for (int i = 0; i < 3; ++i) {
-            int li = dofph_map[fine.elems[e][i]]; if (li < 0) continue;
+            int li = local_fine_dof(fine.elems[e][i]); if (li < 0) continue;
             for (int j = 0; j < d+1; ++j) {
                 double val = 0;
                 for (int r = 0; r < 3; ++r)
@@ -156,24 +201,21 @@ compute_corrector(int k,
     Eigen::SparseMatrix<double> rhsp(Nph, d+1);
     rhsp.setFromTriplets(rhs_t.begin(), rhs_t.end());
 
-    // ---- 6. IHp = IH(dofpH, dofph) — simple double loop (IH small NH×Nh) ----
+    // ---- 6. IHp = IH(dofpH, dofph) — dense local block ----
     int nd = static_cast<int>(dofpH.size());
-    Eigen::SparseMatrix<double> IHp(nd, Nph);
+    Eigen::MatrixXd IHp_dense = Eigen::MatrixXd::Zero(nd, Nph);
     for (int i = 0; i < nd; ++i) {
         int row = dofpH[i];
         for (int j = 0; j < Nph; ++j) {
             double v = IH.coeff(row, dofph[j]);
-            if (v != 0.0) IHp.insert(i, j) = v;
+            if (v != 0.0) IHp_dense(i, j) = v;
         }
     }
 
     // ---- 7. Solve X = Sph \ [IHp', rhsp] ----
     Eigen::MatrixXd RHS(Nph, nd + d + 1);
     RHS.setZero();
-    // IHp': Nph × nd
-    for (int k_ih = 0; k_ih < IHp.outerSize(); ++k_ih)
-        for (Eigen::SparseMatrix<double>::InnerIterator it(IHp, k_ih); it; ++it)
-            RHS(it.col(), it.row()) = it.value();
+    RHS.leftCols(nd) = IHp_dense.transpose();
     // rhsp: Nph × (d+1)
     for (int k_rh = 0; k_rh < rhsp.outerSize(); ++k_rh)
         for (Eigen::SparseMatrix<double>::InnerIterator it(rhsp, k_rh); it; ++it)
@@ -184,25 +226,27 @@ compute_corrector(int k,
         X = solve_cholmod(Sph, RHS);
     } else {
         Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph);
-        for (int jj = 0; jj < nd+d+1; ++jj) X.col(jj) = llt.solve(RHS.col(jj));
+        X = llt.solve(RHS);
     }
 
     // ---- 8. mu = (IHp * X1) \ (IHp * X2) ----
-    Eigen::MatrixXd IHp_dense = IHp;
     Eigen::MatrixXd X1 = X.leftCols(nd);
     Eigen::MatrixXd X2 = X.rightCols(d+1);
     Eigen::MatrixXd mu = (IHp_dense * X1).colPivHouseholderQr().solve(IHp_dense * X2);
 
     // ---- 9. Store ----
-    Eigen::SparseMatrix<double> CTk(Nh, d+1);
+    std::vector<Eigen::Triplet<double>> ctk_t;
+    ctk_t.reserve(static_cast<size_t>(Nph) * static_cast<size_t>(d + 1));
     for (int i = 0; i < Nph; ++i) {
         int global_row = dofph[i];
         for (int j = 0; j < d+1; ++j) {
             double val = X2(i, j);
             for (int r = 0; r < nd; ++r) val -= X1(i, r) * mu(r, j);
-            if (std::abs(val) > 1e-15) CTk.insert(global_row, j) = val;
+            if (std::abs(val) > 1e-15) ctk_t.emplace_back(global_row, j, val);
         }
     }
+    Eigen::SparseMatrix<double> CTk(Nh, d+1);
+    CTk.setFromTriplets(ctk_t.begin(), ctk_t.end());
 
     return CTk;
 }

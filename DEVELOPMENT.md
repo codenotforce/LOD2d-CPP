@@ -23,6 +23,8 @@ cmake --build build -j 8
 ./build/tests/test_full
 ./build/benchmarks/bench_H4h8 --solver=eigen
 ./build/benchmarks/bench_H4h8 --solver=cholmod
+OMP_NUM_THREADS=16 ./build/benchmarks/bench_H4h9 --solver=eigen
+OMP_NUM_THREADS=16 ./build/benchmarks/bench_H4h9 --solver=cholmod
 ./build/benchmarks/bench_refine
 ```
 
@@ -31,8 +33,12 @@ Latest results:
 - `test_dg`: 10 PASS, 0 FAIL
 - `test_corr --solver=both`: 6 PASS, 0 FAIL
 - `test_full`: 3 PASS, 0 FAIL
-- H4/h8 Eigen correctors: about 2.93-3.01 s in sequential benchmark runs
-- H4/h8 CHOLMOD correctors: about 3.25 s in the same setup
+- H4/h8 Eigen correctors: below 1 s in representative 16-thread runs after
+  multi-RHS and scratch-buffer optimization
+- H4/h9 Eigen correctors: about 6.1 s on a clean 16-thread run
+- H4/h9 total runtime: about 13.2 s on the same run
+- H4/h9 errors: `E=0.0257411`, `L2=0.00175159`, `FE=0.0157131`
+- H4/h9 CHOLMOD correctors: about 5.0 s, but total runtime was about 17.1 s
 
 Eigen remains the default corrector solver.
 
@@ -143,11 +149,57 @@ the current LOD patch sizes.
 an executable.  This caused full builds to fail at link time.  It is now a real
 mesh-refinement timing benchmark.
 
+### 5. Multi-RHS Eigen solve
+
+The previous Eigen corrector branch factorized `Sph` once, but solved the
+dense RHS block column by column:
+
+```cpp
+for (int jj = 0; jj < nd+d+1; ++jj)
+    X.col(jj) = llt.solve(RHS.col(jj));
+```
+
+For H4/h9, the local patch matrices and the number of RHS columns are large
+enough that this dominated runtime.  The corrector now uses Eigen's dense
+multi-RHS solve directly:
+
+```cpp
+X = llt.solve(RHS);
+```
+
+This was the largest single speedup and reduced the H4/h9 corrector phase from
+the previously observed 90 s range to single-digit seconds on the same
+16-thread benchmark.
+
+### 6. Corrector scratch-buffer reuse
+
+The corrector previously allocated and cleared `Nh`-sized vectors for every
+coarse element.  At H4/h9, that means 512 correctors repeatedly touching arrays
+with 263169 entries, under OpenMP.
+
+The current implementation uses thread-local marker arrays with integer stamps
+for:
+
+- fine vertex counts inside the current patch,
+- global fine DOF to local patch DOF lookup.
+
+Only vertices touched by the current patch are scanned.  This keeps the
+mathematics unchanged and removes a large amount of allocator and memory
+bandwidth overhead.
+
+### 7. Local sparse insertion cleanup
+
+`IHp` is now built as a dense local block because it is consumed immediately in
+dense products.  `CTk` is assembled through triplets instead of repeated sparse
+`insert` calls.  These changes are smaller than the multi-RHS solve but help
+stabilize the OpenMP benchmark timings.
+
 ## Failed or Rejected Experiments
 
 | Experiment | Result |
 |------------|--------|
 | CHOLMOD as default corrector solver | Correct but slower than Eigen for H4/h8 |
+| CHOLMOD for H4/h9 | Faster corrector phase than Eigen in one run, but slower total runtime |
 | `IHp` sparse iterator replacement | Previously broke golden data; kept `coeff()` extraction |
 | `symrcm` on each `Sph` | Increased overhead/fill for tested patch matrices |
 | Precomputing full sparse submatrices | Too much serial precompute/broadcast overhead |

@@ -55,6 +55,8 @@ Run benchmarks:
 ./build/benchmarks/bench_refine
 ./build/benchmarks/bench_H4h8 --solver=eigen
 ./build/benchmarks/bench_H4h8 --solver=cholmod
+./build/benchmarks/bench_H4h9 --solver=eigen
+./build/benchmarks/bench_H4h9 --solver=cholmod
 ./build/benchmarks/bench_profile
 ```
 
@@ -73,11 +75,12 @@ backend.
 | Element corrector | Complete | `test_corr`: Eigen and CHOLMOD pass |
 | Full LOD pipeline | Complete | `test_full`: 3/3 pass |
 | H4/h8 benchmark | Complete | Error check vs MATLAB reference |
+| H4/h9 benchmark | Complete | Error check vs MATLAB reference |
 
 ## Recent Optimization Work
 
-The current corrector path uses two caches that avoid repeated global sparse
-matrix work inside each element corrector:
+The current corrector path avoids repeated global sparse work and unnecessary
+local allocations inside each element corrector:
 
 1. `ElementStiffnessBlocks`: stores each fine element's local 3x3 stiffness
    block while assembling DG stiffness, so correctors no longer repeatedly scan
@@ -85,10 +88,26 @@ matrix work inside each element corrector:
 2. `FineElementChildren`: stores the `coarse element -> fine children` mapping
    from `P_elem`, so correctors no longer compute `P0 * patch(:, k)` and scan
    all fine elements for every coarse element.
+3. Multi-RHS local solves: the Eigen corrector now calls `llt.solve(RHS)` once
+   instead of solving each RHS column separately after the same factorization.
+4. Thread-local scratch buffers: large `Nh`-sized marker arrays are reused per
+   OpenMP thread instead of being allocated and cleared for every corrector.
+5. Local dense `IHp` and triplet `CTk` construction avoid many tiny sparse
+   insertions in the hot loop.
 
-On the WSL H4/h8 benchmark, the Eigen corrector phase improved from roughly
-3.63 s to about 2.93-3.01 s on the measured 16-thread runs.  Total runtime
-improved from roughly 4.8 s to about 4.1-4.2 s.  Results still match MATLAB:
+On the WSL H4/h9 benchmark, the Eigen corrector phase improved from the
+previous 16-thread median of about 92 s to about 6.1 s.  Total runtime improved
+from about 98.6 s to about 13.2 s, while preserving the MATLAB reference
+errors exactly:
+
+```text
+Energy error: 0.0257411
+L2 error:     0.00175159
+FE-L2 error:  0.0157131
+```
+
+On H4/h8, the Eigen corrector phase is now below 1 s in representative
+16-thread runs.  Results still match MATLAB:
 
 ```text
 Energy error: 0.0247816
