@@ -9,7 +9,8 @@ namespace lod2d {
 
 enum class CorrectorSolver {
     EigenLLT,
-    Cholmod
+    Cholmod,
+    CholmodCached
 };
 
 using FineElementChildren = std::vector<std::vector<int>>;
@@ -68,3 +69,4 @@ compute_corrector(int k,
     const InterpolationRows *interpolation_rows = nullptr);
 
 } // namespace lod2d
+

@@ -1,4 +1,4 @@
-﻿# LOD2d-C++ Development Log
+# LOD2d-C++ Development Log
 
 This file records the MATLAB-to-C++ migration decisions, correctness traps, and
 performance experiments.
@@ -34,21 +34,21 @@ Latest test results:
 - `test_corr --solver=both`: 6 PASS, 0 FAIL
 - `test_full`: 3 PASS, 0 FAIL
 
-### H=4, h=9, ell=2 (7-run median, OMP_NUM_THREADS=16)
+### H=4, h=9, ℓ=2 (7-run median, OMP_NUM_THREADS=16)
 
 | Version | Median | Range |
 |---------|--------|-------|
-| **C++ 16t** | **9.79 s** | 9.48-10.01 s |
-| MATLAB parallel (4w) | 23.57 s | 22.90-24.07 s |
-| MATLAB serial | 49.39 s | 48.19-52.17 s |
+| **C++ 16t** | **9.79 s** | 9.48–10.01 s |
+| MATLAB parallel (4w) | 23.57 s | 22.90–24.07 s |
+| MATLAB serial | 49.39 s | 48.19–52.17 s |
 
-Speedup: C++ 5.0x vs MATLAB serial, 2.4x vs MATLAB parallel.
+Speedup: C++ 5.0× vs MATLAB serial, 2.4× vs MATLAB parallel.
 
-### H=4, h=8, ell=2 (20-run median, OMP_NUM_THREADS=16)
+### H=4, h=8, ℓ=2 (20-run median, OMP_NUM_THREADS=16)
 
 | Version | Median | Range |
 |---------|--------|-------|
-| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
+| **C++ 16t** | **1.73 s** | 1.45–1.99 s |
 
 Errors identical to MATLAB across all versions.
 

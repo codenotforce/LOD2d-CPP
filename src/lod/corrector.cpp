@@ -136,7 +136,7 @@ compute_corrector_entries(int k,
         if (fine_vtx_count[v] > 0 && fine_vtx_count[v] == nngh[v])
             dofph.push_back(v);
 
-    // Build map: global vertex → local index in dofph
+    // Build map: global vertex ??local index in dofph
     thread_local std::vector<int> dofph_map;
     thread_local std::vector<int> dofph_seen;
     thread_local int dofph_stamp = 0;
@@ -160,7 +160,7 @@ compute_corrector_entries(int k,
     };
 
     // ---- 3. Sph: direct CG assembly from patch elements (O(|patch|)) ----
-    // Shdg is block-diagonal → Ke = 3×3 block at (3e, 3e+1, 3e+2).
+    // Shdg is block-diagonal ??Ke = 3?3 block at (3e, 3e+1, 3e+2).
     // Sph(v_i, v_j) = sum_{e in patch} Ke(local_i, local_j) for interior v_i, v_j.
     int Nph = static_cast<int>(dofph.size());
     std::vector<Eigen::Triplet<double>> sph_t;
@@ -218,7 +218,7 @@ compute_corrector_entries(int k,
     Eigen::SparseMatrix<double> rhsp(Nph, d+1);
     rhsp.setFromTriplets(rhs_t.begin(), rhs_t.end());
 
-    // ---- 6. IHp = IH(dofpH, dofph) — dense local block ----
+    // ---- 6. IHp = IH(dofpH, dofph) ??dense local block ----
     int nd = static_cast<int>(dofpH.size());
     Eigen::MatrixXd IHp_dense = Eigen::MatrixXd::Zero(nd, Nph);
     for (int i = 0; i < nd; ++i) {
@@ -241,7 +241,7 @@ compute_corrector_entries(int k,
     Eigen::MatrixXd RHS(Nph, nd + d + 1);
     RHS.setZero();
     RHS.leftCols(nd) = IHp_dense.transpose();
-    // rhsp: Nph × (d+1)
+    // rhsp: Nph ? (d+1)
     for (int k_rh = 0; k_rh < rhsp.outerSize(); ++k_rh)
         for (Eigen::SparseMatrix<double>::InnerIterator it(rhsp, k_rh); it; ++it)
             RHS(it.row(), nd + it.col()) = it.value();
@@ -249,6 +249,8 @@ compute_corrector_entries(int k,
     Eigen::MatrixXd X(Nph, nd+d+1);
     if (solver == CorrectorSolver::Cholmod) {
         X = solve_cholmod(Sph, RHS);
+    } else if (solver == CorrectorSolver::CholmodCached) {
+        X = solve_cholmod_cached(Sph, RHS);
     } else {
         Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph);
         X = llt.solve(RHS);
@@ -306,3 +308,5 @@ compute_corrector(int k,
 }
 
 } // namespace lod2d
+
+

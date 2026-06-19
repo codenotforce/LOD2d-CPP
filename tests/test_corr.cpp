@@ -25,19 +25,22 @@ struct GoldenElem {
 };
 
 const char *solver_name(CorrectorSolver solver) {
-    return solver == CorrectorSolver::Cholmod ? "cholmod" : "eigen";
+    if (solver == CorrectorSolver::Cholmod) return "cholmod";
+    if (solver == CorrectorSolver::CholmodCached) return "cholmod_cached";
+    return "eigen";
 }
 
 std::vector<CorrectorSolver> parse_solvers(int argc, char **argv) {
     std::string arg = "--solver=eigen";
     if (argc > 1) arg = argv[1];
     if (arg.rfind("--solver=", 0) != 0) {
-        throw std::invalid_argument("usage: test_corr [--solver=eigen|cholmod|both]");
+        throw std::invalid_argument("usage: test_corr [--solver=eigen|cholmod|cholmod_cached|both]");
     }
 
     std::string value = arg.substr(std::string("--solver=").size());
     if (value == "eigen") return {CorrectorSolver::EigenLLT};
     if (value == "cholmod") return {CorrectorSolver::Cholmod};
+    if (value == "cholmod_cached") return {CorrectorSolver::CholmodCached};
     if (value == "both") return {CorrectorSolver::EigenLLT, CorrectorSolver::Cholmod};
     throw std::invalid_argument("unknown solver: " + value);
 }
@@ -149,3 +152,4 @@ int main(int argc, char **argv) {
     std::cout << "========================================\n";
     return (total_failed > 0) ? 1 : 0;
 }
+

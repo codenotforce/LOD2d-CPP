@@ -27,7 +27,9 @@ struct Options {
 };
 
 const char *solver_name(CorrectorSolver s) {
-    return s == CorrectorSolver::Cholmod ? "cholmod" : "eigen";
+    if (s == CorrectorSolver::Cholmod) return "cholmod";
+    if (s == CorrectorSolver::CholmodCached) return "cholmod_cached";
+    return "eigen";
 }
 
 Options parse_options(int argc, char **argv, int h) {
@@ -38,6 +40,7 @@ Options parse_options(int argc, char **argv, int h) {
             std::string value = arg.substr(std::string("--solver=").size());
             if (value == "eigen") opt.solver = CorrectorSolver::EigenLLT;
             else if (value == "cholmod") opt.solver = CorrectorSolver::Cholmod;
+            else if (value == "cholmod_cached") opt.solver = CorrectorSolver::CholmodCached;
             else if (value == "auto") opt.solver = (h >= 10) ? CorrectorSolver::Cholmod : CorrectorSolver::EigenLLT;
             else throw std::invalid_argument("unknown solver: " + value);
         } else if (arg.rfind("--threads=", 0) == 0) {
@@ -48,7 +51,7 @@ Options parse_options(int argc, char **argv, int h) {
         } else if (arg == "--skip-reference") {
             opt.skip_reference = true;
         } else {
-            throw std::invalid_argument("usage: bench_H4h9 [--solver=eigen|cholmod|auto] [--threads=auto|env|N] [--skip-reference]");
+            throw std::invalid_argument("usage: bench_H4h9 [--solver=eigen|cholmod|cholmod_cached|auto] [--threads=auto|env|N] [--skip-reference]");
         }
     }
     return opt;
@@ -60,7 +63,7 @@ void apply_thread_option(const Options &opt, int h) {
         return;
     }
     if (opt.threads == 0) return;
-    if (h >= 10 && opt.solver == CorrectorSolver::Cholmod && omp_get_max_threads() > 8)
+    if (h >= 10 && (opt.solver == CorrectorSolver::Cholmod || opt.solver == CorrectorSolver::CholmodCached) && omp_get_max_threads() > 8)
         omp_set_num_threads(8);
 }
 #else
@@ -207,3 +210,4 @@ int main(int argc, char **argv) {
     std::cout<<"C++: "<<ms<<" ms\n";
     return 0;
 }
+

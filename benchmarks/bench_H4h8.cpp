@@ -1,4 +1,4 @@
-/// H=4,h=8 benchmark — same pipeline as test_full.cpp (verified correct)
+/// H=4,h=8 benchmark ??same pipeline as test_full.cpp (verified correct)
 #include "lod/corrector.h"
 #include "lod/quasi_interp.h"
 #include "lod/patches.h"
@@ -25,17 +25,20 @@ CorrectorSolver parse_solver(int argc, char **argv) {
     std::string arg = "--solver=eigen";
     if (argc > 1) arg = argv[1];
     if (arg.rfind("--solver=", 0) != 0) {
-        throw std::invalid_argument("usage: bench_H4h8 [--solver=eigen|cholmod]");
+        throw std::invalid_argument("usage: bench_H4h8 [--solver=eigen|cholmod|cholmod_cached]");
     }
 
     std::string value = arg.substr(std::string("--solver=").size());
     if (value == "eigen") return CorrectorSolver::EigenLLT;
     if (value == "cholmod") return CorrectorSolver::Cholmod;
+    if (value == "cholmod_cached") return CorrectorSolver::CholmodCached;
     throw std::invalid_argument("unknown solver: " + value);
 }
 
 const char *solver_name(CorrectorSolver solver) {
-    return solver == CorrectorSolver::Cholmod ? "cholmod" : "eigen";
+    if (solver == CorrectorSolver::Cholmod) return "cholmod";
+    if (solver == CorrectorSolver::CholmodCached) return "cholmod_cached";
+    return "eigen";
 }
 
 } // namespace
@@ -180,3 +183,4 @@ int main(int argc, char **argv) {
     std::cout<<"\nC++: "<<ms<<" ms  MATLAB: ~30400 ms  Speedup: "<<30400.0/ms<<"x\n";
     return ok?0:1;
 }
+
