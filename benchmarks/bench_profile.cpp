@@ -1,4 +1,4 @@
-/// Phase timing breakdown for H=4, h=8
+/// Phase timing breakdown — uses optimized C_ell path (same as bench_H4h8)
 #include "lod/corrector.h"
 #include "lod/quasi_interp.h"
 #include "lod/patches.h"
@@ -19,15 +19,15 @@ using namespace lod2d;
 namespace chr = std::chrono;
 
 int main() {
-    int H=4, h=8, d=2, ell=2;
-    std::ifstream af("benchmarks/data_H4h8.txt");
+    int H=4, h=10, ell=2, d=2;
+    std::ifstream af("benchmarks/data_H4h10.txt");
     int nAh; af >> nAh; std::vector<double> Ah(nAh);
     for (int i=0;i<nAh;++i) af >> Ah[i];
 
     TriMesh T0;
     T0.nodes={{0,0},{1,0},{1,1},{0,1}}; T0.elems={{0,1,3},{1,2,3}}; T0.dirichlet={0,1,2,3};
 
-    std::cout << "=== C++ LOD Phase Timing (H=4,h=8) ===\n\n";
+    std::cout << "=== C++ LOD Phase Timing (H=" << H << ",h=" << h << ") ===\n\n";
 
     // 1. Mesh refinement
     auto t1a = chr::high_resolution_clock::now();
@@ -55,8 +55,9 @@ int main() {
     Eigen::SparseMatrix<double> cg2dgh(3*NTh_f,Nh); cg2dgh.setFromTriplets(cg_t.begin(),cg_t.end());
     auto element_stiffness=assemble_element_stiffness(fine,Ah);
     Eigen::SparseMatrix<double> Shdg=assemble_dg_from_element_stiffness(element_stiffness);
-    Eigen::SparseMatrix<double> IH=build_quasi_interp(coarse,fine,f_out.P_dg,cg2dgh,Nh,NH);
-    Eigen::SparseMatrix<double> patch=build_patches(coarse,ell);
+    auto IH=build_quasi_interp(coarse,fine,f_out.P_dg,cg2dgh,Nh,NH);
+    auto interpolation_rows=build_interpolation_rows(IH,NH);
+    auto patch=build_patches(coarse,ell);
     auto fine_element_children=build_fine_element_children(f_out.P_elem,NTH);
     auto areas=compute_area(fine);
     Eigen::SparseMatrix<double> Sh=assemble_cg_from_element_stiffness(fine,element_stiffness);
@@ -67,10 +68,10 @@ int main() {
 
     // 3. Correctors
     auto t3a = chr::high_resolution_clock::now();
-    std::vector<Eigen::SparseMatrix<double>> CT(NTH);
+    std::vector<CorrectorEntries> CT(NTH);
     #pragma omp parallel for schedule(dynamic)
     for(int k=0;k<NTH;++k)
-        CT[k]=compute_corrector(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,CorrectorSolver::EigenLLT,&element_stiffness,&fine_element_children);
+        CT[k]=compute_corrector_entries(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,CorrectorSolver::EigenLLT,&element_stiffness,&fine_element_children,&interpolation_rows);
     auto t3b = chr::high_resolution_clock::now();
     double t3 = chr::duration<double,std::milli>(t3b-t3a).count();
 #ifdef _OPENMP
@@ -79,7 +80,7 @@ int main() {
     std::cout << "3. Correctors: " << t3 << " ms (serial, " << NTH/t3*1000 << " elem/s)\n";
 #endif
 
-    // 4. C_ell + G
+    // 4. G = P_node - C_ell (direct assembly, no cell_mat)
     auto t4a = chr::high_resolution_clock::now();
     std::vector<Eigen::Triplet<double>> g_t;
     g_t.reserve(f_out.P_node.nonZeros());
@@ -87,9 +88,8 @@ int main() {
         for(Eigen::SparseMatrix<double>::InnerIterator it(f_out.P_node,c);it;++it)
             g_t.emplace_back(it.row(),it.col(),it.value());
     for(int k=0;k<NTH;++k)
-        for(int c=0;c<CT[k].outerSize();++c)
-            for(Eigen::SparseMatrix<double>::InnerIterator it(CT[k],c);it;++it)
-                g_t.emplace_back(it.row(),coarse.elems[k][static_cast<int>(it.col())],-it.value());
+        for(const auto &entry:CT[k])
+            g_t.emplace_back(entry.row,coarse.elems[k][entry.col],-entry.value);
     Eigen::SparseMatrix<double> G(Nh,NH); G.setFromTriplets(g_t.begin(),g_t.end());
     auto t4b = chr::high_resolution_clock::now();
     double t4 = chr::duration<double,std::milli>(t4b-t4a).count();
@@ -97,14 +97,12 @@ int main() {
 
     // 5. Coarse LOD solve
     auto t5a = chr::high_resolution_clock::now();
-    std::vector<int> dofH; std::vector<int> dofH_map(NH,-1);
-    std::vector<char> is_dirH(NH,false);
-    for(int dv:coarse.dirichlet)is_dirH[dv]=true;
-    for(int i=0;i<NH;++i)if(!is_dirH[i]){dofH_map[i]=static_cast<int>(dofH.size());dofH.push_back(i);}
+    std::vector<int> dofH; std::unordered_map<int,int> dofH_map;
+    for(int i=0;i<NH;++i){bool dir=false;for(int dv:coarse.dirichlet)if(dv==i)dir=true;if(!dir){dofH_map[i]=dofH.size();dofH.push_back(i);}}
     std::vector<Eigen::Triplet<double>> g0_t;
     for(int k2=0;k2<G.outerSize();++k2)
         for(Eigen::SparseMatrix<double>::InnerIterator it(G,k2);it;++it)
-            if(dofH_map[it.col()]>=0)g0_t.emplace_back(it.row(),dofH_map[it.col()],it.value());
+            if(dofH_map.count(it.col()))g0_t.emplace_back(it.row(),dofH_map[it.col()],it.value());
     Eigen::SparseMatrix<double> G0(Nh,dofH.size()); G0.setFromTriplets(g0_t.begin(),g0_t.end());
     Eigen::SparseMatrix<double> SHLOD0=G0.transpose()*Sh*G0;
     Eigen::VectorXd f_coarse=Eigen::VectorXd::Ones(NH);
@@ -119,21 +117,19 @@ int main() {
 
     // 6. Reference
     auto t6a = chr::high_resolution_clock::now();
-    std::vector<int> dofh; std::vector<int> dofh_map(Nh,-1);
-    std::vector<char> is_dirh(Nh,false);
-    for(int dv:fine.dirichlet)is_dirh[dv]=true;
-    for(int i=0;i<Nh;++i)if(!is_dirh[i]){dofh_map[i]=static_cast<int>(dofh.size());dofh.push_back(i);}
+    std::vector<int> dofh; std::unordered_map<int,int> dofh_map;
+    for(int i=0;i<Nh;++i){bool dir=false;for(int dv:fine.dirichlet)if(dv==i)dir=true;if(!dir){dofh_map[i]=dofh.size();dofh.push_back(i);}}
     std::vector<Eigen::Triplet<double>> sh_t;
     for(int k2=0;k2<Sh.outerSize();++k2)
         for(Eigen::SparseMatrix<double>::InnerIterator it(Sh,k2);it;++it)
-            if(dofh_map[it.row()]>=0&&dofh_map[it.col()]>=0)
+            if(dofh_map.count(it.row())&&dofh_map.count(it.col()))
                 sh_t.emplace_back(dofh_map[it.row()],dofh_map[it.col()],it.value());
     Eigen::SparseMatrix<double> Sh_free(dofh.size(),dofh.size()); Sh_free.setFromTriplets(sh_t.begin(),sh_t.end());
     Eigen::VectorXd f_fine=Eigen::VectorXd::Ones(Nh);
     Eigen::VectorXd rhs_ref=Eigen::VectorXd::Zero(dofh.size());
     for(int k2=0;k2<Mh.outerSize();++k2)
         for(Eigen::SparseMatrix<double>::InnerIterator it(Mh,k2);it;++it)
-            if(dofh_map[it.row()]>=0)rhs_ref(dofh_map[it.row()])+=it.value()*f_fine(it.col());
+            if(dofh_map.count(it.row()))rhs_ref(dofh_map[it.row()])+=it.value()*f_fine(it.col());
     Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt_ref(Sh_free);
     Eigen::VectorXd uh=Eigen::VectorXd::Zero(Nh), uf2=llt_ref.solve(rhs_ref);
     for(size_t j=0;j<dofh.size();++j)uh(dofh[j])=uf2(j);
@@ -144,8 +140,8 @@ int main() {
     // Errors
     Eigen::VectorXd diff=uh-uHms, diff_fe=uh-f_out.P_node*uH;
     double errE=std::sqrt(diff.dot(Sh*diff)), errL2=std::sqrt(diff.dot(Mh*diff)), errFE=std::sqrt(diff_fe.dot(Mh*diff_fe));
-    std::cout << "\n=== Errors (MATLAB: E=2.478e-02 L2=1.665e-03 FE=1.458e-02) ===\n";
-    std::cout << "E=" << errE << " L2=" << errL2 << " FE=" << errFE << "\n";
-    std::cout << "Total: " << (t1+t2+t3+t4+t5+t6) << " ms\n";
+    double total=t1+t2+t3+t4+t5+t6;
+    std::cout << "\nErrors: E=" << errE << " L2=" << errL2 << " FE=" << errFE << "\n";
+    std::cout << "Total: " << total << " ms\n";
     return 0;
 }

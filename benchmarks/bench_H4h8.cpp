@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
     auto element_stiffness=assemble_element_stiffness(fine,Ah);
     Eigen::SparseMatrix<double> Shdg=assemble_dg_from_element_stiffness(element_stiffness);
     auto IH=build_quasi_interp(coarse,fine,f_out.P_dg,cg2dgh,Nh,NH);
+    auto interpolation_rows=build_interpolation_rows(IH,NH);
     auto patch=build_patches(coarse,ell);
     auto fine_element_children=build_fine_element_children(f_out.P_elem,NTH);
     auto areas=compute_area(fine);
@@ -94,10 +95,10 @@ int main(int argc, char **argv) {
 
     // ---- Correctors (parallel) ----
     auto tc0=chr::high_resolution_clock::now();
-    std::vector<Eigen::SparseMatrix<double>> CT(NTH);
+    std::vector<CorrectorEntries> CT(NTH);
     #pragma omp parallel for schedule(dynamic)
     for(int k=0;k<NTH;++k)
-        CT[k]=compute_corrector(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,solver,&element_stiffness,&fine_element_children);
+        CT[k]=compute_corrector_entries(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,solver,&element_stiffness,&fine_element_children,&interpolation_rows);
     auto tc1=chr::high_resolution_clock::now();
     double tc=chr::duration<double,std::milli>(tc1-tc0).count();
     std::cout<<"Correctors ("<<solver_name(solver)<<"): "<<tc<<" ms";
@@ -113,9 +114,8 @@ int main(int argc, char **argv) {
         for(Eigen::SparseMatrix<double>::InnerIterator it(f_out.P_node,c);it;++it)
             g_t.emplace_back(it.row(),it.col(),it.value());
     for(int k=0;k<NTH;++k)
-        for(int c=0;c<CT[k].outerSize();++c)
-            for(Eigen::SparseMatrix<double>::InnerIterator it(CT[k],c);it;++it)
-                g_t.emplace_back(it.row(),coarse.elems[k][static_cast<int>(it.col())],-it.value());
+        for(const auto &entry:CT[k])
+            g_t.emplace_back(entry.row,coarse.elems[k][entry.col],-entry.value);
     Eigen::SparseMatrix<double> G(Nh,NH); G.setFromTriplets(g_t.begin(),g_t.end());
 
     // ---- Coarse LOD ----

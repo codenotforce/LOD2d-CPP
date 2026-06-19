@@ -24,8 +24,22 @@ FineElementChildren build_fine_element_children(
     return children;
 }
 
-Eigen::SparseMatrix<double>
-compute_corrector(int k,
+InterpolationRows build_interpolation_rows(
+    const Eigen::SparseMatrix<double> &IH,
+    int coarse_vertex_count) {
+    InterpolationRows rows(coarse_vertex_count);
+    for (int col = 0; col < IH.outerSize(); ++col) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(IH, col); it; ++it) {
+            const int row = static_cast<int>(it.row());
+            if (row >= 0 && row < coarse_vertex_count && it.value() != 0.0)
+                rows[row].emplace_back(static_cast<int>(it.col()), it.value());
+        }
+    }
+    return rows;
+}
+
+CorrectorEntries
+compute_corrector_entries(int k,
     const Eigen::SparseMatrix<double> &patch,
     const TriMesh &coarse, int NH, const std::vector<int> &nngH,
     const Eigen::SparseMatrix<double> &P0,
@@ -39,11 +53,14 @@ compute_corrector(int k,
     int d,
     CorrectorSolver solver,
     const ElementStiffnessBlocks *element_stiffness,
-    const FineElementChildren *fine_element_children) {
+    const FineElementChildren *fine_element_children,
+    const InterpolationRows *interpolation_rows) {
     if (element_stiffness && element_stiffness->size() != fine.elems.size())
         throw std::invalid_argument("element_stiffness size must match fine element count");
     if (fine_element_children && fine_element_children->size() != coarse.elems.size())
         throw std::invalid_argument("fine_element_children size must match coarse element count");
+    if (interpolation_rows && interpolation_rows->size() != coarse.nodes.size())
+        throw std::invalid_argument("interpolation_rows size must match coarse vertex count");
 
     // ---- 1. Coarse patch DOFs and fine patch elements ----
     std::vector<int> tpH_list;
@@ -206,9 +223,17 @@ compute_corrector(int k,
     Eigen::MatrixXd IHp_dense = Eigen::MatrixXd::Zero(nd, Nph);
     for (int i = 0; i < nd; ++i) {
         int row = dofpH[i];
-        for (int j = 0; j < Nph; ++j) {
-            double v = IH.coeff(row, dofph[j]);
-            if (v != 0.0) IHp_dense(i, j) = v;
+        if (interpolation_rows) {
+            for (const auto &[fine_col, value] : (*interpolation_rows)[row]) {
+                const int local_col = local_fine_dof(fine_col);
+                if (local_col >= 0)
+                    IHp_dense(i, local_col) = value;
+            }
+        } else {
+            for (int j = 0; j < Nph; ++j) {
+                double v = IH.coeff(row, dofph[j]);
+                if (v != 0.0) IHp_dense(i, j) = v;
+            }
         }
     }
 
@@ -235,16 +260,45 @@ compute_corrector(int k,
     Eigen::MatrixXd mu = (IHp_dense * X1).colPivHouseholderQr().solve(IHp_dense * X2);
 
     // ---- 9. Store ----
-    std::vector<Eigen::Triplet<double>> ctk_t;
-    ctk_t.reserve(static_cast<size_t>(Nph) * static_cast<size_t>(d + 1));
+    CorrectorEntries entries;
+    entries.reserve(static_cast<size_t>(Nph) * static_cast<size_t>(d + 1));
     for (int i = 0; i < Nph; ++i) {
         int global_row = dofph[i];
         for (int j = 0; j < d+1; ++j) {
             double val = X2(i, j);
             for (int r = 0; r < nd; ++r) val -= X1(i, r) * mu(r, j);
-            if (std::abs(val) > 1e-15) ctk_t.emplace_back(global_row, j, val);
+            if (std::abs(val) > 1e-15) entries.push_back({global_row, j, val});
         }
     }
+    return entries;
+}
+
+Eigen::SparseMatrix<double>
+compute_corrector(int k,
+    const Eigen::SparseMatrix<double> &patch,
+    const TriMesh &coarse, int NH, const std::vector<int> &nngH,
+    const Eigen::SparseMatrix<double> &P0,
+    const TriMesh &fine,   int Nh, const std::vector<int> &nngh,
+    const std::vector<std::array<int,3>> &dghidx,
+    const Eigen::SparseMatrix<double> &cg2dgh,
+    const Eigen::SparseMatrix<double> &Shdg,
+    const Eigen::SparseMatrix<double> &P1dg,
+    const std::vector<std::array<int,3>> &dgHidx,
+    const Eigen::SparseMatrix<double> &IH,
+    int d,
+    CorrectorSolver solver,
+    const ElementStiffnessBlocks *element_stiffness,
+    const FineElementChildren *fine_element_children,
+    const InterpolationRows *interpolation_rows) {
+    CorrectorEntries entries = compute_corrector_entries(k, patch, coarse, NH, nngH,
+        P0, fine, Nh, nngh, dghidx, cg2dgh, Shdg, P1dg, dgHidx, IH, d, solver,
+        element_stiffness, fine_element_children, interpolation_rows);
+
+    std::vector<Eigen::Triplet<double>> ctk_t;
+    ctk_t.reserve(entries.size());
+    for (const auto &entry : entries)
+        ctk_t.emplace_back(entry.row, entry.col, entry.value);
+
     Eigen::SparseMatrix<double> CTk(Nh, d+1);
     CTk.setFromTriplets(ctk_t.begin(), ctk_t.end());
 
