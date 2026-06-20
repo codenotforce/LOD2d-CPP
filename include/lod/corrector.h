@@ -50,6 +50,29 @@ compute_corrector_entries(int k,
     const FineElementChildren *fine_element_children = nullptr,
     const InterpolationRows *interpolation_rows = nullptr);
 
+
+std::vector<CorrectorEntries> compute_all_correctors(
+    const Eigen::SparseMatrix<double> &patch,
+    const TriMesh &coarse, int NH, const std::vector<int> &nngH,
+    const Eigen::SparseMatrix<double> &P0,
+    const TriMesh &fine, int Nh, const std::vector<int> &nngh,
+    const std::vector<std::array<int,3>> &dghidx,
+    const Eigen::SparseMatrix<double> &cg2dgh,
+    const Eigen::SparseMatrix<double> &Shdg,
+    const Eigen::SparseMatrix<double> &P1dg,
+    const std::vector<std::array<int,3>> &dgHidx,
+    const Eigen::SparseMatrix<double> &IH,
+    int d,
+    CorrectorSolver solver = CorrectorSolver::EigenLLT,
+    const ElementStiffnessBlocks *element_stiffness = nullptr,
+    const FineElementChildren *fine_element_children = nullptr,
+    const InterpolationRows *interpolation_rows = nullptr);
+
+Eigen::SparseMatrix<double> build_multiscale_basis(
+    const Eigen::SparseMatrix<double> &P_node,
+    const TriMesh &coarse,
+    int fine_node_count,
+    const std::vector<CorrectorEntries> &correctors);
 Eigen::SparseMatrix<double>
 compute_corrector(int k,
     const Eigen::SparseMatrix<double> &patch,
@@ -69,4 +92,3 @@ compute_corrector(int k,
     const InterpolationRows *interpolation_rows = nullptr);
 
 } // namespace lod2d
-

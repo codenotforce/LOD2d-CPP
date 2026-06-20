@@ -258,6 +258,20 @@ Observed H=4,h=10 results on WSL:
 - correctors inside setup: about 32-34 s,
 - repeated RHS solves: about 50-100 ms per RHS,
 - peak RSS: about 6.6-7.2 GB.
+
+### 11. Corrector pipeline helper extraction
+
+The benchmark and full-test pipelines now use two shared helpers instead of
+copying the same loops in every driver:
+
+- `compute_all_correctors(...)` owns the OpenMP corrector loop and solver
+  dispatch for all coarse elements.
+- `build_multiscale_basis(...)` owns direct assembly of `G = P_node - C_ell`
+  from compact corrector entries.
+
+This is an organizational refactor, not a mathematical change.  It reduces the
+chance that future optimizations, scheduling experiments, or bug fixes are
+applied to one benchmark but forgotten in another.
 ## Failed or Rejected Experiments
 
 | Experiment | Result |

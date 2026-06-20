@@ -119,16 +119,21 @@ reference was skipped.
 Hot benchmark paths must use compact corrector output:
 
 ```cpp
-std::vector<CorrectorEntries> CT(NTH);
-#pragma omp parallel for schedule(dynamic)
-for (int k = 0; k < NTH; ++k) {
-    CT[k] = compute_corrector_entries(...);
-}
+std::vector<CorrectorEntries> CT = compute_all_correctors(...);
 ```
 
 Avoid returning or storing `SparseMatrix(Nh, 3)` for each corrector in benchmark
 hot paths.  The sparse wrapper `compute_corrector(...)` remains for tests and
 golden-data comparison.
+
+Build the multiscale basis through the shared helper:
+
+```cpp
+Eigen::SparseMatrix<double> G = build_multiscale_basis(P_node, coarse, Nh, CT);
+```
+
+Do not duplicate `G = P_node - C_ell` triplet assembly in individual benchmark
+drivers.
 
 ### Required Corrector Caches
 

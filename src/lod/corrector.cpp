@@ -279,6 +279,62 @@ compute_corrector_entries(int k,
     return entries;
 }
 
+
+std::vector<CorrectorEntries> compute_all_correctors(
+    const Eigen::SparseMatrix<double> &patch,
+    const TriMesh &coarse, int NH, const std::vector<int> &nngH,
+    const Eigen::SparseMatrix<double> &P0,
+    const TriMesh &fine, int Nh, const std::vector<int> &nngh,
+    const std::vector<std::array<int,3>> &dghidx,
+    const Eigen::SparseMatrix<double> &cg2dgh,
+    const Eigen::SparseMatrix<double> &Shdg,
+    const Eigen::SparseMatrix<double> &P1dg,
+    const std::vector<std::array<int,3>> &dgHidx,
+    const Eigen::SparseMatrix<double> &IH,
+    int d,
+    CorrectorSolver solver,
+    const ElementStiffnessBlocks *element_stiffness,
+    const FineElementChildren *fine_element_children,
+    const InterpolationRows *interpolation_rows) {
+    const int count = static_cast<int>(patch.cols());
+    std::vector<CorrectorEntries> correctors(count);
+
+    #pragma omp parallel for schedule(dynamic)
+    for (int k = 0; k < count; ++k) {
+        correctors[k] = compute_corrector_entries(k, patch, coarse, NH, nngH,
+            P0, fine, Nh, nngh, dghidx, cg2dgh, Shdg, P1dg, dgHidx, IH, d,
+            solver, element_stiffness, fine_element_children, interpolation_rows);
+    }
+    return correctors;
+}
+
+Eigen::SparseMatrix<double> build_multiscale_basis(
+    const Eigen::SparseMatrix<double> &P_node,
+    const TriMesh &coarse,
+    int fine_node_count,
+    const std::vector<CorrectorEntries> &correctors) {
+    if (correctors.size() < coarse.elems.size())
+        throw std::invalid_argument("corrector count must cover all coarse elements");
+
+    size_t corrector_nnz = 0;
+    for (size_t k = 0; k < coarse.elems.size(); ++k)
+        corrector_nnz += correctors[k].size();
+
+    std::vector<Eigen::Triplet<double>> triplets;
+    triplets.reserve(static_cast<size_t>(P_node.nonZeros()) + corrector_nnz);
+    for (int col = 0; col < P_node.outerSize(); ++col) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(P_node, col); it; ++it)
+            triplets.emplace_back(it.row(), it.col(), it.value());
+    }
+    for (size_t k = 0; k < coarse.elems.size(); ++k) {
+        for (const auto &entry : correctors[k])
+            triplets.emplace_back(entry.row, coarse.elems[k][entry.col], -entry.value);
+    }
+
+    Eigen::SparseMatrix<double> G(fine_node_count, static_cast<int>(coarse.nodes.size()));
+    G.setFromTriplets(triplets.begin(), triplets.end());
+    return G;
+}
 Eigen::SparseMatrix<double>
 compute_corrector(int k,
     const Eigen::SparseMatrix<double> &patch,
@@ -312,4 +368,3 @@ compute_corrector(int k,
 }
 
 } // namespace lod2d
-

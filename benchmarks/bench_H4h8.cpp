@@ -98,10 +98,10 @@ int main(int argc, char **argv) {
 
     // ---- Correctors (parallel) ----
     auto tc0=chr::high_resolution_clock::now();
-    std::vector<CorrectorEntries> CT(NTH);
-    #pragma omp parallel for schedule(dynamic)
-    for(int k=0;k<NTH;++k)
-        CT[k]=compute_corrector_entries(k,patch,coarse,NH,nngH,f_out.P_elem,fine,Nh,nngh,dghidx,cg2dgh,Shdg,f_out.P_dg,dgHidx,IH,d,solver,&element_stiffness,&fine_element_children,&interpolation_rows);
+    std::vector<CorrectorEntries> CT = compute_all_correctors(
+        patch, coarse, NH, nngH, f_out.P_elem, fine, Nh, nngh,
+        dghidx, cg2dgh, Shdg, f_out.P_dg, dgHidx, IH, d, solver,
+        &element_stiffness, &fine_element_children, &interpolation_rows);
     auto tc1=chr::high_resolution_clock::now();
     double tc=chr::duration<double,std::milli>(tc1-tc0).count();
     std::cout<<"Correctors ("<<solver_name(solver)<<"): "<<tc<<" ms";
@@ -111,15 +111,7 @@ int main(int argc, char **argv) {
     std::cout<<"\n";
 
     // ---- G = P_node - C_ell, assembled directly ----
-    std::vector<Eigen::Triplet<double>> g_t;
-    g_t.reserve(f_out.P_node.nonZeros());
-    for(int c=0;c<f_out.P_node.outerSize();++c)
-        for(Eigen::SparseMatrix<double>::InnerIterator it(f_out.P_node,c);it;++it)
-            g_t.emplace_back(it.row(),it.col(),it.value());
-    for(int k=0;k<NTH;++k)
-        for(const auto &entry:CT[k])
-            g_t.emplace_back(entry.row,coarse.elems[k][entry.col],-entry.value);
-    Eigen::SparseMatrix<double> G(Nh,NH); G.setFromTriplets(g_t.begin(),g_t.end());
+    Eigen::SparseMatrix<double> G = build_multiscale_basis(f_out.P_node, coarse, Nh, CT);
 
     // ---- Coarse LOD ----
     std::vector<int> dofH;
@@ -183,4 +175,3 @@ int main(int argc, char **argv) {
     std::cout<<"\nC++: "<<ms<<" ms  MATLAB: ~30400 ms  Speedup: "<<30400.0/ms<<"x\n";
     return ok?0:1;
 }
-

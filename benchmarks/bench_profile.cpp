@@ -131,11 +131,12 @@ int main(int argc, char **argv) {
     std::cout << "2. Operators: " << t2 << " ms (IH:" << interpolation_rows.size() << " rows, patch:" << patch.nonZeros() << "nz)\n";
 
     auto t3a = chr::high_resolution_clock::now();
-    std::vector<CorrectorEntries> CT(NTH);
     Eigen::SparseMatrix<double> unused_sparse;
-    #pragma omp parallel for schedule(dynamic)
-    for(int k=0;k<NTH;++k)
-        CT[k]=compute_corrector_entries(k,patch,coarse,NH,nngH,unused_sparse,fine,Nh,nngh,dghidx,unused_sparse,unused_sparse,f_out.P_dg,dgHidx,unused_sparse,d,opt.solver,&element_stiffness,&fine_element_children,&interpolation_rows);
+    std::vector<CorrectorEntries> CT = compute_all_correctors(
+        patch, coarse, NH, nngH, unused_sparse, fine, Nh, nngh,
+        dghidx, unused_sparse, unused_sparse, f_out.P_dg, dgHidx,
+        unused_sparse, d, opt.solver, &element_stiffness,
+        &fine_element_children, &interpolation_rows);
     auto t3b = chr::high_resolution_clock::now();
     double t3 = chr::duration<double,std::milli>(t3b-t3a).count();
 #ifdef _OPENMP
@@ -150,17 +151,7 @@ int main(int argc, char **argv) {
     f_out.P_dg.swap(empty_pdg);
 
     auto t4a = chr::high_resolution_clock::now();
-    size_t corrector_nnz = 0;
-    for (const auto &entries : CT) corrector_nnz += entries.size();
-    std::vector<Eigen::Triplet<double>> g_t;
-    g_t.reserve(static_cast<size_t>(f_out.P_node.nonZeros()) + corrector_nnz);
-    for(int c=0;c<f_out.P_node.outerSize();++c)
-        for(Eigen::SparseMatrix<double>::InnerIterator it(f_out.P_node,c);it;++it)
-            g_t.emplace_back(it.row(),it.col(),it.value());
-    for(int k=0;k<NTH;++k)
-        for(const auto &entry:CT[k])
-            g_t.emplace_back(entry.row,coarse.elems[k][entry.col],-entry.value);
-    Eigen::SparseMatrix<double> G(Nh,NH); G.setFromTriplets(g_t.begin(),g_t.end());
+    Eigen::SparseMatrix<double> G = build_multiscale_basis(f_out.P_node, coarse, Nh, CT);
     std::vector<CorrectorEntries>().swap(CT);
     auto t4b = chr::high_resolution_clock::now();
     double t4 = chr::duration<double,std::milli>(t4b-t4a).count();
@@ -226,4 +217,3 @@ int main(int argc, char **argv) {
     std::cout << "Total: " << total << " ms\n";
     return 0;
 }
-

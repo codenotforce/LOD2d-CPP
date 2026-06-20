@@ -86,25 +86,30 @@ overhead.
 ## Recent Optimization Work
 
 The current corrector path avoids repeated global sparse work and unnecessary
-local allocations inside each element corrector:
+local allocations inside each element corrector.  Shared helpers now keep the
+benchmark and test pipelines consistent:
 
-1. `ElementStiffnessBlocks`: stores each fine element's local 3x3 stiffness
+1. `compute_all_correctors` centralizes the OpenMP corrector loop and solver
+   selection.
+2. `build_multiscale_basis` centralizes `G = P_node - C_ell` assembly from
+   compact corrector entries.
+3. `ElementStiffnessBlocks`: stores each fine element's local 3x3 stiffness
    block while assembling DG stiffness, so correctors no longer repeatedly scan
    `Shdg` columns to recover the same block.
-2. `FineElementChildren`: stores the `coarse element -> fine children` mapping
+4. `FineElementChildren`: stores the `coarse element -> fine children` mapping
    from `P_elem`, so correctors no longer compute `P0 * patch(:, k)` and scan
    all fine elements for every coarse element.
-3. Multi-RHS local solves: the Eigen corrector now calls `llt.solve(RHS)` once
+5. Multi-RHS local solves: the Eigen corrector now calls `llt.solve(RHS)` once
    instead of solving each RHS column separately after the same factorization.
-4. Thread-local scratch buffers: large `Nh`-sized marker arrays are reused per
+6. Thread-local scratch buffers: large `Nh`-sized marker arrays are reused per
    OpenMP thread instead of being allocated and cleared for every corrector.
-5. Local dense `IHp` and triplet `CTk` construction avoid many tiny sparse
+7. Local dense `IHp` and triplet `CTk` construction avoid many tiny sparse
    insertions in the hot loop.
-6. `cholmod_cached` keeps a bounded thread-local CHOLMOD symbolic factor cache
+8. `cholmod_cached` keeps a bounded thread-local CHOLMOD symbolic factor cache
    for reproducible experiments.  The cache is intentionally capped at one
    pattern per thread after an unlimited cache reached roughly 11.6 GB RSS and
    was killed on the 12 GB WSL test machine.
-7. `LodReusableSystem` caches `G`, `G0`, and the coarse LOD factorization for
+9. `LodReusableSystem` caches `G`, `G0`, and the coarse LOD factorization for
    repeated solves with the same `A`, mesh, `H/h`, and `ell` but different RHS
    values.  In the H4/h10 reuse benchmark, the first setup still costs tens of
    seconds, but later RHS solves are around 50-100 ms each.
