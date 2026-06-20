@@ -55,14 +55,19 @@ Run benchmarks:
 ./build/benchmarks/bench_refine
 ./build/benchmarks/bench_H4h8 --solver=eigen
 ./build/benchmarks/bench_H4h8 --solver=cholmod
+./build/benchmarks/bench_H4h8 --solver=cholmod_cached
 ./build/benchmarks/bench_H4h9 --solver=eigen
 ./build/benchmarks/bench_H4h9 --solver=cholmod
-./build/benchmarks/bench_profile
+./build/benchmarks/bench_H4h9 --solver=cholmod_cached --skip-reference
+./build/benchmarks/bench_profile --solver=auto --skip-reference
 ```
 
-`--solver=eigen` is the default and fastest path for the tested LOD corrector
-sizes.  `--solver=cholmod` is kept as an experimental correctness-checked
-backend.
+`--solver=eigen` is the default for the small tested corrector sizes.
+`--solver=auto` selects CHOLMOD for h>=10 benchmarks and Eigen otherwise.
+`--solver=cholmod_cached` is a correctness-checked experimental path for
+thread-local CHOLMOD symbolic factor reuse; it is not the default because the
+current patch order does not produce enough repeated patterns to offset cache
+overhead.
 
 ## Project Status
 
@@ -72,7 +77,7 @@ backend.
 | DG stiffness assembly | Complete | `test_dg`: 10/10 pass |
 | Quasi-interpolation | Complete | Golden positions vs MATLAB |
 | Patch construction | Complete | Golden patch tests |
-| Element corrector | Complete | `test_corr`: Eigen and CHOLMOD pass |
+| Element corrector | Complete | `test_corr`: Eigen, CHOLMOD, and cached CHOLMOD pass |
 | Full LOD pipeline | Complete | `test_full`: 3/3 pass |
 | H4/h8 benchmark | Complete | Error check vs MATLAB reference |
 | H4/h9 benchmark | Complete | Error check vs MATLAB reference |
@@ -94,35 +99,41 @@ local allocations inside each element corrector:
    OpenMP thread instead of being allocated and cleared for every corrector.
 5. Local dense `IHp` and triplet `CTk` construction avoid many tiny sparse
    insertions in the hot loop.
+6. `cholmod_cached` keeps a bounded thread-local CHOLMOD symbolic factor cache
+   for reproducible experiments.  The cache is intentionally capped at one
+   pattern per thread after an unlimited cache reached roughly 11.6 GB RSS and
+   was killed on the 12 GB WSL test machine.
 
-### Benchmarks (H=4, h=9, ℓ=2, 7-run median, OMP_NUM_THREADS=16)
+### Benchmarks (H=4, h=9, ell=2, 7-run median, OMP_NUM_THREADS=16)
 
 | Version | Median | Range | vs Serial |
 |---------|--------|-------|-----------|
-| **C++ 16t** | **9.79 s** | 9.48–10.01 s | **5.0×** |
-| MATLAB parallel (4w) | 23.57 s | 22.90–24.07 s | 2.1× |
-| MATLAB serial | 49.39 s | 48.19–52.17 s | 1.0× |
+| **C++ 16t** | **9.79 s** | 9.48-10.01 s | **5.0x** |
+| MATLAB parallel (4w) | 23.57 s | 22.90-24.07 s | 2.1x |
+| MATLAB serial | 49.39 s | 48.19-52.17 s | 1.0x |
 
 Errors identical across all versions:
 ```text
 Energy: 0.0257411   L2: 0.00175159   FE-L2: 0.0157131
 ```
 
-### Benchmarks (H=4, h=8, ℓ=2, 20-run median, OMP_NUM_THREADS=16)
+### Benchmarks (H=4, h=8, ell=2, 20-run median, OMP_NUM_THREADS=16)
 
 | Version | Median | Range |
 |---------|--------|-------|
-| **C++ 16t** | **1.73 s** | 1.45–1.99 s |
+| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
 | MATLAB parallel (4w) | 3.37 s | (hot cache) |
-| MATLAB serial | 27.0 s | — |
+| MATLAB serial | 27.0 s | - |
 
 Errors:
 ```text
 Energy: 0.0247816   L2: 0.00166544   FE-L2: 0.0145842
 ```
 
-CHOLMOD is now stable and exact against golden corrector data, but remains
-slower than Eigen for H4/h8 correctors, so it is not the default.
+CHOLMOD is now stable and exact against golden corrector data.  Plain CHOLMOD
+is useful for h=10 benchmarks; cached CHOLMOD is available for experiments but
+was slower in the current h=10 profile because exact local matrix patterns did
+not repeat often enough under the current dynamic patch schedule.
 
 ## Important Migration Notes
 

@@ -21,7 +21,7 @@ but benchmark logic should follow this guide.
 Every full benchmark should support these options:
 
 ```bash
---solver=eigen|cholmod|auto
+--solver=eigen|cholmod|cholmod_cached|auto
 --threads=auto|env|N
 --skip-reference
 ```
@@ -39,6 +39,7 @@ Use one enum from `CorrectorSolver` throughout the benchmark.
 ```cpp
 if (value == "eigen") solver = CorrectorSolver::EigenLLT;
 else if (value == "cholmod") solver = CorrectorSolver::Cholmod;
+else if (value == "cholmod_cached") solver = CorrectorSolver::CholmodCached;
 else if (value == "auto") solver = (h >= 10) ? CorrectorSolver::Cholmod
                                              : CorrectorSolver::EigenLLT;
 ```
@@ -46,7 +47,9 @@ else if (value == "auto") solver = (h >= 10) ? CorrectorSolver::Cholmod
 Current empirical policy:
 
 - `h <= 9`: Eigen is the default because it is stable and has lower overhead.
-- `h >= 10`: CHOLMOD is faster for the corrector phase, but uses more memory.
+- `h >= 10`: plain CHOLMOD is faster for the corrector phase, but uses more memory.
+- `cholmod_cached`: explicit experiment only; do not select it from `auto`
+  unless a fresh benchmark proves it faster on the same machine.
 
 Do not silently change this policy in one benchmark only.  If the policy changes,
 update all benchmark drivers and this guide.
@@ -65,7 +68,9 @@ void apply_thread_option(const Options &opt, int h) {
         return;
     }
     if (opt.threads == 0) return;  // --threads=env
-    if (h >= 10 && opt.solver == CorrectorSolver::Cholmod && omp_get_max_threads() > 8)
+    if (h >= 10 &&
+        (opt.solver == CorrectorSolver::Cholmod || opt.solver == CorrectorSolver::CholmodCached) &&
+        omp_get_max_threads() > 8)
         omp_set_num_threads(8);
 }
 #else
@@ -303,14 +308,19 @@ benchmark backend.  Do not make CHOLMOD the unconditional default.
 Observed behavior:
 
 - h=8 and h=9: Eigen is usually simpler and competitive.
-- h=10: CHOLMOD is faster for correctors, but memory is higher.
+- h=10: plain CHOLMOD is faster for correctors, but memory is higher.
 - h=10 CHOLMOD: 8 OpenMP threads were faster and lower-memory than 12 or 16 on
   the current WSL machine.
+- `cholmod_cached` reuses a bounded thread-local symbolic factor cache.  It is
+  correct but currently experimental: an unbounded cache OOM-killed at about
+  11.6 GB RSS, and the bounded one-pattern cache was slower than plain CHOLMOD
+  in the current h=10 profile.
 
 When changing CHOLMOD options, always compare:
 
 ```bash
 /usr/bin/time -v ./build/benchmarks/bench_profile --solver=cholmod --threads=N --skip-reference
+/usr/bin/time -v ./build/benchmarks/bench_profile --solver=cholmod_cached --threads=N --skip-reference
 ```
 
 Record both wall time and `Maximum resident set size`.

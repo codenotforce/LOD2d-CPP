@@ -34,21 +34,21 @@ Latest test results:
 - `test_corr --solver=both`: 6 PASS, 0 FAIL
 - `test_full`: 3 PASS, 0 FAIL
 
-### H=4, h=9, ℓ=2 (7-run median, OMP_NUM_THREADS=16)
+### H=4, h=9, ell=2 (7-run median, OMP_NUM_THREADS=16)
 
 | Version | Median | Range |
 |---------|--------|-------|
-| **C++ 16t** | **9.79 s** | 9.48–10.01 s |
-| MATLAB parallel (4w) | 23.57 s | 22.90–24.07 s |
-| MATLAB serial | 49.39 s | 48.19–52.17 s |
+| **C++ 16t** | **9.79 s** | 9.48-10.01 s |
+| MATLAB parallel (4w) | 23.57 s | 22.90-24.07 s |
+| MATLAB serial | 49.39 s | 48.19-52.17 s |
 
-Speedup: C++ 5.0× vs MATLAB serial, 2.4× vs MATLAB parallel.
+Speedup: C++ 5.0x vs MATLAB serial, 2.4x vs MATLAB parallel.
 
-### H=4, h=8, ℓ=2 (20-run median, OMP_NUM_THREADS=16)
+### H=4, h=8, ell=2 (20-run median, OMP_NUM_THREADS=16)
 
 | Version | Median | Range |
 |---------|--------|-------|
-| **C++ 16t** | **1.73 s** | 1.45–1.99 s |
+| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
 
 Errors identical to MATLAB across all versions.
 
@@ -98,8 +98,10 @@ The corrector still solves the same MATLAB saddle-point formulation:
 `CorrectorSolver` supports:
 
 - `EigenLLT`: default, fastest in current benchmarks.
-- `Cholmod`: experimental, correctness checked but slower for current patch
-  sizes.
+- `Cholmod`: experimental, useful for h=10 corrector benchmarks but higher
+  memory than Eigen.
+- `CholmodCached`: explicit experiment that reuses a bounded thread-local
+  CHOLMOD symbolic factor when the exact local sparsity pattern repeats.
 
 ## Latest Performance Changes
 
@@ -152,8 +154,8 @@ The new wrapper:
 - checks analyze/factorize/solve failures,
 - returns dense multi-RHS solutions.
 
-CHOLMOD now passes golden corrector tests, but remains slower than Eigen for
-the current LOD patch sizes.
+CHOLMOD now passes golden corrector tests.  Plain CHOLMOD remains the h>=10
+benchmark option, while cached CHOLMOD is kept as an explicit experiment only.
 
 ### 4. Benchmark build fix
 
@@ -206,12 +208,28 @@ dense products.  `CTk` is assembled through triplets instead of repeated sparse
 `insert` calls.  These changes are smaller than the multi-RHS solve but help
 stabilize the OpenMP benchmark timings.
 
+
+### 8. Bounded CHOLMOD symbolic factor cache
+
+`solve_cholmod_cached` keeps a thread-local `cholmod_common` and a bounded map
+from exact local sparse pattern to `cholmod_factor`.  Numeric factorization is
+still refreshed for every corrector; only CHOLMOD's symbolic analysis is reused.
+
+The cache is intentionally capped at one pattern per OpenMP thread.  An
+unbounded cache retained too many large factors at H=4,h=10 and was killed by
+WSL after reaching about 11.6 GB RSS on a 12 GB configuration.  The bounded
+version is correct, but the measured h=10 profile was slower than plain CHOLMOD
+because the current dynamic patch order has few immediate exact pattern hits.
+Keep it behind `--solver=cholmod_cached` until patch grouping or a better reuse
+policy proves a net speedup.
 ## Failed or Rejected Experiments
 
 | Experiment | Result |
 |------------|--------|
 | CHOLMOD as default corrector solver | Correct but slower than Eigen for H4/h8 |
 | CHOLMOD for H4/h9 | Faster corrector phase than Eigen in one run, but slower total runtime |
+| Unbounded CHOLMOD factor cache | Reached about 11.6 GB RSS and was killed on the 12 GB WSL machine |
+| Bounded CHOLMOD factor cache | Correct and memory-safe, but h=10 profile was slower than plain CHOLMOD with current patch order |
 | `IHp` sparse iterator replacement | Previously broke golden data; kept `coeff()` extraction |
 | `symrcm` on each `Sph` | Increased overhead/fill for tested patch matrices |
 | Precomputing full sparse submatrices | Too much serial precompute/broadcast overhead |
