@@ -163,8 +163,10 @@ compute_corrector_entries(int k,
     // Shdg is block-diagonal ??Ke = 3?3 block at (3e, 3e+1, 3e+2).
     // Sph(v_i, v_j) = sum_{e in patch} Ke(local_i, local_j) for interior v_i, v_j.
     int Nph = static_cast<int>(dofph.size());
-    std::vector<Eigen::Triplet<double>> sph_t;
-    sph_t.reserve(9 * fine_patch_elems.size());
+    thread_local std::vector<Eigen::Triplet<double>> sph_t;
+    sph_t.clear();
+    if (sph_t.capacity() < 9 * fine_patch_elems.size())
+        sph_t.reserve(9 * fine_patch_elems.size());
     for (int e : fine_patch_elems) {
         Eigen::Matrix3d Ke;
         if (element_stiffness) {
@@ -190,8 +192,10 @@ compute_corrector_entries(int k,
     Sph.setFromTriplets(sph_t.begin(), sph_t.end());
 
     // ---- 4. rhsp: direct assembly from target elements (O(|target|)) ----
-    std::vector<Eigen::Triplet<double>> rhs_t;
-    rhs_t.reserve(3 * (d + 1) * fine_target_elems.size());
+    thread_local std::vector<Eigen::Triplet<double>> rhs_t;
+    rhs_t.clear();
+    if (rhs_t.capacity() < 3 * (d + 1) * fine_target_elems.size())
+        rhs_t.reserve(3 * (d + 1) * fine_target_elems.size());
     for (int e : fine_target_elems) {
         int dg0 = 3*e;
         Eigen::Matrix3d Ke;
@@ -308,5 +312,4 @@ compute_corrector(int k,
 }
 
 } // namespace lod2d
-
 

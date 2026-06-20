@@ -325,6 +325,32 @@ When changing CHOLMOD options, always compare:
 
 Record both wall time and `Maximum resident set size`.
 
+
+## Reusing Correctors Across RHS Values
+
+When `A`, mesh, `H/h`, `ell`, patches, and interpolation are unchanged, the LOD
+correctors and multiscale basis are independent of the right-hand side.  Do not
+recompute correctors for a batch of different forcing terms.
+
+Preferred workflow:
+
+```cpp
+LodReusableSystem system(G, Sh, Mh, P_node, NH, coarse.dirichlet);
+for (const Eigen::VectorXd &f : rhs_values) {
+    LodReuseSolution sol = system.solve_from_coarse_values(f);
+}
+```
+
+Use `solve_from_fine_values` when the RHS is already represented on fine nodes.
+The benchmark entry is:
+
+```bash
+./build/benchmarks/bench_reuse_rhs --solver=auto --rhs=5
+```
+
+Report setup time separately from repeated RHS time.  The setup includes the
+corrector computation and coarse factorization; repeated RHS timings should only
+measure RHS projection, coarse back-substitution, and `G * uH`.
 ## Validation Checklist
 
 Before committing benchmark changes, run at least:

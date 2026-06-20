@@ -222,6 +222,42 @@ version is correct, but the measured h=10 profile was slower than plain CHOLMOD
 because the current dynamic patch order has few immediate exact pattern hits.
 Keep it behind `--solver=cholmod_cached` until patch grouping or a better reuse
 policy proves a net speedup.
+
+### 9. Thread-local local triplet buffers
+
+The corrector now reuses the local `sph_t` and `rhs_t` triplet buffers per
+OpenMP thread.  This avoids repeated large vector allocations while preserving
+the same Eigen `SparseMatrix::setFromTriplets` path and numerical behavior.
+
+Measured H=4,h=10 results were mixed because total time is noisy, but the
+corrector phase was slightly lower in profile runs.  This is kept as a small,
+low-risk allocation cleanup rather than a headline solver speedup.
+
+
+### 10. Reusable LOD system for multiple RHS values
+
+For fixed `A`, mesh, `H/h`, `ell`, patches, and interpolation, the element
+correctors do not depend on the right-hand side.  `LodReusableSystem` stores the
+assembled multiscale basis `G`, the free coarse basis `G0`, the mass matrix, the
+coarse prolongation, and the factorization of `SHLOD0 = G0' * Sh * G0`.
+
+Use this when solving many problems with the same coefficient and mesh but
+different forcing terms.  The expensive corrector stage is paid once; each new
+RHS only computes `G0' * Mh * f_fine`, solves the already-factorized coarse
+system, and evaluates `uHms = G * uH`.
+
+Validation benchmark:
+
+```bash
+./build/benchmarks/bench_reuse_rhs --solver=auto --rhs=5
+```
+
+Observed H=4,h=10 results on WSL:
+
+- reusable setup: about 46-50 s,
+- correctors inside setup: about 32-34 s,
+- repeated RHS solves: about 50-100 ms per RHS,
+- peak RSS: about 6.6-7.2 GB.
 ## Failed or Rejected Experiments
 
 | Experiment | Result |
@@ -230,6 +266,10 @@ policy proves a net speedup.
 | CHOLMOD for H4/h9 | Faster corrector phase than Eigen in one run, but slower total runtime |
 | Unbounded CHOLMOD factor cache | Reached about 11.6 GB RSS and was killed on the 12 GB WSL machine |
 | Bounded CHOLMOD factor cache | Correct and memory-safe, but h=10 profile was slower than plain CHOLMOD with current patch order |
+| Precomputed corrector patch plans as default | Reduced h=10 corrector time slightly in one profile, but increased setup/RSS and did not improve total time robustly |
+| Patch signature grouped corrector scheduling | Sorting by patch column signature caused pathological h=10 profile runtime and was reverted |
+| Simultaneous `G`/`G0` triplet construction | Avoided one `G` scan in theory, but increased triplet pressure and caused pathological h=10 profile runtime; reverted |
+| Direct CHOLMOD construction from local triplets | Correct, but was not consistently faster than the existing Eigen sparse path in h=10 profiles |
 | `IHp` sparse iterator replacement | Previously broke golden data; kept `coeff()` extraction |
 | `symrcm` on each `Sph` | Increased overhead/fill for tested patch matrices |
 | Precomputing full sparse submatrices | Too much serial precompute/broadcast overhead |

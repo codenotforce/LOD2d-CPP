@@ -60,6 +60,7 @@ Run benchmarks:
 ./build/benchmarks/bench_H4h9 --solver=cholmod
 ./build/benchmarks/bench_H4h9 --solver=cholmod_cached --skip-reference
 ./build/benchmarks/bench_profile --solver=auto --skip-reference
+./build/benchmarks/bench_reuse_rhs --solver=auto --rhs=5
 ```
 
 `--solver=eigen` is the default for the small tested corrector sizes.
@@ -103,6 +104,10 @@ local allocations inside each element corrector:
    for reproducible experiments.  The cache is intentionally capped at one
    pattern per thread after an unlimited cache reached roughly 11.6 GB RSS and
    was killed on the 12 GB WSL test machine.
+7. `LodReusableSystem` caches `G`, `G0`, and the coarse LOD factorization for
+   repeated solves with the same `A`, mesh, `H/h`, and `ell` but different RHS
+   values.  In the H4/h10 reuse benchmark, the first setup still costs tens of
+   seconds, but later RHS solves are around 50-100 ms each.
 
 ### Benchmarks (H=4, h=9, ell=2, 7-run median, OMP_NUM_THREADS=16)
 

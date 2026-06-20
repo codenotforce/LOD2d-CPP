@@ -46,6 +46,7 @@ add_library(lod2d_core STATIC
     src/lod/patches.cpp
     src/lod/corrector.cpp
     src/solver/coarse_solve.cpp
+    src/solver/lod_reuse.cpp
 )
 target_include_directories(lod2d_core PUBLIC include)
 target_link_libraries(lod2d_core PUBLIC Eigen3::Eigen)
