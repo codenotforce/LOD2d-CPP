@@ -103,6 +103,26 @@ The corrector still solves the same MATLAB saddle-point formulation:
 - `CholmodCached`: explicit experiment that reuses a bounded thread-local
   CHOLMOD symbolic factor when the exact local sparsity pattern repeats.
 
+
+## Modular API Layers
+
+The LOD setup is now split into three reusable layers:
+
+1. `LodProblemData` owns mesh-derived data: coarse/fine meshes, node incidence
+   counts, DG index maps, and refinement prolongation matrices `P_node`,
+   `P_elem`, and `P_dg`. Build it with `build_lod_problem_data(initial, H, h)`.
+2. `LodOperators` owns coefficient-dependent setup data: element stiffness
+   blocks, CG stiffness/mass matrices, patches, interpolation rows, and
+   fine-element children. Build it with `build_lod_operators(problem, Ah, ell)`.
+3. `LodModel` is the user-facing API for repeated RHS solves. It builds the
+   problem data, operators, correctors, multiscale basis, and `LodReusableSystem`
+   once, then exposes `solve_from_coarse_values` and `solve_from_fine_values`. It releases setup-only `P_elem` and `P_dg` by default to keep repeated RHS models memory-stable; set `keep_setup_matrices=true` when those matrices must remain inspectable.
+
+Use `LodModel` in examples and application-style benchmarks where only the
+right-hand side changes. Use the lower-level `build_lod_*` functions in
+profilers that need to time mesh, operator, corrector, and `G` assembly phases
+separately. This keeps the public path compact without hiding performance
+bottlenecks from `bench_profile`.
 ## Latest Performance Changes
 
 ### 1. Element stiffness block cache
@@ -259,7 +279,29 @@ Observed H=4,h=10 results on WSL:
 - repeated RHS solves: about 50-100 ms per RHS,
 - peak RSS: about 6.6-7.2 GB.
 
-### 11. Corrector pipeline helper extraction
+### 11. LodModel high-level API
+
+`LodProblemData` and `LodOperators` remove the repeated setup code that had
+spread across benchmark drivers. `LodModel` composes those pieces with
+`LodReusableSystem`, giving users a single build step for fixed coefficient and
+mesh cases followed by cheap repeated RHS solves.
+
+Validation after this refactor:
+
+```bash
+cmake --build build --target lod2d_core bench_reuse_rhs test_corr test_full -j 8
+./build/tests/test_corr --solver=both
+./build/tests/test_full
+./build/benchmarks/bench_reuse_rhs --solver=auto --rhs=2
+```
+
+Latest `bench_reuse_rhs --solver=auto --rhs=2` result on WSL H=4,h=10:
+
+- reusable setup: 48.15 s,
+- repeated RHS total: 189.30 ms,
+- repeated RHS average: 94.65 ms.
+
+### 12. Corrector pipeline helper extraction
 
 The benchmark and full-test pipelines now use two shared helpers instead of
 copying the same loops in every driver:

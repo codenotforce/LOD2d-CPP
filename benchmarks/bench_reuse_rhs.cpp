@@ -1,10 +1,5 @@
 /// Benchmark repeated LOD solves for the same A/mesh/H/h/ell and different RHS.
-#include "lod/corrector.h"
-#include "lod/quasi_interp.h"
-#include "lod/patches.h"
-#include "fem/assemble_dg.h"
-#include "mesh/refine.h"
-#include "solver/lod_reuse.h"
+#include "lod/lod_model.h"
 #include <Eigen/Dense>
 #include <chrono>
 #include <cmath>
@@ -73,6 +68,17 @@ void apply_thread_option(const Options &opt) {
 void apply_thread_option(const Options &) {}
 #endif
 
+std::vector<double> read_coefficients(const std::string &path) {
+    std::ifstream in(path);
+    if (!in) throw std::runtime_error("failed to open coefficient file: " + path);
+    int n = 0;
+    in >> n;
+    std::vector<double> Ah(n);
+    for (int i = 0; i < n; ++i) in >> Ah[i];
+    if (!in) throw std::runtime_error("failed to read coefficient file: " + path);
+    return Ah;
+}
+
 Eigen::VectorXd make_rhs(const TriMesh &coarse, int m) {
     Eigen::VectorXd f(coarse.nodes.size());
     const double a = static_cast<double>(m + 1);
@@ -97,95 +103,53 @@ int main(int argc, char **argv) {
     }
     apply_thread_option(opt);
 
-    int H=4, h=10, ell=2, d=2;
-    std::cout << "=== Reusable LOD RHS benchmark H=" << H << " h=" << h
+    LodProblemConfig config;
+    config.H = 4;
+    config.h = 10;
+    config.ell = 2;
+    config.d = 2;
+    config.solver = opt.solver;
+    config.initial_mesh = make_unit_square_mesh();
+
+    std::cout << "=== Reusable LOD RHS benchmark H=" << config.H << " h=" << config.h
               << " solver=" << solver_name(opt.solver)
               << " rhs=" << opt.rhs_count << " ===\n";
 
-    std::ifstream af("benchmarks/data_H4h10.txt");
-    int nAh; af >> nAh; std::vector<double> Ah(nAh);
-    for (int i=0;i<nAh;++i) af >> Ah[i];
+    try {
+        std::vector<double> Ah = read_coefficients("benchmarks/data_H4h10.txt");
 
-    auto t0 = chr::high_resolution_clock::now();
-    TriMesh T0;
-    T0.nodes={{0,0},{1,0},{1,1},{0,1}}; T0.elems={{0,1,3},{1,2,3}}; T0.dirichlet={0,1,2,3};
-    auto c_out=refine_mesh(T0,H); auto f_out=refine_mesh(c_out.mesh,h-H);
-    const auto &coarse=c_out.mesh, &fine=f_out.mesh;
-    int NH=coarse.nodes.size(), NTH=coarse.elems.size();
-    int Nh=fine.nodes.size(), NTh_f=fine.elems.size();
+        auto t0 = chr::high_resolution_clock::now();
+        LodModel model = LodModel::build(config, Ah);
+        auto t_setup = chr::high_resolution_clock::now();
+        Ah.clear();
+        Ah.shrink_to_fit();
 
-    std::vector<std::array<int,3>> dghidx, dgHidx(NTH);
-    for(int e=0;e<NTH;++e)for(int i=0;i<3;++i)dgHidx[e][i]=3*e+i;
+        const LodProblemData &problem = model.problem();
+        double checksum = 0.0;
+        auto t_rhs0 = chr::high_resolution_clock::now();
+        for (int r = 0; r < opt.rhs_count; ++r) {
+            Eigen::VectorXd f = make_rhs(problem.coarse, r);
+            LodReuseSolution sol = model.solve_from_coarse_values(f);
+            checksum += sol.uHms.squaredNorm();
+        }
+        auto t_rhs1 = chr::high_resolution_clock::now();
 
-    std::vector<int> nngH(NH),nngh(Nh);
-    for(auto&t:coarse.elems)for(int v:t)nngH[v]++; for(int v:coarse.dirichlet)nngH[v]=0;
-    for(auto&t:fine.elems)for(int v:t)nngh[v]++; for(int v:fine.dirichlet)nngh[v]=0;
+        const double setup_ms = chr::duration<double, std::milli>(t_setup - t0).count();
+        const double rhs_ms = chr::duration<double, std::milli>(t_rhs1 - t_rhs0).count();
 
-    auto element_stiffness=assemble_element_stiffness(fine,Ah);
-    std::vector<double>().swap(Ah);
-    Eigen::SparseMatrix<double> IH;
-    {
-        std::vector<Eigen::Triplet<double>> cg_t;
-        cg_t.reserve(3 * NTh_f);
-        for(int e=0;e<NTh_f;++e)for(int i=0;i<3;++i)cg_t.emplace_back(3*e+i,fine.elems[e][i],1.0);
-        Eigen::SparseMatrix<double> cg2dgh(3*NTh_f,Nh); cg2dgh.setFromTriplets(cg_t.begin(),cg_t.end());
-        IH=build_quasi_interp(coarse,fine,f_out.P_dg,cg2dgh,Nh,NH);
-    }
-    auto interpolation_rows=build_interpolation_rows(IH,NH);
-    auto patch=build_patches(coarse,ell);
-    auto fine_element_children=build_fine_element_children(f_out.P_elem,NTH);
-    Eigen::SparseMatrix<double> empty_elem;
-    f_out.P_elem.swap(empty_elem);
-    auto areas=compute_area(fine);
-    Eigen::SparseMatrix<double> Sh=assemble_cg_from_element_stiffness(fine,element_stiffness);
-    Eigen::SparseMatrix<double> Mh=assemble_cg_mass(fine,areas);
-    std::vector<double>().swap(areas);
-    Eigen::SparseMatrix<double> empty_ih;
-    IH.swap(empty_ih);
-
-    auto tc0=chr::high_resolution_clock::now();
-    Eigen::SparseMatrix<double> unused_sparse;
-    std::vector<CorrectorEntries> CT = compute_all_correctors(
-        patch, coarse, NH, nngH, unused_sparse, fine, Nh, nngh,
-        dghidx, unused_sparse, unused_sparse, f_out.P_dg, dgHidx,
-        unused_sparse, d, opt.solver, &element_stiffness,
-        &fine_element_children, &interpolation_rows);
-    auto tc1=chr::high_resolution_clock::now();
-
-    ElementStiffnessBlocks().swap(element_stiffness);
-    FineElementChildren().swap(fine_element_children);
-    InterpolationRows().swap(interpolation_rows);
-    Eigen::SparseMatrix<double> empty_pdg;
-    f_out.P_dg.swap(empty_pdg);
-
-    Eigen::SparseMatrix<double> G = build_multiscale_basis(f_out.P_node, coarse, Nh, CT);
-    std::vector<CorrectorEntries>().swap(CT);
-
-    LodReusableSystem lod_system(G, Sh, Mh, f_out.P_node, NH, coarse.dirichlet);
-    auto t_setup = chr::high_resolution_clock::now();
-
-    double checksum = 0.0;
-    auto t_rhs0 = chr::high_resolution_clock::now();
-    for (int r = 0; r < opt.rhs_count; ++r) {
-        Eigen::VectorXd f = make_rhs(coarse, r);
-        LodReuseSolution sol = lod_system.solve_from_coarse_values(f);
-        checksum += sol.uHms.squaredNorm();
-    }
-    auto t_rhs1 = chr::high_resolution_clock::now();
-
-    const double setup_ms = chr::duration<double,std::milli>(t_setup-t0).count();
-    const double corr_ms = chr::duration<double,std::milli>(tc1-tc0).count();
-    const double rhs_ms = chr::duration<double,std::milli>(t_rhs1-t_rhs0).count();
-
-    std::cout << "Coarse:" << NH << "v " << NTH << "t  Fine:" << Nh << "v " << NTh_f << "t\n";
-    std::cout << "Reusable setup: " << setup_ms << " ms\n";
-    std::cout << "  Correctors: " << corr_ms << " ms";
+        std::cout << "Coarse:" << problem.NH << "v " << problem.NTH << "t  Fine:"
+                  << problem.Nh << "v " << problem.NTh << "t\n";
+        std::cout << "Reusable setup: " << setup_ms << " ms";
 #ifdef _OPENMP
-    std::cout << " (" << omp_get_max_threads() << " threads)";
+        std::cout << " (" << omp_get_max_threads() << " threads)";
 #endif
-    std::cout << "\n";
-    std::cout << "Repeated RHS total: " << rhs_ms << " ms\n";
-    std::cout << "Repeated RHS avg: " << rhs_ms / opt.rhs_count << " ms\n";
-    std::cout << "Checksum: " << checksum << "\n";
+        std::cout << "\n";
+        std::cout << "Repeated RHS total: " << rhs_ms << " ms\n";
+        std::cout << "Repeated RHS avg: " << rhs_ms / opt.rhs_count << " ms\n";
+        std::cout << "Checksum: " << checksum << "\n";
+    } catch (const std::exception &e) {
+        std::cerr << e.what() << "\n";
+        return 1;
+    }
     return 0;
 }

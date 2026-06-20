@@ -70,6 +70,32 @@ thread-local CHOLMOD symbolic factor reuse; it is not the default because the
 current patch order does not produce enough repeated patterns to offset cache
 overhead.
 
+
+## High-Level API
+
+For repeated solves with fixed `A`, mesh, `H/h`, and `ell` but different right-hand sides, use `LodModel` instead of rebuilding the correctors in each driver:
+
+```cpp
+#include "lod/lod_model.h"
+
+using namespace lod2d;
+
+LodProblemConfig config;
+config.H = 4;
+config.h = 10;
+config.ell = 2;
+config.solver = CorrectorSolver::Cholmod;
+config.initial_mesh = make_unit_square_mesh();
+
+LodModel model = LodModel::build(config, Ah);
+LodReuseSolution sol = model.solve_from_coarse_values(f_coarse);
+```
+
+`LodModel` owns the reusable multiscale system and cached coarse factorization. By default it releases setup-only `P_elem` and `P_dg` after construction; set `keep_setup_matrices=true` only when inspecting those matrices.
+Lower-level helpers such as `build_lod_problem_data`, `build_lod_operators`,
+`build_lod_correctors`, and `build_lod_basis` remain available for benchmarks
+that need phase timings or memory profiling.
+
 ## Project Status
 
 | Module | Status | Test coverage |

@@ -81,6 +81,24 @@ void apply_thread_option(const Options &, int) {}
 Use `--threads=env` only when intentionally testing the raw `OMP_NUM_THREADS`
 setting.
 
+
+## API Layer Choice
+
+Use the highest layer that still exposes the timing information needed by the
+benchmark:
+
+- `LodModel`: application-style benchmarks and examples where `A`, mesh, `H/h`,
+  and `ell` are fixed and only the right-hand side changes. This is the
+  preferred path for repeated RHS experiments.
+- `build_lod_problem_data` + `build_lod_operators` + `build_lod_correctors` +
+  `build_lod_basis`: profiling benchmarks that must report mesh, operator,
+  corrector, and `C_ell + G` timings separately.
+- `compute_corrector_entries` / `compute_corrector`: focused tests and golden
+  comparisons for a single element corrector.
+
+Do not copy the full setup sequence into new benchmarks. Add a small helper or
+use `LodModel` unless the benchmark is explicitly measuring an internal phase.
+
 ## Required Phase Order
 
 Benchmarks should follow this phase order and print timings in this order:

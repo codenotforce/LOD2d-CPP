@@ -45,6 +45,7 @@ add_library(lod2d_core STATIC
     src/lod/quasi_interp.cpp
     src/lod/patches.cpp
     src/lod/corrector.cpp
+    src/lod/lod_model.cpp
     src/solver/coarse_solve.cpp
     src/solver/lod_reuse.cpp
 )
