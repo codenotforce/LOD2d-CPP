@@ -123,6 +123,193 @@ right-hand side changes. Use the lower-level `build_lod_*` functions in
 profilers that need to time mesh, operator, corrector, and `G` assembly phases
 separately. This keeps the public path compact without hiding performance
 bottlenecks from `bench_profile`.
+## Inverse Inequality Verification
+
+A new benchmark, `bench_inverse_inequality`, numerically checks whether
+
+```text
+sup_{v in V_H} H_T ||grad (1-C)v||_{L2(T)} / ||(1-C)v||_{L2(T)}
+```
+
+is stable with respect to the coarse mesh size `H_T`.
+
+### Numerical formulation
+
+For the multiscale basis `G = (1-C)P_H` and coefficient vector `a`, write
+`w = G a`. On each coarse element `T`, the benchmark assembles local fine-scale
+matrices only over the fine children of `T`:
+
+```text
+A_T = G_T' S_T G_T
+M_T = G_T' M_T G_T
+Q_T = H_T * sqrt(lambda_max(A_T, M_T)).
+```
+
+`S_T` is the unweighted geometric stiffness matrix for `||grad w||_{L2(T)}`.
+This is intentional: the corrector may be built with a heterogeneous coefficient
+`A`, but the quantity being tested here is the plain gradient/L2 inverse ratio.
+The generalized eigenproblem is solved on the positive mass subspace, dropping
+mass eigenvalues below `1e-12 * max(eig(M_T))` to avoid zero-mass directions.
+
+
+### C=0 sanity check
+
+The benchmark now supports `--basis=coarse`, which sets `G = P_node` and skips
+corrector construction. This is the `C=0` case and tests the numerical method
+itself rather than the LOD space.
+
+Command:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --basis=coarse --sweep-H --H-min=2 --H-max=5 --h-minus-H=5 --ell=2 --coeff=unit --solver=eigen --threads=8 --space=all
+```
+
+Results:
+
+| H | h | basis | min | median | p90 | p99 | max |
+|---:|---:|---|---:|---:|---:|---:|---:|
+| 2 | 7 | coarse | 8.48528 | 8.48528 | 8.48528 | 8.48528 | 8.48528 |
+| 3 | 8 | coarse | 8.48528 | 8.48528 | 8.48528 | 8.48528 | 8.48528 |
+| 4 | 9 | coarse | 8.48528 | 8.48528 | 8.48528 | 8.48528 | 8.48528 |
+| 5 | 10 | coarse | 8.48528 | 8.48528 | 8.48528 | 8.48528 | 8.48528 |
+
+This confirms that the local `S_T/M_T` assembly, element diameter scaling, and
+generalized eigenvalue calculation are behaving correctly. With the default
+`--space=free`, boundary elements can have `Q_T=0` because all active coarse
+basis functions on that element are Dirichlet nodes; `--space=all` removes that
+boundary artifact for the sanity check.
+
+### Interpretation caveat
+
+For the fully discrete corrector `C_{H,h,T}^ell : V_H -> W_h^ell(T)`, every
+function `(1-C_{H,h}^ell)v_H` is still a fine-grid finite element function.
+Therefore a discrete inverse inequality must hold with a constant that can in
+principle depend on the fine-scale polynomial space and on the ratio `H/h`.
+The benchmark is useful because it measures whether the scaled local constant is
+stable in the tested regime, but by itself it does not prove the corresponding
+continuous corrector estimate.
+
+A more meaningful numerical probe for the non-discrete corrector is a nested
+fine-grid convergence experiment: fix `H`, `ell`, and `A`; compute the corrector
+on increasingly fine meshes `h = H+m`; measure `Q_{H,h}`; and check whether
+`Q_{H,h}` converges to a finite limit as `h -> 0`. If the limit is stable and
+then remains stable under a separate `H` sweep, that is better evidence for the
+continuous corrector version. This is still not a proof, but it tests the right
+limit instead of only one discrete finite element space.
+### Baseline H sweep
+
+Command:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --sweep-H --H-min=2 --H-max=4 --h-minus-H=5 --ell=2 --coeff=unit --solver=eigen --threads=8
+```
+
+Results on WSL, unit coefficient, free coarse-node space:
+
+| H | h | ell | coarse elems | fine elems | min | median | p90 | p99 | max |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2 | 7 | 2 | 32 | 32768 | 17.2464 | 32.2145 | 54.2416 | 54.2416 | 54.2416 |
+| 3 | 8 | 2 | 128 | 131072 | 17.2456 | 72.3493 | 99.6182 | 101.896 | 101.896 |
+| 4 | 9 | 2 | 512 | 524288 | 17.2456 | 94.0825 | 101.895 | 101.896 | 101.896 |
+
+Interpretation: the supremum `max_T Q_T` stabilizes from `H=3` to `H=4` at
+about `101.9`; the `H=2` mesh is too coarse to show the asymptotic value. This
+supports mesh-size independence of the tested inverse ratio for the unit
+coefficient in the observed range, although the constant is much larger than a
+plain coarse P1 inverse constant because `(1-C)V_H` contains fine-scale corrector
+structure inside each coarse element.
+
+### Oversampling sensitivity
+
+Command family:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --H=4 --h=9 --ell=1 --coeff=unit --solver=eigen --threads=8
+./build/benchmarks/bench_inverse_inequality --H=4 --h=9 --ell=2 --coeff=unit --solver=eigen --threads=8
+./build/benchmarks/bench_inverse_inequality --H=4 --h=9 --ell=3 --coeff=unit --solver=eigen --threads=8
+```
+
+Results:
+
+| H | h | ell | min | median | p90 | p99 | max |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 9 | 1 | 7.62808 | 35.0801 | 35.128 | 35.128 | 35.128 |
+| 4 | 9 | 2 | 17.2456 | 94.0825 | 101.895 | 101.896 | 101.896 |
+| 4 | 9 | 3 | 34.6497 | 100.348 | 103.405 | 103.413 | 103.42 |
+
+Interpretation: increasing `ell` from 1 to 2 sharply increases the local inverse
+constant, then `ell=3` changes the supremum only mildly. This suggests the
+single-element inverse ratio sees additional fine-scale corrector structure as
+oversampling grows, but appears to plateau for this unit-coefficient case.
+
+
+### Nested h-refinement probe for the continuous corrector
+
+To probe the non-discrete corrector, fix `H`, `ell`, and `A`, then refine only
+the corrector mesh. This checks whether the discrete constants `Q_{H,h}` appear
+to converge as `h -> infinity` before using them in an `H` sweep.
+
+Commands:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --sweep-h --H=3 --h-min=6 --h-max=9 --ell=2 --basis=lod --coeff=unit --solver=eigen --threads=8
+./build/benchmarks/bench_inverse_inequality --H=3 --h=10 --ell=2 --basis=lod --coeff=unit --solver=auto --threads=8
+```
+
+Results for unit coefficient, free coarse-node space:
+
+| H | h | ell | fine elems | median | p90 | p99 | max |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 6 | 2 | 8192 | 45.1931 | 49.3655 | 49.8567 | 49.8567 |
+| 3 | 7 | 2 | 32768 | 62.2412 | 78.296 | 78.6532 | 78.6532 |
+| 3 | 8 | 2 | 131072 | 72.3493 | 99.6182 | 101.896 | 101.896 |
+| 3 | 9 | 2 | 524288 | 76.4449 | 109.619 | 113.477 | 113.477 |
+| 3 | 10 | 2 | 2097152 | 77.6661 | 112.885 | 117.342 | 117.342 |
+
+Interpretation: for fixed `H=3`, `ell=2`, and `A=1`, the local inverse constant
+continues to increase as the corrector mesh is refined, but the increment from
+`h=9` to `h=10` is much smaller than from earlier refinements. This is evidence
+that the discrete constants may be approaching a finite continuous-corrector
+limit near this value. The next useful check is to run the same nested
+`h`-refinement for another `H`, then compare the apparent limiting constants.
+
+This experiment is more relevant to the continuous corrector than a single
+fully discrete run, because it tests the behavior of the sequence
+`C_{H,h}^ell` as the fine discretization is refined while `H` and `ell` are
+held fixed.
+
+### High-memory server plan
+
+The WSL 12 GiB run killed `H=3,h=11` at about 11.28 GB RSS before completion.
+The EPYC server reported 377 GiB total memory and 366 GiB available, so the full
+benchmark can be pushed further without immediately rewriting the algorithm.
+
+Recommended first server run:
+
+```bash
+THREADS=32 H=3 ELL=2 H_MIN=6 H_MAX=12 COEFF=unit SOLVER=auto ./scripts/run_inverse_server.sh
+```
+
+Expected feasibility on that server:
+
+| Case | Fine elements | Recommendation |
+|---|---:|---|
+| H=3,h=11 | 8,388,608 | Should fit; use 32 threads first |
+| H=3,h=12 | 33,554,432 | Should fit in memory; expect a long run |
+| H=3,h=13 | 134,217,728 | Experimental; try only after h=12 succeeds |
+| H=3,h>=14 | >=536,870,912 | Not recommended with the full-global implementation |
+
+The script runs each `h` as a separate process so a failed high-h case does not
+lose lower-h results. Each log includes `/usr/bin/time -v`, especially maximum
+resident set size.
+### Next checks
+
+The current evidence is positive for `A=1`, but not a proof. The next numerical
+checks should use:
+
+- `--coeff=file:benchmarks/data_H4h10.txt` for the MATLAB-exported benchmark coefficient,
+- `--coeff=checkerboard:1000` for high-contrast stress testing,
+- a larger sweep such as `H=5,h=10` when memory/time allow.
 ## Latest Performance Changes
 
 ### 1. Element stiffness block cache

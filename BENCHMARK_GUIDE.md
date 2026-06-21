@@ -174,6 +174,39 @@ Always pass these pointers when available:
 Do not recompute `P0 * patch(:, k)` or scan all fine elements inside every
 corrector when `fine_element_children` is available.
 
+## Inverse Inequality Benchmark
+
+Use `bench_inverse_inequality` to numerically test
+
+```text
+sup_{v in V_H} H_T ||grad (1-C)v||_{L2(T)} / ||(1-C)v||_{L2(T)}.
+```
+
+The benchmark builds the LOD multiscale basis `G = (1-C)P_H`, then computes the
+local supremum on each coarse element as a generalized eigenvalue problem:
+
+```text
+Q_T = H_T * sqrt(lambda_max(G_T' S_T G_T, G_T' M_T G_T)).
+```
+
+Here `S_T` and `M_T` are assembled only over fine elements inside coarse element
+`T`. `S_T` uses the unweighted geometric gradient norm, even when the corrector
+basis is built with a nonconstant coefficient `A`. The default space is the free
+coarse-node space, consistent with homogeneous Dirichlet boundary conditions.
+
+Recommended baseline command:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --sweep-H --H-min=2 --H-max=4 --h-minus-H=5 --ell=2 --coeff=unit --solver=eigen --threads=8
+```
+
+Useful variants:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --H=4 --h=9 --ell=1 --coeff=unit --solver=eigen --threads=8
+./build/benchmarks/bench_inverse_inequality --H=4 --h=10 --ell=2 --coeff=file:benchmarks/data_H4h10.txt --solver=auto
+./build/benchmarks/bench_inverse_inequality --H=4 --h=9 --ell=2 --coeff=checkerboard:1000 --solver=eigen
+```
 ## Memory Lifetime Rules
 
 Memory lifetime is part of benchmark correctness for h>=10.  The benchmark
