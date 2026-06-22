@@ -314,6 +314,34 @@ THREADS=8 MODE=ell H=3 H_FIXED=12 ELL_MIN=1 ELL_MAX=5 COEFF=unit SOLVER=auto bas
 Use the server logs to compare `max Q_T` and peak RSS across `ell`. Very large
 `ell` may become expensive because local patches grow and CHOLMOD factorization
 cost increases nonlinearly.
+
+### Fixed h and ell, H-refinement probe
+
+The server helper supports `MODE=H`, which fixes the fine resolution `h` and
+oversampling radius `ell`, then sweeps the coarse level `H`. This is the direct
+numerical test for whether the already-resolved right-hand side constant is
+independent of `H`:
+
+```bash
+THREADS=8 MODE=H H_FIXED=12 ELL=3 H_MIN=2 H_MAX=4 COEFF=unit SOLVER=auto bash scripts/run_inverse_server.sh
+```
+
+Interpretation guide:
+
+- Keep `H_FIXED` large enough that each tested `H` has a resolved corrector.
+- Choose `ELL` from a plateau observed in `MODE=ell` first; for the unit test
+  case, `ell=3` is a reasonable first choice after the `H=3,h=8` smoke test.
+- Compare the `max Q_T` column across `H`. If it stays in the same range instead
+  of growing systematically as `H` is refined, this supports an `H`-independent
+  inverse constant for the numerically resolved ideal/localized corrector.
+
+For a cheaper first pass, run:
+
+```bash
+THREADS=8 MODE=H H_FIXED=10 ELL=3 H_MIN=2 H_MAX=4 COEFF=unit SOLVER=auto bash scripts/run_inverse_server.sh
+```
+
+Then repeat with `H_FIXED=12` on the server if the trend is unclear.
 ### High-memory server plan
 
 The WSL 12 GiB run killed `H=3,h=11` at about 11.28 GB RSS before completion.
