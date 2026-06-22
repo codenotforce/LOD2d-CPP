@@ -64,6 +64,7 @@ Run benchmarks:
 ./build/benchmarks/bench_inverse_inequality --sweep-H --H-min=2 --H-max=4 --h-minus-H=5 --ell=2 --coeff=unit --solver=eigen
 ./build/benchmarks/bench_inverse_inequality --basis=coarse --sweep-H --H-min=2 --H-max=5 --h-minus-H=5 --space=all --coeff=unit --solver=eigen
 ./build/benchmarks/bench_inverse_inequality --sweep-h --H=3 --h-min=6 --h-max=9 --ell=2 --basis=lod --coeff=unit --solver=eigen
+./build/benchmarks/bench_inverse_inequality --H=3 --h=9 --ell=2 --numerator=corrector --coeff=unit --solver=eigen
 ```
 
 `--solver=eigen` is the default for the small tested corrector sizes.
@@ -111,6 +112,7 @@ cd LOD2d-CPP
 sudo apt update
 sudo apt install -y build-essential cmake g++ libeigen3-dev libsuitesparse-dev libtbb-dev
 THREADS=8 MODE=h H=3 ELL=2 H_MIN=6 H_MAX=12 COEFF=unit SOLVER=auto ./scripts/run_inverse_server.sh
+THREADS=8 MODE=H H_FIXED=10 ELL=2 H_MIN=2 H_MAX=5 NUMERATOR=corrector COEFF=unit SOLVER=auto ./scripts/run_inverse_server.sh
 ```
 
 The script builds `bench_inverse_inequality`, runs each `h` separately, and

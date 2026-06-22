@@ -315,6 +315,42 @@ Use the server logs to compare `max Q_T` and peak RSS across `ell`. Very large
 `ell` may become expensive because local patches grow and CHOLMOD factorization
 cost increases nonlinearly.
 
+
+### Corrector cache for repeated inverse experiments
+
+`bench_inverse_inequality` now stores compact corrector entries on disk. This is
+useful because the correctors depend on `H`, `h`, `ell`, `A`, and the solver,
+but not on whether the inverse-inequality numerator is `grad (1-C)v` or
+`grad C v`.
+
+Default cache directory:
+
+```text
+results/corrector_cache
+```
+
+Sanity test on WSL:
+
+```bash
+rm -rf /tmp/lod_ct_cache_test
+./build/benchmarks/bench_inverse_inequality --H=3 --h=9 --ell=2 --basis=lod --numerator=lod --coeff=unit --solver=eigen --threads=4 --cache-dir=/tmp/lod_ct_cache_test
+./build/benchmarks/bench_inverse_inequality --H=3 --h=9 --ell=2 --basis=lod --numerator=corrector --coeff=unit --solver=eigen --threads=4 --cache-dir=/tmp/lod_ct_cache_test
+./build/benchmarks/bench_inverse_inequality --H=4 --h=9 --ell=2 --basis=lod --numerator=corrector --coeff=unit --solver=eigen --threads=4 --cache-dir=/tmp/lod_ct_cache_test
+```
+
+Observed behavior:
+
+| Case | Cache | Setup | Max Q |
+|---|---|---:|---:|
+| H=3,h=9,ell=2,numerator=lod | miss/write | 13.65 s | 113.477 |
+| H=3,h=9,ell=2,numerator=corrector | hit | 2.74 s | 13292 |
+| H=4,h=9,ell=2,numerator=corrector | hit after prior write | 3.18 s | 13350.6 |
+
+The `numerator=corrector` quotient is much larger than the original LOD-basis
+inverse quotient. The benchmark computes the generalized quotient on the
+positive local mass subspace of `(1-C)V_H`; exact zero-denominator directions
+are projected out, matching the earlier inverse-inequality experiments.
+
 ### Fixed h and ell, H-refinement probe
 
 The server helper supports `MODE=H`, which fixes the fine resolution `h` and

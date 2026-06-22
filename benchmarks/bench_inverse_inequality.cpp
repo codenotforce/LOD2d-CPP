@@ -4,10 +4,12 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <limits>
 #include <numeric>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -41,6 +43,8 @@ struct Options {
     std::string coeff = "unit";
     std::string solver_spec = "auto";
     std::string basis = "lod";
+    std::string numerator = "lod";
+    std::string cache_dir = "results/corrector_cache";
 };
 
 struct Stats {
@@ -76,6 +80,9 @@ Options parse_options(int argc, char **argv) {
         else if (arg.rfind("--coeff=", 0) == 0) opt.coeff = arg.substr(8);
         else if (arg.rfind("--solver=", 0) == 0) opt.solver_spec = arg.substr(9);
         else if (arg.rfind("--basis=", 0) == 0) opt.basis = arg.substr(8);
+        else if (arg.rfind("--numerator=", 0) == 0) opt.numerator = arg.substr(12);
+        else if (arg.rfind("--cache-dir=", 0) == 0) opt.cache_dir = arg.substr(12);
+        else if (arg == "--no-cache") opt.cache_dir.clear();
         else if (arg.rfind("--threads=", 0) == 0) {
             std::string value = arg.substr(10);
             if (value == "auto") opt.threads = -1;
@@ -98,7 +105,7 @@ Options parse_options(int argc, char **argv) {
                 "usage: bench_inverse_inequality [--H=N --h=N --ell=N] "
                 "[--solver=eigen|cholmod|cholmod_cached|auto] "
                 "[--coeff=unit|file:PATH|checkerboard:CONTRAST] "
-                "[--basis=lod|coarse] [--space=free|all] [--threads=auto|env|N] "
+                "[--basis=lod|coarse] [--numerator=lod|corrector] [--cache-dir=PATH|--no-cache] [--space=free|all] [--threads=auto|env|N] "
                 "[--sweep-H --H-min=N --H-max=N --h-minus-H=N] "
                 "[--sweep-h --h-min=N --h-max=N] "
                 "[--sweep-ell --ell-min=N --ell-max=N]");
@@ -122,6 +129,7 @@ Options parse_options(int argc, char **argv) {
             throw std::invalid_argument("require 0 <= ell-min <= ell-max");
     }
     if (opt.basis != "lod" && opt.basis != "coarse") throw std::invalid_argument("basis must be lod or coarse");
+    if (opt.numerator != "lod" && opt.numerator != "corrector") throw std::invalid_argument("numerator must be lod or corrector");
     opt.solver = parse_solver(opt.solver_spec, opt.h);
     return opt;
 }
@@ -174,6 +182,130 @@ std::vector<double> make_coefficients(const LodProblemData &problem, const std::
         return coeff;
     }
     throw std::invalid_argument("unknown coefficient spec: " + spec);
+}
+
+
+std::string sanitize_key(std::string value) {
+    for (char &c : value) {
+        const bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                        (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+        if (!ok) c = '_';
+    }
+    return value;
+}
+
+std::string cache_path(const Options &opt, const LodProblemData &problem) {
+    std::ostringstream name;
+    name << "ct_H" << opt.H
+         << "_h" << opt.h
+         << "_ell" << opt.ell
+         << "_d" << opt.d
+         << "_Nh" << problem.Nh
+         << "_NTh" << problem.NTh
+         << "_coeff_" << sanitize_key(opt.coeff)
+         << "_solver_" << solver_name(opt.solver)
+         << ".bin";
+    return (std::filesystem::path(opt.cache_dir) / name.str()).string();
+}
+
+template <class T>
+void write_binary(std::ostream &out, const T &value) {
+    out.write(reinterpret_cast<const char *>(&value), sizeof(T));
+}
+
+template <class T>
+bool read_binary(std::istream &in, T &value) {
+    return static_cast<bool>(in.read(reinterpret_cast<char *>(&value), sizeof(T)));
+}
+
+void write_string(std::ostream &out, const std::string &value) {
+    const std::uint64_t n = static_cast<std::uint64_t>(value.size());
+    write_binary(out, n);
+    out.write(value.data(), static_cast<std::streamsize>(n));
+}
+
+bool read_string(std::istream &in, std::string &value) {
+    std::uint64_t n = 0;
+    if (!read_binary(in, n)) return false;
+    value.resize(static_cast<size_t>(n));
+    return static_cast<bool>(in.read(value.data(), static_cast<std::streamsize>(n)));
+}
+
+bool load_corrector_cache(
+    const std::string &path,
+    const Options &opt,
+    const LodProblemData &problem,
+    std::vector<CorrectorEntries> &correctors) {
+    if (path.empty() || !std::filesystem::exists(path)) return false;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return false;
+
+    std::string magic;
+    if (!read_string(in, magic) || magic != "LOD2D_CORRECTOR_CACHE_V1") return false;
+    std::string coeff;
+    if (!read_string(in, coeff) || coeff != opt.coeff) return false;
+    std::string solver;
+    if (!read_string(in, solver) || solver != solver_name(opt.solver)) return false;
+
+    int H = 0, h = 0, ell = 0, d = 0, NH = 0, Nh = 0, NTH = 0, NTh = 0;
+    if (!read_binary(in, H) || !read_binary(in, h) || !read_binary(in, ell) || !read_binary(in, d) ||
+        !read_binary(in, NH) || !read_binary(in, Nh) || !read_binary(in, NTH) || !read_binary(in, NTh))
+        return false;
+    if (H != opt.H || h != opt.h || ell != opt.ell || d != opt.d ||
+        NH != problem.NH || Nh != problem.Nh || NTH != problem.NTH || NTh != problem.NTh)
+        return false;
+
+    std::uint64_t n_correctors = 0;
+    if (!read_binary(in, n_correctors)) return false;
+    correctors.assign(static_cast<size_t>(n_correctors), {});
+    for (auto &entries : correctors) {
+        std::uint64_t n_entries = 0;
+        if (!read_binary(in, n_entries)) return false;
+        entries.resize(static_cast<size_t>(n_entries));
+        for (auto &entry : entries) {
+            if (!read_binary(in, entry.row) || !read_binary(in, entry.col) || !read_binary(in, entry.value))
+                return false;
+        }
+    }
+    return static_cast<bool>(in);
+}
+
+void save_corrector_cache(
+    const std::string &path,
+    const Options &opt,
+    const LodProblemData &problem,
+    const std::vector<CorrectorEntries> &correctors) {
+    if (path.empty()) return;
+    std::filesystem::create_directories(std::filesystem::path(path).parent_path());
+    const std::string tmp_path = path + ".tmp";
+    std::ofstream out(tmp_path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("failed to open corrector cache for write: " + tmp_path);
+
+    write_string(out, "LOD2D_CORRECTOR_CACHE_V1");
+    write_string(out, opt.coeff);
+    write_string(out, solver_name(opt.solver));
+    write_binary(out, opt.H);
+    write_binary(out, opt.h);
+    write_binary(out, opt.ell);
+    write_binary(out, opt.d);
+    write_binary(out, problem.NH);
+    write_binary(out, problem.Nh);
+    write_binary(out, problem.NTH);
+    write_binary(out, problem.NTh);
+    const std::uint64_t n_correctors = static_cast<std::uint64_t>(correctors.size());
+    write_binary(out, n_correctors);
+    for (const auto &entries : correctors) {
+        const std::uint64_t n_entries = static_cast<std::uint64_t>(entries.size());
+        write_binary(out, n_entries);
+        for (const auto &entry : entries) {
+            write_binary(out, entry.row);
+            write_binary(out, entry.col);
+            write_binary(out, entry.value);
+        }
+    }
+    if (!out) throw std::runtime_error("failed while writing corrector cache: " + tmp_path);
+    out.close();
+    std::filesystem::rename(tmp_path, path);
 }
 
 Eigen::Matrix3d unit_stiffness(const TriMesh &mesh, int e) {
@@ -268,10 +400,20 @@ RunResult run_case(Options opt) {
         fine_element_children = build_fine_element_children(problem.P_elem, problem.NTH);
         G = problem.P_node;
     } else {
-        std::vector<double> coeff = make_coefficients(problem, opt.coeff);
-        LodOperators operators = build_lod_operators(problem, coeff, opt.ell);
-        std::vector<CorrectorEntries> correctors = build_lod_correctors(problem, operators, opt.d, opt.solver);
-        fine_element_children = std::move(operators.fine_element_children);
+        std::vector<CorrectorEntries> correctors;
+        const std::string ct_cache_path = opt.cache_dir.empty() ? std::string() : cache_path(opt, problem);
+        const bool cache_hit = load_corrector_cache(ct_cache_path, opt, problem, correctors);
+        if (cache_hit) {
+            std::cout << "Corrector cache: hit " << ct_cache_path << std::endl;
+            fine_element_children = build_fine_element_children(problem.P_elem, problem.NTH);
+        } else {
+            if (!ct_cache_path.empty()) std::cout << "Corrector cache: miss " << ct_cache_path << std::endl;
+            std::vector<double> coeff = make_coefficients(problem, opt.coeff);
+            LodOperators operators = build_lod_operators(problem, coeff, opt.ell);
+            correctors = build_lod_correctors(problem, operators, opt.d, opt.solver);
+            fine_element_children = std::move(operators.fine_element_children);
+            save_corrector_cache(ct_cache_path, opt, problem, correctors);
+        }
         G = build_lod_basis(problem, correctors);
     }
     auto t1 = chr::high_resolution_clock::now();
@@ -281,12 +423,23 @@ RunResult run_case(Options opt) {
         if (v >= 0 && v < problem.NH) is_dirichlet[v] = true;
     }
 
-    std::vector<std::vector<std::pair<int, double>>> G_rows(problem.Nh);
-    for (int col = 0; col < G.outerSize(); ++col) {
-        if (opt.free_space && is_dirichlet[col]) continue;
-        for (Eigen::SparseMatrix<double>::InnerIterator it(G, col); it; ++it)
-            G_rows[it.row()].push_back({col, it.value()});
-    }
+    Eigen::SparseMatrix<double> numerator_matrix;
+    if (opt.numerator == "corrector") numerator_matrix = problem.P_node - G;
+    else numerator_matrix = G;
+
+    auto build_rows = [&](const Eigen::SparseMatrix<double> &matrix) {
+        std::vector<std::vector<std::pair<int, double>>> rows(problem.Nh);
+        for (int col = 0; col < matrix.outerSize(); ++col) {
+            if (opt.free_space && is_dirichlet[col]) continue;
+            for (Eigen::SparseMatrix<double>::InnerIterator it(matrix, col); it; ++it) {
+                if (it.value() != 0.0) rows[it.row()].push_back({col, it.value()});
+            }
+        }
+        return rows;
+    };
+
+    auto denominator_rows = build_rows(G);
+    auto numerator_rows = build_rows(numerator_matrix);
 
     std::vector<int> fine_stamp(problem.Nh, 0);
     std::vector<int> col_stamp(problem.NH, 0);
@@ -303,13 +456,20 @@ RunResult run_case(Options opt) {
                 if (fine_stamp[fv] != stamp) {
                     fine_stamp[fv] = stamp;
                     local_fine_vertices.push_back(fv);
-                    for (const auto &[col, value] : G_rows[fv]) {
-                        (void)value;
+                    auto touch_col = [&](int col) {
                         if (col_stamp[col] != stamp) {
                             col_stamp[col] = stamp;
                             col_to_local[col] = static_cast<int>(active_cols.size());
                             active_cols.push_back(col);
                         }
+                    };
+                    for (const auto &[col, value] : denominator_rows[fv]) {
+                        (void)value;
+                        touch_col(col);
+                    }
+                    for (const auto &[col, value] : numerator_rows[fv]) {
+                        (void)value;
+                        touch_col(col);
                     }
                 }
             }
@@ -323,15 +483,19 @@ RunResult run_case(Options opt) {
         for (int fe : fine_element_children[T]) {
             Eigen::Matrix3d Se = unit_stiffness(problem.fine, fe);
             Eigen::Matrix3d Me = mass_matrix(problem.fine, fe);
-            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(3, n);
+            Eigen::MatrixXd B_num = Eigen::MatrixXd::Zero(3, n);
+            Eigen::MatrixXd B_den = Eigen::MatrixXd::Zero(3, n);
             for (int i = 0; i < 3; ++i) {
                 const int fv = problem.fine.elems[fe][i];
-                for (const auto &[col, value] : G_rows[fv]) {
-                    if (col_stamp[col] == stamp) B(i, col_to_local[col]) = value;
+                for (const auto &[col, value] : numerator_rows[fv]) {
+                    if (col_stamp[col] == stamp) B_num(i, col_to_local[col]) = value;
+                }
+                for (const auto &[col, value] : denominator_rows[fv]) {
+                    if (col_stamp[col] == stamp) B_den(i, col_to_local[col]) = value;
                 }
             }
-            A.noalias() += B.transpose() * Se * B;
-            M.noalias() += B.transpose() * Me * B;
+            A.noalias() += B_num.transpose() * Se * B_num;
+            M.noalias() += B_den.transpose() * Me * B_den;
         }
 
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> m_eig(M);
@@ -379,6 +543,7 @@ void print_result(const Options &opt, const RunResult &r) {
     std::cout << "H=" << r.H << " h=" << r.h << " ell=" << r.ell
               << " coeff=" << opt.coeff << " solver=" << solver_name(opt.solver)
               << " basis=" << opt.basis
+              << " numerator=" << opt.numerator
               << " space=" << (opt.free_space ? "free" : "all") << "\n";
 #ifdef _OPENMP
     std::cout << "OpenMP threads: " << omp_get_max_threads() << "\n";
@@ -386,7 +551,10 @@ void print_result(const Options &opt, const RunResult &r) {
     std::cout << "Coarse elements: " << r.coarse_elements << "  Fine elements: " << r.fine_elements << "\n";
     std::cout << "Setup: " << r.setup_ms << " ms\n";
     std::cout << "Inverse scan: " << r.inverse_ms << " ms\n\n";
-    std::cout << "Q_T = H_T * ||grad (1-C)v||_T / ||(1-C)v||_T\n";
+    if (opt.numerator == "corrector")
+        std::cout << "Q_T = H_T * ||grad C v||_T / ||(1-C)v||_T\n";
+    else
+        std::cout << "Q_T = H_T * ||grad (1-C)v||_T / ||(1-C)v||_T\n";
     std::cout << "min     : " << r.stats.min << "\n";
     std::cout << "median  : " << r.stats.median << "\n";
     std::cout << "p90     : " << r.stats.p90 << "\n";
@@ -396,12 +564,12 @@ void print_result(const Options &opt, const RunResult &r) {
 }
 
 void print_sweep_header() {
-    std::cout << "H,h,ell,basis,coarse_elements,fine_elements,min,median,p90,p99,max,argmax,setup_ms,inverse_ms\n";
+    std::cout << "H,h,ell,basis,numerator,coarse_elements,fine_elements,min,median,p90,p99,max,argmax,setup_ms,inverse_ms\n";
 }
 
 void print_sweep_row(const Options &opt, const RunResult &r) {
     std::cout << r.H << ',' << r.h << ',' << r.ell << ','
-              << opt.basis << ',' << r.coarse_elements << ',' << r.fine_elements << ','
+              << opt.basis << ',' << opt.numerator << ',' << r.coarse_elements << ',' << r.fine_elements << ','
               << r.stats.min << ',' << r.stats.median << ',' << r.stats.p90 << ','
               << r.stats.p99 << ',' << r.stats.max << ',' << r.stats.argmax << ','
               << r.setup_ms << ',' << r.inverse_ms << "\n";
