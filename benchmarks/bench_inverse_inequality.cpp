@@ -31,8 +31,11 @@ struct Options {
     int H_max = 4;
     int h_min = 0;
     int h_max = 0;
+    int ell_min = 0;
+    int ell_max = 0;
     bool sweep_H = false;
     bool sweep_h = false;
+    bool sweep_ell = false;
     bool free_space = true;
     CorrectorSolver solver = CorrectorSolver::EigenLLT;
     std::string coeff = "unit";
@@ -80,11 +83,14 @@ Options parse_options(int argc, char **argv) {
             else opt.threads = std::stoi(value);
         } else if (arg == "--sweep-H") opt.sweep_H = true;
         else if (arg == "--sweep-h") opt.sweep_h = true;
+        else if (arg == "--sweep-ell") opt.sweep_ell = true;
         else if (arg.rfind("--h-minus-H=", 0) == 0) opt.h_minus_H = std::stoi(arg.substr(12));
         else if (arg.rfind("--H-min=", 0) == 0) opt.H_min = std::stoi(arg.substr(8));
         else if (arg.rfind("--H-max=", 0) == 0) opt.H_max = std::stoi(arg.substr(8));
         else if (arg.rfind("--h-min=", 0) == 0) opt.h_min = std::stoi(arg.substr(8));
         else if (arg.rfind("--h-max=", 0) == 0) opt.h_max = std::stoi(arg.substr(8));
+        else if (arg.rfind("--ell-min=", 0) == 0) opt.ell_min = std::stoi(arg.substr(10));
+        else if (arg.rfind("--ell-max=", 0) == 0) opt.ell_max = std::stoi(arg.substr(10));
         else if (arg == "--space=free") opt.free_space = true;
         else if (arg == "--space=all") opt.free_space = false;
         else {
@@ -94,18 +100,26 @@ Options parse_options(int argc, char **argv) {
                 "[--coeff=unit|file:PATH|checkerboard:CONTRAST] "
                 "[--basis=lod|coarse] [--space=free|all] [--threads=auto|env|N] "
                 "[--sweep-H --H-min=N --H-max=N --h-minus-H=N] "
-                "[--sweep-h --h-min=N --h-max=N]");
+                "[--sweep-h --h-min=N --h-max=N] "
+                "[--sweep-ell --ell-min=N --ell-max=N]");
         }
     }
     if (opt.H < 0 || opt.h < opt.H) throw std::invalid_argument("require 0 <= H <= h");
     if (opt.ell < 0) throw std::invalid_argument("ell must be nonnegative");
     if (opt.sweep_H && opt.H_max < opt.H_min) throw std::invalid_argument("require H-min <= H-max");
-    if (opt.sweep_H && opt.sweep_h) throw std::invalid_argument("choose only one sweep mode");
+    const int sweep_count = (opt.sweep_H ? 1 : 0) + (opt.sweep_h ? 1 : 0) + (opt.sweep_ell ? 1 : 0);
+    if (sweep_count > 1) throw std::invalid_argument("choose only one sweep mode");
     if (opt.sweep_h) {
         if (opt.h_min == 0) opt.h_min = opt.H + 1;
         if (opt.h_max == 0) opt.h_max = opt.h;
         if (opt.h_min < opt.H || opt.h_max < opt.h_min)
             throw std::invalid_argument("require H <= h-min <= h-max");
+    }
+    if (opt.sweep_ell) {
+        if (opt.ell_min == 0) opt.ell_min = 1;
+        if (opt.ell_max == 0) opt.ell_max = opt.ell;
+        if (opt.ell_min < 0 || opt.ell_max < opt.ell_min)
+            throw std::invalid_argument("require 0 <= ell-min <= ell-max");
     }
     if (opt.basis != "lod" && opt.basis != "coarse") throw std::invalid_argument("basis must be lod or coarse");
     opt.solver = parse_solver(opt.solver_spec, opt.h);
@@ -398,7 +412,7 @@ void print_sweep_row(const Options &opt, const RunResult &r) {
 int main(int argc, char **argv) {
     try {
         Options opt = parse_options(argc, argv);
-        if (!opt.sweep_H && !opt.sweep_h) {
+        if (!opt.sweep_H && !opt.sweep_h && !opt.sweep_ell) {
             RunResult result = run_case(opt);
             print_result(opt, result);
             return 0;
@@ -410,6 +424,16 @@ int main(int argc, char **argv) {
                 Options run = opt;
                 run.h = h;
                 run.solver = parse_solver(opt.solver_spec, run.h);
+                RunResult result = run_case(run);
+                print_sweep_row(run, result);
+            }
+            return 0;
+        }
+
+        if (opt.sweep_ell) {
+            for (int ell = opt.ell_min; ell <= opt.ell_max; ++ell) {
+                Options run = opt;
+                run.ell = ell;
                 RunResult result = run_case(run);
                 print_sweep_row(run, result);
             }

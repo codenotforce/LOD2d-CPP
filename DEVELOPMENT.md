@@ -278,6 +278,42 @@ fully discrete run, because it tests the behavior of the sequence
 `C_{H,h}^ell` as the fine discretization is refined while `H` and `ell` are
 held fixed.
 
+
+### Oversampling-limit probe for fixed H and h
+
+The benchmark now supports `--sweep-ell`, which fixes `H`, `h`, and `A` while
+increasing the oversampling radius `ell`. This probes whether the local inverse
+constant approaches a plateau as the localized corrector approaches the global
+corrector on the fixed fine grid.
+
+Local smoke-test command:
+
+```bash
+./build/benchmarks/bench_inverse_inequality --sweep-ell --H=3 --h=8 --ell-min=1 --ell-max=4 --basis=lod --coeff=unit --solver=eigen --threads=4
+```
+
+Results for unit coefficient, free coarse-node space:
+
+| H | h | ell | median | p90 | p99 | max |
+|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 8 | 1 | 30.3253 | 35.1118 | 35.128 | 35.128 |
+| 3 | 8 | 2 | 72.3493 | 99.6183 | 101.896 | 101.896 |
+| 3 | 8 | 3 | 81.2125 | 101.579 | 103.42 | 103.42 |
+| 3 | 8 | 4 | 82.4034 | 101.243 | 103.332 | 103.333 |
+
+Interpretation: for this fixed `H=3,h=8` case, the maximum constant jumps from
+`ell=1` to `ell=2`, then essentially plateaus for `ell=3,4`. This suggests a
+finite oversampling-limit constant on the fixed fine grid.
+
+Recommended server command for the same experiment at the resolved `h=12` level:
+
+```bash
+THREADS=8 MODE=ell H=3 H_FIXED=12 ELL_MIN=1 ELL_MAX=5 COEFF=unit SOLVER=auto bash scripts/run_inverse_server.sh
+```
+
+Use the server logs to compare `max Q_T` and peak RSS across `ell`. Very large
+`ell` may become expensive because local patches grow and CHOLMOD factorization
+cost increases nonlinearly.
 ### High-memory server plan
 
 The WSL 12 GiB run killed `H=3,h=11` at about 11.28 GB RSS before completion.

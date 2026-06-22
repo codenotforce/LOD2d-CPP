@@ -110,7 +110,7 @@ git clone https://github.com/codenotforce/LOD2d-CPP.git
 cd LOD2d-CPP
 sudo apt update
 sudo apt install -y build-essential cmake g++ libeigen3-dev libsuitesparse-dev libtbb-dev
-THREADS=32 H=3 ELL=2 H_MIN=6 H_MAX=12 COEFF=unit SOLVER=auto ./scripts/run_inverse_server.sh
+THREADS=8 MODE=h H=3 ELL=2 H_MIN=6 H_MAX=12 COEFF=unit SOLVER=auto ./scripts/run_inverse_server.sh
 ```
 
 The script builds `bench_inverse_inequality`, runs each `h` separately, and
