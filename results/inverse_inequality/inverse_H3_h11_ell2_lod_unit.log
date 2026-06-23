@@ -1,0 +1,37 @@
+=== Inverse inequality check ===
+H=3 h=11 ell=2 coeff=unit solver=cholmod basis=lod space=free
+OpenMP threads: 8
+Coarse elements: 128  Fine elements: 8388608
+Setup: 205058 ms
+Inverse scan: 6650.95 ms
+
+Q_T = H_T * ||grad (1-C)v||_T / ||(1-C)v||_T
+min     : 17.2166
+median  : 77.9887
+p90     : 113.786
+p99     : 118.418
+max     : 118.418
+argmax T: 110
+	Command being timed: "./build/benchmarks/bench_inverse_inequality --H=3 --h=11 --ell=2 --basis=lod --coeff=unit --solver=auto --threads=8 --space=free"
+	User time (seconds): 1048.41
+	System time (seconds): 203.39
+	Percent of CPU this job got: 588%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:32.69
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 24135788
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 63046001
+	Voluntary context switches: 5758716
+	Involuntary context switches: 3142
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 8
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

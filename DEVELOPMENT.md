@@ -58,16 +58,14 @@ Eigen remains the default corrector solver.
 
 ### Mesh Refinement
 
-The C++ refinement must match MATLAB sparse ordering exactly:
+The mesh layer supports two conforming bisection rules:
 
-- MATLAB `find(sparse(row, col, value))` returns column-major order.
-- Edge numbering therefore uses `(col, row)` ordering rather than the natural
-  C++ row-major pair order.
-- Refined triangles are grouped by sub-triangle type:
-  `[all sub1; all sub2; all sub3; all sub4]`.
-- `P_dg` is built as stacked sub-triangle prolongation blocks, matching MATLAB's
-  `[kron(E, sub1); kron(E, sub2); ...]`.
-- Explicit zero triplets are skipped because Eigen stores them as nonzeros.
+- `refine(mesh)` and `refine_marked(mesh, marked_elements)` use geometric longest-edge bisection (LEB). Marked elements contribute their longest edge to a global split-edge set; all elements incident to a split edge are subdivided consistently.
+- `refine_nvb(mesh)`, `bisect_newest_vertex(mesh, marked_elements)`, and `refine_mesh_nvb(mesh, nref)` implement newest-vertex bisection (NVB). The first local vertex is the newest vertex, so local edge (1,2) is the reference edge, matching MATLAB `lod.bisect`.
+- NVB local refinement performs a recursive reference-edge closure. The C++ loop only removes a marked edge after that complete edge no longer exists in the current mesh, which also handles initially incompatible newest-vertex labels without hanging nodes.
+- Both rules generate `P_node`, `P_elem`, and `P_dg` in the refinement pass. `P_dg` stores affine/barycentric interpolation from each parent DG triangle to child DG vertices.
+- `tests/golden_nvb.txt` is derived from the MATLAB NVB implementation in `D:/code/femcode/LOD2d_MATLAB/src/+lod/bisect.m` and is checked by `test_nvb`.
+- The old MATLAB red-refinement golden files no longer match the active bisection meshes. `test_mesh`, `test_dg`, `test_patch`, `test_qi`, and `test_nvb` are the default structural/golden tests; `test_corr` and `test_full` are buildable historical red-refinement references unless new bisection golden data is exported.
 
 ### DG Assembly
 

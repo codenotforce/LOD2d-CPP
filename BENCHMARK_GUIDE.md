@@ -16,6 +16,16 @@ Use this guide for:
 Tests may use smaller or more direct code when they need to compare golden data,
 but benchmark logic should follow this guide.
 
+## Refinement Mode
+
+The mesh layer provides conforming longest-edge bisection (LEB) and newest-vertex bisection (NVB). One uniform bisection level bisects each active element once, so element counts roughly double per level on the unit-square seed mesh rather than following the old red-refinement factor of four.
+
+- Use `refine_marked(mesh, marked_elements)` for local LEB experiments.
+- Use `bisect_newest_vertex(mesh, marked_elements)` or `refine_mesh_nvb(mesh, nref)` for adaptive/NVB experiments. NVB follows the MATLAB `lod.bisect` convention: local vertex 0 is newest, and edge (1,2) is the reference edge.
+- Both rules emit consistent `P_node`, `P_elem`, and `P_dg` prolongations and avoid hanging nodes.
+
+Legacy MATLAB red-refinement golden files are historical references only unless regenerated for the bisection mesh. Use `ctest` for the active structural and NVB golden test suite.
+
 ## Command-Line Options
 
 Every full benchmark should support these options:

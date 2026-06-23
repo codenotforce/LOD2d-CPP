@@ -3,10 +3,12 @@
 High-performance C++20 implementation of the Localized Orthogonal
 Decomposition (LOD) method for 2D elliptic diffusion problems.
 
-This project is a MATLAB-to-C++ port of the LOD2d workflow.  The current
-implementation preserves the MATLAB reference ordering and numerical results,
-then optimizes the expensive element-corrector phase with Eigen sparse linear
-algebra and OpenMP.
+This project is a MATLAB-to-C++ port of the LOD2d workflow.  The mesh layer now
+provides both conforming longest-edge bisection and newest-vertex bisection
+(NVB), so it can serve later adaptive LOD experiments.  The old MATLAB
+red-refinement golden executables are still buildable as references, but they
+are not part of default CTest because the mesh topology and numbering
+intentionally differ.
 
 ## Dependencies
 
@@ -44,9 +46,12 @@ Build options:
 Run focused tests from the repository root:
 
 ```bash
+ctest --test-dir build --output-on-failure
+./build/tests/test_mesh
 ./build/tests/test_dg
-./build/tests/test_corr --solver=both
-./build/tests/test_full
+./build/tests/test_nvb
+./build/tests/test_patch
+./build/tests/test_qi
 ```
 
 Run benchmarks:
@@ -126,9 +131,9 @@ current full-global benchmark. `h=13` is experimental and may be very slow;
 
 | Module | Status | Test coverage |
 |--------|--------|---------------|
-| Mesh refinement and prolongation | Complete | Golden tests vs MATLAB |
+| Mesh refinement and prolongation | LEB + NVB | Conformity, area, prolongation, and MATLAB-derived NVB golden tests |
 | DG stiffness assembly | Complete | `test_dg`: 10/10 pass |
-| Quasi-interpolation | Complete | Golden positions vs MATLAB |
+| Quasi-interpolation | Complete | LEB structural smoke tests |
 | Patch construction | Complete | Golden patch tests |
 | Element corrector | Complete | `test_corr`: Eigen, CHOLMOD, and cached CHOLMOD pass |
 | Full LOD pipeline | Complete | `test_full`: 3/3 pass |
@@ -199,8 +204,14 @@ not repeat often enough under the current dynamic patch schedule.
 
 ## Important Migration Notes
 
-- MATLAB sparse construction/order matters.  Edge ordering and refined triangle
-  ordering are intentionally matched to MATLAB golden data.
+- The active mesh layer supports conforming longest-edge bisection and
+  newest-vertex bisection.  Edge midpoint creation is hash-based and shared by
+  adjacent elements, so local marking does not introduce hanging nodes.
+- NVB uses the MATLAB convention from `lod.bisect`: local vertex 0 is the
+  newest vertex and local edge (1,2) is the reference edge.
+- Legacy MATLAB red-refinement golden files remain useful only for historical
+  comparison; regenerate them before using `test_corr` or `test_full` as
+  correctness gates under the bisection meshes.
 - `P_dg` rows are grouped by sub-triangle type, not by parent element.
 - Eigen keeps explicit zero triplets, so assembly skips zero values.
 - Release builds are required for meaningful performance comparisons.

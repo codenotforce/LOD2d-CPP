@@ -1,0 +1,8 @@
+H,h,ell,basis,coeff,solver,space,threads,status,log
+3,6,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h6_ell2_lod_unit.log
+3,7,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h7_ell2_lod_unit.log
+3,8,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h8_ell2_lod_unit.log
+3,9,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h9_ell2_lod_unit.log
+3,10,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h10_ell2_lod_unit.log
+3,11,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h11_ell2_lod_unit.log
+3,12,2,lod,unit,auto,free,8,0,results/inverse_inequality/inverse_H3_h12_ell2_lod_unit.log
