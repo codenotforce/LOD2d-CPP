@@ -10,7 +10,8 @@ namespace lod2d {
 enum class CorrectorSolver {
     EigenLLT,
     Cholmod,
-    CholmodCached
+    CholmodCached,
+    SaddleGmres
 };
 
 using FineElementChildren = std::vector<std::vector<int>>;

@@ -58,6 +58,7 @@ Run benchmarks:
 
 ```bash
 ./build/benchmarks/bench_refine
+./build/benchmarks/bench_saddle_h3h10 --H=3 --h=10 --ell=3 --threads=8 --skip-reference
 ./build/benchmarks/bench_H4h8 --solver=eigen
 ./build/benchmarks/bench_H4h8 --solver=cholmod
 ./build/benchmarks/bench_H4h8 --solver=cholmod_cached
@@ -223,3 +224,7 @@ not repeat often enough under the current dynamic patch schedule.
 Research and educational use.  Based on the LOD code from
 *An Introduction to the Localized Orthogonal Decomposition Method*
 by A. Malqvist and D. Peterseim.
+
+## Saddle GMRES Experiment
+
+The full corrector saddle system is symmetric indefinite, so PCG is not a valid solver for that matrix. `bench_saddle_h3h10` compares the Schur-eliminated Eigen path with an experimental GMRES solver using an exact block Schur complement preconditioner on the MATLAB-compatible red uniform mesh. On WSL 12 GiB for H=3,h=10,ell=3, saddle GMRES matched the Eigen corrector to 2.49e-14 but was slower: 256.4 s vs 232.3 s for the corrector phase.

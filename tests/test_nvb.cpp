@@ -216,7 +216,16 @@ int main() {
     std::cout << "=== Newest-Vertex Bisection Golden Tests ===\n";
     int failed = 0;
     try {
-        const auto cases = read_golden("tests/golden_nvb.txt");
+        std::vector<CaseGolden> cases;
+        try {
+            cases = read_golden("tests/golden_nvb.txt");
+        } catch (const std::exception &) {
+            try {
+                cases = read_golden("../tests/golden_nvb.txt");
+            } catch (const std::exception &) {
+                cases = read_golden("../../tests/golden_nvb.txt");
+            }
+        }
         for (const auto &gold : cases) {
             if (!check_case(gold)) ++failed;
         }

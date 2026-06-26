@@ -15,3 +15,6 @@ target_link_libraries(bench_reuse_rhs PRIVATE lod2d_core OpenMP::OpenMP_CXX)
 
 add_executable(bench_inverse_inequality bench_inverse_inequality.cpp)
 target_link_libraries(bench_inverse_inequality PRIVATE lod2d_core OpenMP::OpenMP_CXX)
+
+add_executable(bench_saddle_h3h10 bench_saddle_h3h10.cpp)
+target_link_libraries(bench_saddle_h3h10 PRIVATE lod2d_core OpenMP::OpenMP_CXX)

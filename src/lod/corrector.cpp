@@ -10,6 +10,119 @@
 
 namespace lod2d {
 
+namespace {
+
+Eigen::VectorXd saddle_apply(
+    const Eigen::SparseMatrix<double> &S,
+    const Eigen::MatrixXd &B,
+    const Eigen::VectorXd &x) {
+    const int n = S.rows();
+    const int m = static_cast<int>(B.rows());
+    Eigen::VectorXd y(n + m);
+    const auto q = x.head(n);
+    const auto lambda = x.tail(m);
+    y.head(n) = S * q;
+    if (m > 0) {
+        y.head(n).noalias() += B.transpose() * lambda;
+        y.tail(m).noalias() = B * q;
+    }
+    return y;
+}
+
+struct SaddleSchurPreconditioner {
+    const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> &llt;
+    const Eigen::MatrixXd &B;
+    Eigen::MatrixXd SinvBT;
+    Eigen::LDLT<Eigen::MatrixXd> schur_ldlt;
+
+    SaddleSchurPreconditioner(
+        const Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> &llt_in,
+        const Eigen::MatrixXd &B_in)
+        : llt(llt_in), B(B_in) {
+        if (B.rows() > 0) {
+            SinvBT = llt.solve(B.transpose());
+            Eigen::MatrixXd schur = B * SinvBT;
+            schur_ldlt.compute(schur);
+        }
+    }
+
+    Eigen::VectorXd solve(const Eigen::VectorXd &r) const {
+        const int n = static_cast<int>(B.cols());
+        const int m = static_cast<int>(B.rows());
+        Eigen::VectorXd z(n + m);
+        Eigen::VectorXd u = llt.solve(r.head(n));
+        if (m == 0) {
+            z.head(n) = u;
+            return z;
+        }
+        Eigen::VectorXd lambda = schur_ldlt.solve(B * u - r.tail(m));
+        z.head(n) = u - SinvBT * lambda;
+        z.tail(m) = lambda;
+        return z;
+    }
+};
+
+Eigen::VectorXd gmres_left_preconditioned_saddle(
+    const Eigen::SparseMatrix<double> &S,
+    const Eigen::MatrixXd &B,
+    const SaddleSchurPreconditioner &prec,
+    const Eigen::VectorXd &rhs,
+    int max_iter = 20,
+    double rel_tol = 1e-11) {
+    const int n_total = static_cast<int>(rhs.size());
+    Eigen::VectorXd x = Eigen::VectorXd::Zero(n_total);
+    Eigen::VectorXd r0 = prec.solve(rhs - saddle_apply(S, B, x));
+    const double beta = r0.norm();
+    if (beta == 0.0) return x;
+
+    Eigen::MatrixXd V = Eigen::MatrixXd::Zero(n_total, max_iter + 1);
+    Eigen::MatrixXd H = Eigen::MatrixXd::Zero(max_iter + 1, max_iter);
+    Eigen::VectorXd g = Eigen::VectorXd::Zero(max_iter + 1);
+    g(0) = beta;
+    V.col(0) = r0 / beta;
+
+    Eigen::VectorXd best_x = x;
+    for (int j = 0; j < max_iter; ++j) {
+        Eigen::VectorXd w = prec.solve(saddle_apply(S, B, V.col(j)));
+        for (int i = 0; i <= j; ++i) {
+            H(i, j) = V.col(i).dot(w);
+            w.noalias() -= H(i, j) * V.col(i);
+        }
+        H(j + 1, j) = w.norm();
+        if (H(j + 1, j) > 0.0 && j + 1 < max_iter + 1) V.col(j + 1) = w / H(j + 1, j);
+
+        Eigen::MatrixXd Hj = H.block(0, 0, j + 2, j + 1);
+        Eigen::VectorXd gj = g.head(j + 2);
+        Eigen::VectorXd y = Hj.colPivHouseholderQr().solve(gj);
+        best_x = V.leftCols(j + 1) * y;
+        const double residual = (gj - Hj * y).norm();
+        if (residual <= rel_tol * beta) return best_x;
+    }
+    return best_x;
+}
+
+Eigen::MatrixXd solve_saddle_gmres(
+    const Eigen::SparseMatrix<double> &S,
+    const Eigen::MatrixXd &B,
+    const Eigen::MatrixXd &rhs_top) {
+    const int n = S.rows();
+    const int m = static_cast<int>(B.rows());
+    const int nrhs = static_cast<int>(rhs_top.cols());
+    Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(S);
+    if (llt.info() != Eigen::Success) throw std::runtime_error("Saddle GMRES Sph LLT factorization failed");
+    SaddleSchurPreconditioner prec(llt, B);
+    Eigen::MatrixXd Q(n, nrhs);
+    for (int j = 0; j < nrhs; ++j) {
+        Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n + m);
+        rhs.head(n) = rhs_top.col(j);
+        Eigen::VectorXd sol = gmres_left_preconditioned_saddle(S, B, prec, rhs);
+        Q.col(j) = sol.head(n);
+    }
+    return Q;
+}
+
+} // namespace
+
 FineElementChildren build_fine_element_children(
     const Eigen::SparseMatrix<double> &P0,
     int coarse_element_count) {
@@ -250,20 +363,26 @@ compute_corrector_entries(int k,
         for (Eigen::SparseMatrix<double>::InnerIterator it(rhsp, k_rh); it; ++it)
             RHS(it.row(), nd + it.col()) = it.value();
 
-    Eigen::MatrixXd X(Nph, nd+d+1);
-    if (solver == CorrectorSolver::Cholmod) {
-        X = solve_cholmod(Sph, RHS);
-    } else if (solver == CorrectorSolver::CholmodCached) {
-        X = solve_cholmod_cached(Sph, RHS);
+    Eigen::MatrixXd Q;
+    if (solver == CorrectorSolver::SaddleGmres) {
+        Q = solve_saddle_gmres(Sph, IHp_dense, RHS.rightCols(d + 1));
     } else {
-        Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph);
-        X = llt.solve(RHS);
-    }
+        Eigen::MatrixXd X(Nph, nd+d+1);
+        if (solver == CorrectorSolver::Cholmod) {
+            X = solve_cholmod(Sph, RHS);
+        } else if (solver == CorrectorSolver::CholmodCached) {
+            X = solve_cholmod_cached(Sph, RHS);
+        } else {
+            Eigen::SimplicialLLT<Eigen::SparseMatrix<double>> llt(Sph);
+            X = llt.solve(RHS);
+        }
 
-    // ---- 8. mu = (IHp * X1) \ (IHp * X2) ----
-    Eigen::MatrixXd X1 = X.leftCols(nd);
-    Eigen::MatrixXd X2 = X.rightCols(d+1);
-    Eigen::MatrixXd mu = (IHp_dense * X1).colPivHouseholderQr().solve(IHp_dense * X2);
+        // ---- 8. mu = (IHp * X1) \ (IHp * X2) ----
+        Eigen::MatrixXd X1 = X.leftCols(nd);
+        Eigen::MatrixXd X2 = X.rightCols(d+1);
+        Eigen::MatrixXd mu = (IHp_dense * X1).colPivHouseholderQr().solve(IHp_dense * X2);
+        Q = X2 - X1 * mu;
+    }
 
     // ---- 9. Store ----
     CorrectorEntries entries;
@@ -271,8 +390,7 @@ compute_corrector_entries(int k,
     for (int i = 0; i < Nph; ++i) {
         int global_row = dofph[i];
         for (int j = 0; j < d+1; ++j) {
-            double val = X2(i, j);
-            for (int r = 0; r < nd; ++r) val -= X1(i, r) * mu(r, j);
+            double val = Q(i, j);
             if (std::abs(val) > 1e-15) entries.push_back({global_row, j, val});
         }
     }

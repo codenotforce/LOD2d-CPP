@@ -42,6 +42,18 @@ Recommended defaults:
 - `--threads=auto`
 - reference enabled unless `--skip-reference` is present
 
+### Saddle Corrector Solver
+
+Use `bench_saddle_h3h10` for direct saddle-system experiments. The benchmark forces MATLAB-compatible red uniform refinement via `refine_mesh_red` and compares the default Schur-eliminated Eigen corrector with `CorrectorSolver::SaddleGmres`. Do not use PCG on the full saddle matrix; it is indefinite.
+
+Reference command:
+
+```bash
+./build/benchmarks/bench_saddle_h3h10 --H=3 --h=10 --ell=3 --threads=8 --skip-reference
+```
+
+Current WSL result: saddle GMRES matched the Eigen Schur corrector to `2.49e-14` in max entry difference and `4.50e-15` in `uHms`, but was slower in the corrector phase: `256.4 s` vs `232.3 s`.
+
 ### Solver Policy
 
 Use one enum from `CorrectorSolver` throughout the benchmark.
@@ -50,6 +62,7 @@ Use one enum from `CorrectorSolver` throughout the benchmark.
 if (value == "eigen") solver = CorrectorSolver::EigenLLT;
 else if (value == "cholmod") solver = CorrectorSolver::Cholmod;
 else if (value == "cholmod_cached") solver = CorrectorSolver::CholmodCached;
+else if (value == "saddle_gmres") solver = CorrectorSolver::SaddleGmres;
 else if (value == "auto") solver = (h >= 10) ? CorrectorSolver::Cholmod
                                              : CorrectorSolver::EigenLLT;
 ```

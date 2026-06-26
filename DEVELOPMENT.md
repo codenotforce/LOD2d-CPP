@@ -80,6 +80,34 @@ The mesh layer supports two conforming bisection rules:
 The coefficient vector length is checked against the element count to avoid
 silent out-of-bounds reads in Release builds.
 
+### Saddle GMRES corrector experiment
+
+Previous PCG experiments are not mathematically appropriate for the full corrector saddle system because the matrix is symmetric indefinite, not SPD. The experimental solver `CorrectorSolver::SaddleGmres` instead solves
+
+```text
+[Sph  IHp^T] [q     ] = [rhsp]
+[IHp   0   ] [lambda]   [0   ]
+```
+
+with left-preconditioned GMRES. The preconditioner is the exact block Schur complement inverse using an LLT factorization of `Sph` and a dense LDLT factorization of `IHp*Sph^{-1}*IHp^T`. This is intentionally a correctness-first experiment: it tests the saddle formulation directly, but it still pays for essentially the same local factorization work as the Schur-eliminated Eigen path.
+
+Benchmark command on the MATLAB-compatible red uniform mesh:
+
+```bash
+/usr/bin/time -v ./build/benchmarks/bench_saddle_h3h10 --H=3 --h=10 --ell=3 --threads=8 --skip-reference
+```
+
+Result on WSL 12 GiB:
+
+| Path | Corrector time | Accuracy vs Eigen Schur | Notes |
+|---|---:|---:|---|
+| Eigen Schur elimination | 232.283 s | baseline | solves `Sph` for `[IHp^T,rhsp]` and forms the constrained correction by dense Schur solve |
+| Saddle GMRES + exact block Schur | 256.436 s | max corrector diff 2.49e-14; max `uHms` diff 4.50e-15 | correct but about 10.4% slower |
+
+Other timings: red mesh 4.18 s, operators 5.22 s, coarse solve 13.79/3.29 s for Eigen/Saddle-built bases, total wall 610.2 s for both corrector paths. Peak RSS was 11.65 GB, so the full reference solve was skipped in this WSL run to avoid OOM risk.
+
+Conclusion: the saddle formulation is correct, but this exact block-Schur GMRES path is not a speed improvement for H=3,h=10,ell=3. It should remain an explicit experiment rather than a default solver. The next useful saddle experiment would need an actually cheaper approximate `Sph^{-1}` or Schur preconditioner; otherwise GMRES mainly adds Krylov overhead around the same factorization.
+
 ### Corrector Solver
 
 The corrector still solves the same MATLAB saddle-point formulation:
@@ -100,6 +128,7 @@ The corrector still solves the same MATLAB saddle-point formulation:
   memory than Eigen.
 - `CholmodCached`: explicit experiment that reuses a bounded thread-local
   CHOLMOD symbolic factor when the exact local sparsity pattern repeats.
+- `SaddleGmres`: explicit saddle-system experiment with exact block Schur preconditioning; correct on H=3,h=10,ell=3 but slower than Eigen Schur.
 
 
 ## Modular API Layers

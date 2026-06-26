@@ -30,6 +30,12 @@ RefineOutput bisect_newest_vertex(const TriMesh &coarse, const std::vector<int> 
 /// Multi-level newest-vertex bisection.
 RefineOutput refine_mesh_nvb(const TriMesh &initial, int nref);
 
+/// Single-level uniform red refinement, kept for MATLAB-compatible benchmarks.
+RefineOutput refine_red(const TriMesh &coarse);
+
+/// Multi-level uniform red refinement, kept for MATLAB-compatible benchmarks.
+RefineOutput refine_mesh_red(const TriMesh &initial, int nref);
+
 /// Multi-level refinement: applies refine() nref times.
 /// Returns final mesh + accumulated prolongation matrices.
 RefineOutput refine_mesh(const TriMesh &initial, int nref);
