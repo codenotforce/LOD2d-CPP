@@ -460,3 +460,18 @@ When benchmark behavior changes, update:
 
 Keep benchmark text ASCII-only unless there is a specific reason not to.  This
 avoids encoding corruption in Windows/WSL round trips.
+
+## Helmholtz Wave-Number Benchmarks
+
+See `HELMHOLTZ_GUIDE.md` for mathematical conventions, all command-line
+options, output definitions, server sizing, and interpretation rules.
+
+```bash
+cmake --build build --target bench_helmholtz_k -j 8
+./build/benchmarks/bench_helmholtz_k --k=16 --fine-gap=8 --threads=8
+THREADS=32 K_VALUES="4 8 16 32 64" bash scripts/run_helmholtz_k_scan.sh
+```
+
+The scan is resumable by default. Use `RESUME=0` only when existing successful
+points should be recomputed. Compare error, corrector residual, wall time, and
+peak RSS whenever changing the corrector solver or scheduling policy.

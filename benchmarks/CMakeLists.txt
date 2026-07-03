@@ -18,3 +18,6 @@ target_link_libraries(bench_inverse_inequality PRIVATE lod2d_core OpenMP::OpenMP
 
 add_executable(bench_saddle_h3h10 bench_saddle_h3h10.cpp)
 target_link_libraries(bench_saddle_h3h10 PRIVATE lod2d_core OpenMP::OpenMP_CXX)
+
+add_executable(bench_helmholtz_k bench_helmholtz_k.cpp)
+target_link_libraries(bench_helmholtz_k PRIVATE lod2d_core)

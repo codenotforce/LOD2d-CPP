@@ -21,8 +21,6 @@ cmake --build build -j 8
 ./build/tests/test_dg
 ./build/tests/test_corr --solver=both
 ./build/tests/test_full
-./build/benchmarks/bench_H4h8 --solver=eigen
-./build/benchmarks/bench_H4h8 --solver=cholmod
 OMP_NUM_THREADS=16 ./build/benchmarks/bench_H4h9 --solver=eigen
 OMP_NUM_THREADS=16 ./build/benchmarks/bench_H4h9 --solver=cholmod
 ./build/benchmarks/bench_refine
@@ -43,14 +41,6 @@ Latest test results:
 | MATLAB serial | 49.39 s | 48.19-52.17 s |
 
 Speedup: C++ 5.0x vs MATLAB serial, 2.4x vs MATLAB parallel.
-
-### H=4, h=8, ell=2 (20-run median, OMP_NUM_THREADS=16)
-
-| Version | Median | Range |
-|---------|--------|-------|
-| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
-
-Errors identical to MATLAB across all versions.
 
 Eigen remains the default corrector solver.
 
@@ -458,7 +448,8 @@ P0 * patch(:, k)
 ```
 
 for every coarse element `k`, then scanned all fine elements to identify the
-local patch.  For H4/h8 this means 512 correctors scanning 131072 fine elements.
+local patch. This repeatedly scanned the complete fine-element set once per
+coarse corrector.
 
 New code builds `FineElementChildren` once from `P_elem`, mapping:
 
@@ -632,7 +623,7 @@ applied to one benchmark but forgotten in another.
 
 | Experiment | Result |
 |------------|--------|
-| CHOLMOD as default corrector solver | Correct but slower than Eigen for H4/h8 |
+| CHOLMOD as default corrector solver | Correct but slower than Eigen in the earlier small-case comparison |
 | CHOLMOD for H4/h9 | Faster corrector phase than Eigen in one run, but slower total runtime |
 | Unbounded CHOLMOD factor cache | Reached about 11.6 GB RSS and was killed on the 12 GB WSL machine |
 | Bounded CHOLMOD factor cache | Correct and memory-safe, but h=10 profile was slower than plain CHOLMOD with current patch order |
@@ -656,3 +647,177 @@ applied to one benchmark but forgotten in another.
   golden files without running from the repository root.
 - Keep Windows `D:\code\femcode\LOD2d_C++` as a mirror of the WSL-tested source
   to avoid line-ending and build-cache confusion.
+
+## 13. Helmholtz Petrov-Galerkin Foundation
+
+The Helmholtz implementation is deliberately separate from the real SPD
+elliptic corrector path while sharing mesh, NVB, patch, and quasi-interpolation
+utilities.
+
+### Module ownership
+
+- `include/helmholtz/types.h`: complex scalar, vector, sparse matrix, and
+  callback aliases.
+- `include/helmholtz/operators.h`, `src/helmholtz/operators.cpp`: volume
+  stiffness/mass, physical Robin boundary mass, complex load quadrature,
+  direct fine solve, and error norms.
+- `include/helmholtz/corrector.h`, `src/helmholtz/corrector.cpp`: local patch
+  constraints, complex saddle solve, primal/adjoint correctors, diagnostics,
+  and corrected basis assembly.
+- `include/helmholtz/model.h`, `src/helmholtz/model.cpp`: global NVB hierarchy,
+  Petrov-Galerkin spaces, coarse factorization, reconstruction, and repeated
+  right-hand-side solves.
+
+### Algebraic conventions
+
+For coefficient vectors `x` and `y`, the variational form is represented as
+`y.adjoint() * A * x`. The fine operator is complex symmetric for the current
+real coefficients, but is not Hermitian. Generic complex code must use
+`adjoint()`; `transpose()` is only valid where complex symmetry is explicitly
+being tested.
+
+The trial and test bases are
+
+```text
+Psi_trial = (I - C) P,
+Psi_test  = (I - C*) P,
+A_LOD     = Psi_test^* A_h Psi_trial.
+```
+
+For the present real mesh, coefficients, and interpolation matrix,
+`C* v = conjugate(C conjugate(v))`. The code still stores primal and adjoint
+correctors separately so a future general complex/PML operator can replace
+this fast path without changing the model API.
+
+### Patch boundary invariant
+
+A fine vertex is a local patch unknown only when all of its incident domain
+elements belong to the patch. This retains physical Robin boundary vertices
+when their full domain star is present and removes vertices on the artificial
+patch boundary. Robin edge blocks are stored in the fine element operator, so
+a physical boundary edge is included exactly once whenever its element belongs
+to the patch.
+
+### NVB compatibility
+
+NVB interprets local vertex 0 as the newest vertex and local edge `(1,2)` as
+the reference edge. The Helmholtz unit-square initial mesh is therefore
+`{0,1,3}` and `{2,3,1}`: both triangles reference the shared diagonal. The
+older ordering `{0,1,3}`, `{1,2,3}` is not a compatible initial labeling for
+repeated global NVB and must not be used for this hierarchy.
+
+### Solver and reuse policy
+
+The correctness baseline uses `Eigen::SparseLU` for local complex saddle
+systems, the coarse Petrov-Galerkin system, and the fine reference system.
+Local corrector failures are captured inside the OpenMP region and rethrown
+after it, so parallel construction preserves clear solver diagnostics.
+The built model retains the coarse factorization, so changing only `f` does not
+recompute correctors or refactor the coarse operator. Changing `k`, mesh,
+coefficients, boundary data, interpolation, or `ell` requires rebuilding.
+
+### Validation on 2026-06-29
+
+```text
+Manufactured FEM energy rate : 0.985374
+Manufactured FEM L2 rate     : 1.97936
+Max primal residual          : 3.10527e-16
+Max adjoint residual         : 3.10527e-16
+Max I_H constraint residual  : 1.70725e-16
+CTest                         : 9/9 passed
+```
+
+Both the two-sided and corrected-test-only Petrov-Galerkin systems agree with
+independent dense coarse solves on the small verification mesh.
+
+## 14. Helmholtz Wave-Number Scan
+
+`bench_helmholtz_k` implements the fifth Helmholtz milestone. For every wave
+number it builds an independent globally refined NVB hierarchy, chooses the
+first coarse level satisfying `kH <= target`, sets `ell = ceil(log2(k))`, and
+compares:
+
+- standard coarse P1 Galerkin FEM;
+- two-sided Petrov-Galerkin LOD;
+- the fine P1 reference solution used by both error calculations.
+
+The fixed test source is
+
+```text
+f(x,y) = exp(-40 * ((x - 0.35)^2 + (y - 0.55)^2)).
+```
+
+The reported energy norm is `sqrt(v^* (K + k^2 M) v)`. The optional inf-sup
+value uses exact trial/test energy Gram matrices and a dense SVD, so it is only
+computed below `--stability-max-dofs`; larger cases report `nan` instead of an
+unscaled or misleading surrogate.
+
+### WSL validation scan on 2026-06-29
+
+This local validation used `kH = 1`, `kh = 0.25`, `fine-gap = 4`, and
+`ell = ceil(log2(k))`. It validates the experiment and error pipeline, but the
+finer server scan should use the script default `fine-gap = 8` before drawing a
+final pollution conclusion.
+
+| k | coarse/fine elements | FEM energy rel. | LOD energy rel. | LOD L2 rel. | correctors | total |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 64 / 1,024 | 2.115e-1 | 7.298e-2 | 1.934e-2 | 0.072 s | 0.089 s |
+| 8 | 256 / 4,096 | 1.585e-1 | 1.771e-2 | 3.636e-3 | 0.871 s | 1.363 s |
+| 16 | 1,024 / 16,384 | 1.561e-1 | 8.811e-3 | 1.545e-3 | 10.318 s | 10.833 s |
+| 32 | 4,096 / 65,536 | 3.449e-2 | 1.140e-2 | 1.544e-3 | 119.906 s | 124.193 s |
+
+All four points had Petrov residuals below `4.3e-16`, primal corrector
+residuals below `1.4e-15`, and constraint residuals below `3.8e-16`. The
+`k=32` process peaked at about 2.11 GB RSS. Corrector construction occupied
+roughly 96.5% of its total runtime and is the clear target for milestone 6.
+
+These data show that the LOD error remains bounded over the tested range, but
+they do not by themselves establish a clean pollution slope: the fixed-source
+standard FEM error is not monotone in `k`. The full `k=4,...,64`,
+`fine-gap=8` server run and a manufactured oscillatory solution are useful
+follow-up checks before making a stronger numerical claim.
+
+The full scan is run as separate processes:
+
+```bash
+K_VALUES="4 8 16 32 64" FINE_GAP=8 KH_TARGET=1 \
+  bash scripts/run_helmholtz_k_scan.sh
+```
+
+Each process writes one CSV row and one `/usr/bin/time -v` log. This avoids
+retaining the previous wave number's mesh, correctors, and sparse factors.
+
+## 15. Helmholtz Corrector Performance
+
+Milestone 6 keeps the complex SparseLU gold-standard solve but reduces its
+assembly and scheduling overhead:
+
+- sort patches by estimated fine-element cost before OpenMP dynamic scheduling;
+- reuse stamped thread-local node, element, and constraint workspaces;
+- assemble only active interpolation rows in each local saddle system;
+- solve the three local coarse-basis right-hand sides as one block;
+- cache symbolic analysis when a thread encounters the exact same sparse pattern;
+- capture worker exceptions and rethrow them after the parallel region.
+
+The following Release measurements used `fine-gap=4`, `kH=1`, and eight OpenMP
+threads. Errors and residuals were unchanged from the serial milestone-5 run.
+
+| k | milestone-5 correctors | optimized correctors | optimized total | speedup |
+|---:|---:|---:|---:|---:|
+| 16 | 10.318 s | 1.653 s | 2.119 s | 6.24x |
+| 32 | 119.906 s | 18.551 s | 22.790 s | 6.46x |
+
+For `k=32`, peak RSS was 2.14 GB versus approximately 2.11 GB before the
+optimization. The optimized errors remained `3.4485076e-2` (coarse FEM energy),
+`1.1401850e-2` (LOD energy), and `1.5435537e-3` (LOD L2), with corrector
+residuals near `1e-15`. Symbolic reuse is useful in serial runs but contributes
+less with many workers because each thread owns its cache; parallelism and
+reduced local assembly are the main gains.
+
+## 16. Helmholtz Reproduction Workflow
+
+`HELMHOLTZ_GUIDE.md` is the user and server guide. The scan script now records
+run metadata, applies explicit OpenMP placement, writes one log and CSV per wave
+number, continues after a failed point, and skips completed points by default.
+Set `RESUME=0` to force a fresh run. Independent benchmark processes ensure that
+mesh, corrector, and factorization memory is returned between wave numbers.

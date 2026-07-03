@@ -59,9 +59,6 @@ Run benchmarks:
 ```bash
 ./build/benchmarks/bench_refine
 ./build/benchmarks/bench_saddle_h3h10 --H=3 --h=10 --ell=3 --threads=8 --skip-reference
-./build/benchmarks/bench_H4h8 --solver=eigen
-./build/benchmarks/bench_H4h8 --solver=cholmod
-./build/benchmarks/bench_H4h8 --solver=cholmod_cached
 ./build/benchmarks/bench_H4h9 --solver=eigen
 ./build/benchmarks/bench_H4h9 --solver=cholmod
 ./build/benchmarks/bench_H4h9 --solver=cholmod_cached --skip-reference
@@ -138,7 +135,6 @@ current full-global benchmark. `h=13` is experimental and may be very slow;
 | Patch construction | Complete | Golden patch tests |
 | Element corrector | Complete | `test_corr`: Eigen, CHOLMOD, and cached CHOLMOD pass |
 | Full LOD pipeline | Complete | `test_full`: 3/3 pass |
-| H4/h8 benchmark | Complete | Error check vs MATLAB reference |
 | H4/h9 benchmark | Complete | Error check vs MATLAB reference |
 
 ## Recent Optimization Work
@@ -169,39 +165,10 @@ benchmark and test pipelines consistent:
    was killed on the 12 GB WSL test machine.
 9. `LodReusableSystem` caches `G`, `G0`, and the coarse LOD factorization for
    repeated solves with the same `A`, mesh, `H/h`, and `ell` but different RHS
-   values.  In the H4/h10 reuse benchmark, the first setup still costs tens of
-   seconds, but later RHS solves are around 50-100 ms each.
+   values.
 
-### Benchmarks (H=4, h=9, ell=2, 7-run median, OMP_NUM_THREADS=16)
-
-| Version | Median | Range | vs Serial |
-|---------|--------|-------|-----------|
-| **C++ 16t** | **9.79 s** | 9.48-10.01 s | **5.0x** |
-| MATLAB parallel (4w) | 23.57 s | 22.90-24.07 s | 2.1x |
-| MATLAB serial | 49.39 s | 48.19-52.17 s | 1.0x |
-
-Errors identical across all versions:
-```text
-Energy: 0.0257411   L2: 0.00175159   FE-L2: 0.0157131
-```
-
-### Benchmarks (H=4, h=8, ell=2, 20-run median, OMP_NUM_THREADS=16)
-
-| Version | Median | Range |
-|---------|--------|-------|
-| **C++ 16t** | **1.73 s** | 1.45-1.99 s |
-| MATLAB parallel (4w) | 3.37 s | (hot cache) |
-| MATLAB serial | 27.0 s | - |
-
-Errors:
-```text
-Energy: 0.0247816   L2: 0.00166544   FE-L2: 0.0145842
-```
-
-CHOLMOD is now stable and exact against golden corrector data.  Plain CHOLMOD
-is useful for h=10 benchmarks; cached CHOLMOD is available for experiments but
-was slower in the current h=10 profile because exact local matrix patterns did
-not repeat often enough under the current dynamic patch schedule.
+Historical timing tables and solver experiments are recorded in
+`DEVELOPMENT.md`; README intentionally contains no benchmark result snapshots.
 
 ## Important Migration Notes
 
@@ -225,6 +192,88 @@ Research and educational use.  Based on the LOD code from
 *An Introduction to the Localized Orthogonal Decomposition Method*
 by A. Malqvist and D. Peterseim.
 
-## Saddle GMRES Experiment
+## Helmholtz Petrov-Galerkin LOD
 
-The full corrector saddle system is symmetric indefinite, so PCG is not a valid solver for that matrix. `bench_saddle_h3h10` compares the Schur-eliminated Eigen path with an experimental GMRES solver using an exact block Schur complement preconditioner on the MATLAB-compatible red uniform mesh. On WSL 12 GiB for H=3,h=10,ell=3, saddle GMRES matched the Eigen corrector to 2.49e-14 but was slower: 256.4 s vs 232.3 s for the corrector phase.
+See `HELMHOLTZ_GUIDE.md` for the mathematical conventions, build and test
+commands, benchmark options, output fields, server workflow, and reuse rules.
+
+The first seven stages of `HELMHOLTZ_LOD_PLAN.md` are implemented in the
+`lod2d::helmholtz` namespace:
+
+- complex P1 Helmholtz FEM with homogeneous impedance Robin data;
+- globally nested NVB coarse/fine meshes;
+- complex-linear `I_H = E_H * Pi_H^dg` using the existing real sparse matrix;
+- primal and adjoint localized correctors solved by complex sparse LU;
+- two-sided Petrov-Galerkin and corrected-test-only model modes;
+- cached coarse factorization for repeated right-hand sides;
+- parallel local correctors with thread-local assembly workspaces and exact
+  sparse-pattern symbolic-analysis reuse.
+
+The assembled fine operator is
+
+```text
+A_h(k) = K_h - k^2 M_h - i k B_h,
+```
+
+with the first argument linear and the second argument conjugate-linear.
+Physical-domain portions of a corrector patch retain the Robin term; artificial
+patch boundaries are homogeneous Dirichlet boundaries.  The corrector and
+coarse systems are not solved with LLT, CG, or PCG.
+
+Minimal API example:
+
+```cpp
+#include "helmholtz/model.h"
+
+using namespace lod2d::helmholtz;
+
+HelmholtzProblemConfig config;
+config.H = 1;
+config.h = 4;
+config.ell = 1;
+config.wavenumber = 2.0;
+config.mode = HelmholtzPetrovMode::TwoSided;
+
+HelmholtzLodModel model = HelmholtzLodModel::build(config);
+auto solution = model.solve_source([](const lod2d::Point2 &x) {
+    return Complex(1.0 + x.x(), -x.y());
+});
+```
+
+Build and run the correctness gates with:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j 8
+ctest --test-dir build -R helmholtz_ --output-on-failure
+```
+
+The default unit-square mesh uses NVB-compatible local vertex ordering: both
+initial triangles use the shared diagonal as their reference edge.  Custom
+initial meshes must provide a compatible reference-edge labeling.
+
+### Wave-Number Scan
+
+Run one wave number directly:
+
+```bash
+./build/benchmarks/bench_helmholtz_k \
+  --k=16 --H=auto --h=auto --kH-target=1 \
+  --fine-gap=8 --ell=auto --mode=two-sided
+```
+
+Run independent processes for the full sequence so memory is released after
+each wave number:
+
+```bash
+THREADS=32 K_VALUES="4 8 16 32 64" FINE_GAP=8 KH_TARGET=1 \
+  bash scripts/run_helmholtz_k_scan.sh
+```
+
+The resumable scan compares standard coarse P1 FEM and Petrov-Galerkin LOD
+against the same fine P1 reference solution. It writes errors, `kH`, `kh`,
+corrector residuals, an energy-scaled inf-sup value for small coarse systems,
+phase timings, metadata, and `/usr/bin/time -v` logs to
+`results/helmholtz_k_scan/`. Set `RESUME=0` to rerun completed points.
+
+Measured result tables belong in `DEVELOPMENT.md`, not README.

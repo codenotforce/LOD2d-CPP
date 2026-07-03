@@ -1,0 +1,93 @@
+#include "helmholtz/model.h"
+#include "helmholtz/operators.h"
+#include "mesh/refine.h"
+
+#include <Eigen/Dense>
+#include <cmath>
+#include <complex>
+#include <iostream>
+#include <stdexcept>
+#include <vector>
+
+using namespace lod2d;
+using namespace lod2d::helmholtz;
+
+namespace {
+
+void require(bool condition, const char *message) {
+    if (!condition) throw std::runtime_error(message);
+}
+
+} // namespace
+
+int main() {
+    try {
+        const double k = 2.0;
+        const TriMesh initial = make_helmholtz_unit_square_mesh();
+        const TriMesh boundary_mesh = refine_mesh_nvb(initial, 3).mesh;
+        const HelmholtzOperators boundary_operators = assemble_helmholtz_operators(boundary_mesh, k);
+
+        const Eigen::VectorXd ones = Eigen::VectorXd::Ones(boundary_mesh.nodes.size());
+        const double boundary_measure = ones.dot(boundary_operators.boundary_mass * ones);
+        require(std::abs(boundary_measure - 4.0) < 1e-12,
+                "Robin boundary mass does not integrate the unit-square perimeter");
+
+        const Eigen::MatrixXcd dense_system(boundary_operators.system);
+        require((dense_system - dense_system.transpose()).norm() < 1e-12,
+                "Helmholtz matrix must be complex symmetric for real coefficients");
+        require((dense_system - dense_system.adjoint()).norm() > 1e-3,
+                "Helmholtz matrix was accidentally assembled as Hermitian");
+
+        const Complex b = (k * k + Complex(0.0, 2.0 * k)) / Complex(2.0, -k);
+        auto g = [=](double x) { return Complex(1.0, 0.0) - Complex(0.0, k) * x + b * x * x; };
+        auto gp = [=](double x) { return -Complex(0.0, k) + 2.0 * b * x; };
+        auto exact = [=](const Point2 &point) { return g(point.x()) * g(point.y()); };
+        auto exact_gradient = [=](const Point2 &point) {
+            Eigen::Vector2cd gradient;
+            gradient << gp(point.x()) * g(point.y()), g(point.x()) * gp(point.y());
+            return gradient;
+        };
+        auto source = [=](const Point2 &point) {
+            return -2.0 * b * (g(point.x()) + g(point.y()))
+                 - k * k * g(point.x()) * g(point.y());
+        };
+
+        const Complex left_robin = -gp(0.0) - Complex(0.0, k) * g(0.0);
+        const Complex right_robin = gp(1.0) - Complex(0.0, k) * g(1.0);
+        require(std::abs(left_robin) < 1e-12 && std::abs(right_robin) < 1e-12,
+                "manufactured solution does not satisfy homogeneous Robin data");
+
+        std::vector<double> diameters;
+        std::vector<double> energy_errors;
+        std::vector<double> l2_errors;
+        for (int level : {3, 5, 7}) {
+            const TriMesh mesh = refine_mesh_nvb(initial, level).mesh;
+            const HelmholtzOperators operators = assemble_helmholtz_operators(mesh, k);
+            const ComplexVector load = assemble_helmholtz_load(mesh, source);
+            const ComplexVector solution = solve_helmholtz_fem(operators, load);
+            const HelmholtzError error = compute_helmholtz_error(
+                mesh, solution, k, exact, exact_gradient);
+            diameters.push_back(max_element_diameter(mesh));
+            energy_errors.push_back(error.energy);
+            l2_errors.push_back(error.l2);
+        }
+
+        require(energy_errors[2] < 0.45 * energy_errors[0],
+                "Helmholtz energy error did not decrease under global NVB");
+        require(l2_errors[2] < 0.25 * l2_errors[0],
+                "Helmholtz L2 error did not decrease under global NVB");
+        const double energy_rate = std::log(energy_errors[0] / energy_errors[2])
+                                 / std::log(diameters[0] / diameters[2]);
+        const double l2_rate = std::log(l2_errors[0] / l2_errors[2])
+                             / std::log(diameters[0] / diameters[2]);
+        require(energy_rate > 0.65, "Helmholtz energy convergence rate is too low");
+        require(l2_rate > 1.35, "Helmholtz L2 convergence rate is too low");
+
+        std::cout << "Helmholtz FEM: energy rate=" << energy_rate
+                  << " L2 rate=" << l2_rate << '\n';
+        return 0;
+    } catch (const std::exception &error) {
+        std::cerr << "test_helmholtz_fem failed: " << error.what() << '\n';
+        return 1;
+    }
+}

@@ -21,6 +21,22 @@ add_executable(test_patch test_patch.cpp)
 target_link_libraries(test_patch PRIVATE lod2d_core)
 add_test(NAME patches COMMAND test_patch)
 
+add_executable(test_helmholtz_fem test_helmholtz_fem.cpp)
+target_link_libraries(test_helmholtz_fem PRIVATE lod2d_core)
+add_test(NAME helmholtz_fem COMMAND test_helmholtz_fem)
+
+add_executable(test_helmholtz_interp test_helmholtz_interp.cpp)
+target_link_libraries(test_helmholtz_interp PRIVATE lod2d_core)
+add_test(NAME helmholtz_interp COMMAND test_helmholtz_interp)
+
+add_executable(test_helmholtz_corrector test_helmholtz_corrector.cpp)
+target_link_libraries(test_helmholtz_corrector PRIVATE lod2d_core)
+add_test(NAME helmholtz_corrector COMMAND test_helmholtz_corrector)
+
+add_executable(test_helmholtz_model test_helmholtz_model.cpp)
+target_link_libraries(test_helmholtz_model PRIVATE lod2d_core)
+add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)
+
 add_executable(test_corr test_corr.cpp)
 target_link_libraries(test_corr PRIVATE lod2d_core)
 
