@@ -1,4 +1,5 @@
 #include "helmholtz/model.h"
+#include "helmholtz/adaptive/hierarchy.h"
 
 #include <Eigen/SparseLU>
 #include <algorithm>
@@ -53,28 +54,34 @@ TriMesh make_helmholtz_unit_square_mesh() {
     return mesh;
 }
 
-HelmholtzProblemData build_helmholtz_problem_data(
-    const TriMesh &initial_mesh,
-    int H,
-    int h,
+namespace {
+
+HelmholtzProblemData finish_problem_data(
+    TriMesh coarse,
+    RefineOutput fine_output,
+    std::vector<int> coarse_levels,
+    int fine_level,
     int ell) {
-    validate_pure_robin_mesh(initial_mesh);
-    if (H < 0 || h < H)
-        throw std::invalid_argument("Helmholtz refinement levels must satisfy 0 <= H <= h");
     if (ell < 0) throw std::invalid_argument("Helmholtz oversampling level must be nonnegative");
 
-    RefineOutput coarse_output = refine_mesh_nvb(initial_mesh, H);
-    RefineOutput fine_output = refine_mesh_nvb(coarse_output.mesh, h - H);
-
     HelmholtzProblemData problem;
-    problem.coarse = std::move(coarse_output.mesh);
+    problem.coarse = std::move(coarse);
     problem.fine = std::move(fine_output.mesh);
     problem.coarse_to_fine = std::move(fine_output.P_node);
     problem.fine_element_prolongation = std::move(fine_output.P_elem);
     problem.fine_dg_prolongation = std::move(fine_output.P_dg);
     problem.patches = build_patches(problem.coarse, ell);
+    problem.coarse_element_levels = std::move(coarse_levels);
+    problem.fine_level = fine_level;
 
+    const Eigen::SparseMatrix<double> coarse_cg_to_dg = build_cg_to_dg(problem.coarse);
     const Eigen::SparseMatrix<double> cg_to_dg = build_cg_to_dg(problem.fine);
+    const Eigen::SparseMatrix<double> dg_from_coarse =
+        problem.fine_dg_prolongation * coarse_cg_to_dg;
+    const Eigen::SparseMatrix<double> dg_from_fine =
+        cg_to_dg * problem.coarse_to_fine;
+    if ((dg_from_coarse - dg_from_fine).norm() > 1e-10)
+        throw std::runtime_error("DG and nodal prolongations represent different coarse P1 functions");
     problem.quasi_interpolation = build_quasi_interp(
         problem.coarse,
         problem.fine,
@@ -92,6 +99,52 @@ HelmholtzProblemData build_helmholtz_problem_data(
     return problem;
 }
 
+} // namespace
+
+HelmholtzProblemData build_helmholtz_problem_data(
+    const TriMesh &initial_mesh,
+    int H,
+    int h,
+    int ell) {
+    validate_pure_robin_mesh(initial_mesh);
+    if (H < 0 || h < H)
+        throw std::invalid_argument("Helmholtz refinement levels must satisfy 0 <= H <= h");
+
+    RefineOutput coarse_output = refine_mesh_nvb(initial_mesh, H);
+    TriMesh coarse = std::move(coarse_output.mesh);
+    RefineOutput fine_output = refine_mesh_nvb(coarse, h - H);
+    const int coarse_elements = fine_output.P_elem.cols();
+    return finish_problem_data(
+        std::move(coarse),
+        std::move(fine_output),
+        std::vector<int>(coarse_elements, H),
+        h,
+        ell);
+}
+
+HelmholtzProblemData build_adaptive_helmholtz_problem_data(
+    const TriMesh &coarse_mesh,
+    const std::vector<int> &coarse_element_levels,
+    int fine_level,
+    int ell) {
+    validate_pure_robin_mesh(coarse_mesh);
+    if (coarse_element_levels.size() != coarse_mesh.elems.size())
+        throw std::invalid_argument("adaptive coarse level count must match coarse elements");
+    if (coarse_element_levels.empty()
+        || *std::min_element(coarse_element_levels.begin(), coarse_element_levels.end()) < 0
+        || *std::max_element(coarse_element_levels.begin(), coarse_element_levels.end()) > fine_level) {
+        throw std::invalid_argument("adaptive coarse levels must lie between zero and the fine level");
+    }
+    adaptive::NestedFineMesh nested = adaptive::complete_to_fine_level(
+        coarse_mesh, coarse_element_levels, fine_level);
+    return finish_problem_data(
+        coarse_mesh,
+        std::move(nested.refinement),
+        coarse_element_levels,
+        fine_level,
+        ell);
+}
+
 HelmholtzLodModel HelmholtzLodModel::build(const HelmholtzProblemConfig &config) {
     if (config.wavenumber <= 0.0)
         throw std::invalid_argument("Helmholtz wavenumber must be positive");
@@ -99,21 +152,49 @@ HelmholtzLodModel HelmholtzLodModel::build(const HelmholtzProblemConfig &config)
     if (resolved.initial_mesh.nodes.empty())
         resolved.initial_mesh = make_helmholtz_unit_square_mesh();
 
+    const auto mesh_start = std::chrono::steady_clock::now();
+    HelmholtzProblemData problem = build_helmholtz_problem_data(
+        resolved.initial_mesh, resolved.H, resolved.h, resolved.ell);
+    return build_with_problem(
+        std::move(resolved), std::move(problem), elapsed_ms(mesh_start));
+}
+
+HelmholtzLodModel HelmholtzLodModel::build_adaptive(
+    const HelmholtzProblemConfig &config,
+    const TriMesh &coarse_mesh,
+    const std::vector<int> &coarse_element_levels) {
+    if (config.wavenumber <= 0.0)
+        throw std::invalid_argument("Helmholtz wavenumber must be positive");
+    HelmholtzProblemConfig resolved = config;
+    if (!coarse_element_levels.empty())
+        resolved.H = *std::min_element(coarse_element_levels.begin(), coarse_element_levels.end());
+
+    const auto mesh_start = std::chrono::steady_clock::now();
+    HelmholtzProblemData problem = build_adaptive_helmholtz_problem_data(
+        coarse_mesh, coarse_element_levels, resolved.h, resolved.ell);
+    return build_with_problem(
+        std::move(resolved), std::move(problem), elapsed_ms(mesh_start));
+}
+
+HelmholtzLodModel HelmholtzLodModel::build_with_problem(
+    HelmholtzProblemConfig config,
+    HelmholtzProblemData problem,
+    double mesh_and_interpolation_ms) {
     const auto total_start = std::chrono::steady_clock::now();
     HelmholtzLodModel model;
-    model.config_ = resolved;
+    model.config_ = std::move(config);
+    model.problem_ = std::move(problem);
+    model.build_timings_.mesh_and_interpolation_ms = mesh_and_interpolation_ms;
+
     auto stage_start = std::chrono::steady_clock::now();
-    model.problem_ = build_helmholtz_problem_data(
-        resolved.initial_mesh, resolved.H, resolved.h, resolved.ell);
-    model.build_timings_.mesh_and_interpolation_ms = elapsed_ms(stage_start);
-    stage_start = std::chrono::steady_clock::now();
     model.operators_ = assemble_helmholtz_operators(
         model.problem_.fine,
-        resolved.wavenumber,
-        resolved.diffusion,
-        resolved.refractive_index,
-        resolved.boundary_beta);
+        model.config_.wavenumber,
+        model.config_.diffusion,
+        model.config_.refractive_index,
+        model.config_.boundary_beta);
     model.build_timings_.operators_ms = elapsed_ms(stage_start);
+
     stage_start = std::chrono::steady_clock::now();
     model.correctors_ = build_helmholtz_correctors(
         model.problem_.coarse,
@@ -145,7 +226,7 @@ HelmholtzLodModel HelmholtzLodModel::build(const HelmholtzProblemConfig &config)
         fine_node_count,
         model.correctors_.adjoint);
     model.test_basis_ = model.corrected_test_basis_;
-    if (resolved.mode == HelmholtzPetrovMode::TwoSided)
+    if (model.config_.mode == HelmholtzPetrovMode::TwoSided)
         model.trial_basis_ = model.corrected_trial_basis_;
     else
         model.trial_basis_ = model.problem_.coarse_to_fine.cast<Complex>();
@@ -162,7 +243,7 @@ HelmholtzLodModel HelmholtzLodModel::build(const HelmholtzProblemConfig &config)
     if (model.factorization_->solver.info() != Eigen::Success)
         throw std::runtime_error("Helmholtz Petrov-Galerkin coarse factorization failed");
     model.build_timings_.basis_and_factorization_ms = elapsed_ms(stage_start);
-    model.build_timings_.total_ms = elapsed_ms(total_start);
+    model.build_timings_.total_ms = mesh_and_interpolation_ms + elapsed_ms(total_start);
     return model;
 }
 

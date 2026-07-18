@@ -1,8 +1,10 @@
 #include "helmholtz/model.h"
+#include "helmholtz/manufactured.h"
 #include "helmholtz/operators.h"
 #include "mesh/refine.h"
 
 #include <Eigen/Dense>
+#include <array>
 #include <cmath>
 #include <complex>
 #include <iostream>
@@ -37,6 +39,39 @@ int main() {
                 "Helmholtz matrix must be complex symmetric for real coefficients");
         require((dense_system - dense_system.adjoint()).norm() > 1e-3,
                 "Helmholtz matrix was accidentally assembled as Hermitian");
+        const double manufactured_k = 4.0;
+        const HelmholtzManufacturedSolution manufactured =
+            make_polynomial_plane_wave_solution(manufactured_k);
+        for (double t : {0.0, 0.37, 1.0}) {
+            const std::array<std::pair<Point2, Eigen::Vector2d>, 4> boundary_points{{
+                {Point2(0.0, t), Eigen::Vector2d(-1.0, 0.0)},
+                {Point2(1.0, t), Eigen::Vector2d(1.0, 0.0)},
+                {Point2(t, 0.0), Eigen::Vector2d(0.0, -1.0)},
+                {Point2(t, 1.0), Eigen::Vector2d(0.0, 1.0)}}};
+            for (const auto &[point, normal] : boundary_points) {
+                const Complex value = manufactured.value(point);
+                const Complex normal_derivative =
+                    normal.cast<Complex>().dot(manufactured.gradient(point));
+                require(std::abs(normal_derivative
+                            - Complex(0.0, manufactured_k) * value) < 1e-12,
+                        "polynomial plane wave violates homogeneous Robin data");
+            }
+        }
+        std::vector<double> manufactured_errors;
+        for (int level : {4, 6, 8}) {
+            const TriMesh mesh = refine_mesh_nvb(initial, level).mesh;
+            const HelmholtzOperators operators =
+                assemble_helmholtz_operators(mesh, manufactured_k);
+            const ComplexVector load =
+                assemble_helmholtz_load(mesh, manufactured.source);
+            const ComplexVector solution = solve_helmholtz_fem(operators, load);
+            manufactured_errors.push_back(compute_helmholtz_error(
+                mesh, solution, manufactured_k,
+                manufactured.value, manufactured.gradient).energy);
+        }
+        require(manufactured_errors[2] < 0.4 * manufactured_errors[0],
+                "polynomial plane-wave energy error did not converge");
+
 
         const Complex b = (k * k + Complex(0.0, 2.0 * k)) / Complex(2.0, -k);
         auto g = [=](double x) { return Complex(1.0, 0.0) - Complex(0.0, k) * x + b * x * x; };

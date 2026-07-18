@@ -88,8 +88,6 @@ struct SparseLuPatternCache {
         reused = matches(matrix);
         if (!reused) {
             solver.analyzePattern(matrix);
-            if (solver.info() != Eigen::Success)
-                throw std::runtime_error("Helmholtz corrector symbolic analysis failed");
             rows = matrix.rows();
             cols = matrix.cols();
             outer_indices.assign(

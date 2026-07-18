@@ -12,6 +12,9 @@ using HelmholtzElementBlocks = std::vector<Eigen::Matrix3cd>;
 struct HelmholtzOperators {
     double wavenumber = 0.0;
     HelmholtzElementBlocks element_blocks;
+    std::vector<double> diffusion;
+    std::vector<double> refractive_index;
+    double boundary_beta = 1.0;
     Eigen::SparseMatrix<double> stiffness;
     Eigen::SparseMatrix<double> mass;
     Eigen::SparseMatrix<double> boundary_mass;

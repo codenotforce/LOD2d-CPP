@@ -37,6 +37,14 @@ add_executable(test_helmholtz_model test_helmholtz_model.cpp)
 target_link_libraries(test_helmholtz_model PRIVATE lod2d_core)
 add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)
 
+add_executable(test_helmholtz_adaptive test_helmholtz_adaptive.cpp)
+target_link_libraries(test_helmholtz_adaptive PRIVATE lod2d_core)
+add_test(NAME helmholtz_adaptive COMMAND test_helmholtz_adaptive)
+
+add_executable(test_helmholtz_reliability test_helmholtz_reliability.cpp)
+target_link_libraries(test_helmholtz_reliability PRIVATE lod2d_core)
+add_test(NAME helmholtz_reliability COMMAND test_helmholtz_reliability)
+
 add_executable(test_corr test_corr.cpp)
 target_link_libraries(test_corr PRIVATE lod2d_core)
 

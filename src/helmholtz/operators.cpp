@@ -95,6 +95,9 @@ HelmholtzOperators assemble_helmholtz_operators(
 
     HelmholtzOperators result;
     result.wavenumber = wavenumber;
+    result.diffusion = diffusion_values;
+    result.refractive_index = refractive_values;
+    result.boundary_beta = boundary_beta;
     result.element_blocks.resize(element_count, Eigen::Matrix3cd::Zero());
 
     static constexpr double mass_pattern[3][3] = {

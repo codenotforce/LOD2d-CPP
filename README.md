@@ -197,7 +197,7 @@ by A. Malqvist and D. Peterseim.
 See `HELMHOLTZ_GUIDE.md` for the mathematical conventions, build and test
 commands, benchmark options, output fields, server workflow, and reuse rules.
 
-The first seven stages of `HELMHOLTZ_LOD_PLAN.md` are implemented in the
+The implemented Helmholtz foundation is available in the
 `lod2d::helmholtz` namespace:
 
 - complex P1 Helmholtz FEM with homogeneous impedance Robin data;
@@ -277,3 +277,19 @@ phase timings, metadata, and `/usr/bin/time -v` logs to
 `results/helmholtz_k_scan/`. Set `RESUME=0` to rerun completed points.
 
 Measured result tables belong in `DEVELOPMENT.md`, not README.
+
+## Adaptive Helmholtz LOD
+
+Stage-1 adaptive infrastructure, fixed-fine-space invariants, and exact-solution
+calibration tools are available. See `HELMHOLTZ_ADAPTIVE_GUIDE.md` before
+interpreting estimator curves. Strong-residual indicators target the continuous
+error `u-u_LOD`; they are not estimators of the discrete difference
+`u_h-u_LOD`, and uniform reliability is not yet claimed.
+
+```bash
+cmake --build build --target bench_helmholtz_adaptive -j 8
+./build/benchmarks/bench_helmholtz_adaptive \
+  --k=4 --H=5 --h=10 --ell=3 --iterations=3 \
+  --theta=0.5 --estimator=fine --q-limit=0.5 --threads=8 \
+  --source=manufactured
+```

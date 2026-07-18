@@ -820,4 +820,41 @@ reduced local assembly are the main gains.
 run metadata, applies explicit OpenMP placement, writes one log and CSV per wave
 number, continues after a failed point, and skips completed points by default.
 Set `RESUME=0` to force a fresh run. Independent benchmark processes ensure that
-mesh, corrector, and factorization memory is returned between wave numbers.
+
+## 17. Adaptive Helmholtz Stage-1 Baseline
+
+The full-rebuild adaptive baseline now supports a fixed master fine mesh,
+locally refined NVB coarse meshes, residual reconstruction, three strong
+residual aggregations, local energy-Riesz calibration, deterministic Dorfler
+marking, reliability-envelope utilities, and per-iteration inf-sup diagnostics.
+All 11 CTest targets pass. The integrated complex residual agrees with
+`b-Au` to about `2.53e-17` on the Debug test.
+
+A Release pilot with `k=4`, level `H=5`, `h=10`, `ell=3`, and four threads
+produced relative energy errors `0.122562, 0.155091, 0.108361` on
+`64, 70, 88` coarse elements. The corresponding inf-sup values were
+`0.318864, 0.558892, 0.664904`; therefore the nonmonotone transition is not an
+inf-sup collapse. Repeating with `ell=6` was essentially unchanged.
+
+The candidate fine-indicator effectivity grew from `2.27` to `12.19` when it
+was divided by `||u_h-u_LOD||`. This only shows that a strong residual is not
+an estimator of the purely discrete difference, which vanishes when
+`u_LOD` reaches `u_h`.
+
+The benchmark now supports `--source=manufactured` with
+`u=phi(x)phi(y)exp(i*k*x)` and `phi(t)=16*t^2(1-t)^2`. For
+`k=4,H=5,h=10,ell=3`, seven adaptive iterations reduced the exact LOD energy
+error from `0.529410` to `0.214176`; the fixed fine-grid exact error remained
+`0.208842` in every iteration. The fine estimator decreased from `1.26604`
+to `1.22683`, and its continuous-error effectivity increased from `2.39142`
+to `5.72816`. Wider parameter studies are required before making a uniform
+reliability or efficiency claim.
+
+The manufactured test exposed a generic NVB defect: recursive closure could
+create separate global node indices at the same shared-edge midpoint. The
+duplicate degrees of freedom changed the nominally fixed fine space after each
+adaptive step. The NVB core now merges coincident nodes and rebuilds `P_node`;
+regression tests check unique coordinates and fixed master-fine node counts.
+
+For an estimator of `u_h-u_LOD`, an algebraic dual-residual or hierarchical
+two-level estimator remains the appropriate next candidate.

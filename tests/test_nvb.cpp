@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -176,6 +177,17 @@ bool no_hanging_nodes(const TriMesh &mesh) {
     }
     return true;
 }
+bool unique_node_coordinates(const TriMesh &mesh) {
+    std::set<std::pair<long long, long long>> coordinates;
+    for (const Point2 &point : mesh.nodes) {
+        const auto key = std::make_pair(
+            std::llround(point.x() * 1e12),
+            std::llround(point.y() * 1e12));
+        if (!coordinates.insert(key).second) return false;
+    }
+    return true;
+}
+
 
 bool check_case(const CaseGolden &gold) {
     TriMesh seed = matlab_seed_mesh();
@@ -206,6 +218,10 @@ bool check_case(const CaseGolden &gold) {
         std::cout << "  [FAIL] " << gold.name << " hanging node check\n";
         return false;
     }
+    if (!unique_node_coordinates(out.mesh)) {
+        std::cout << "  [FAIL] " << gold.name << " duplicate node coordinates\n";
+        return false;
+    }
     std::cout << "  [PASS] " << gold.name << "\n";
     return true;
 }
@@ -233,7 +249,8 @@ int main() {
         TriMesh incompatible = lod_seed_mesh();
         auto global = refine_nvb(incompatible);
         auto local = bisect_newest_vertex(incompatible, {0});
-        if (no_hanging_nodes(global.mesh) && no_hanging_nodes(local.mesh)) {
+        if (no_hanging_nodes(global.mesh) && no_hanging_nodes(local.mesh)
+            && unique_node_coordinates(global.mesh) && unique_node_coordinates(local.mesh)) {
             std::cout << "  [PASS] incompatible seed closure smoke test\n";
         } else {
             std::cout << "  [FAIL] incompatible seed closure smoke test\n";

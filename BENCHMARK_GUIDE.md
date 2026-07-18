@@ -475,3 +475,21 @@ THREADS=32 K_VALUES="4 8 16 32 64" bash scripts/run_helmholtz_k_scan.sh
 The scan is resumable by default. Use `RESUME=0` only when existing successful
 points should be recomputed. Compare error, corrector residual, wall time, and
 peak RSS whenever changing the corrector solver or scheduling policy.
+
+## Adaptive Helmholtz Calibration
+
+```bash
+cmake --build build --target bench_helmholtz_adaptive -j 8
+./build/benchmarks/bench_helmholtz_adaptive \
+  --k=4 --H=5 --h=10 --ell=3 --iterations=3 \
+  --theta=0.5 --estimator=fine --q-limit=0.5 --threads=8 \
+  --source=manufactured
+```
+
+Use `--format=csv` for machine-readable histories and `--mesh-out=PATH` for
+the final coarse mesh and indicator field. The output includes all three
+candidate indicators, discrete-reference errors, exact LOD/fine errors for the
+manufactured source, both effectivity definitions, `q_max/q_effective`,
+residual identity, local-dual comparison, inf-sup, solver residuals, and phase
+timings. Read `HELMHOLTZ_ADAPTIVE_GUIDE.md` before treating a candidate as an
+estimator.

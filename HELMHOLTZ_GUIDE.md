@@ -12,7 +12,8 @@ A\nabla u\cdot\nu-i k\beta u=0\quad\text{on }\partial\Omega,
 
 with P1 finite elements, globally nested NVB meshes, and localized
 Petrov-Galerkin LOD. The default experiment uses `A=n=beta=1` on the unit
-square. Adaptive coarse refinement and PML are not implemented yet.
+square. Stage-1 adaptive coarse refinement is available as a calibration
+workflow; PML is not implemented.
 
 ## Build And Validate
 
@@ -156,3 +157,13 @@ requires rebuilding the model.
 - Do not use LLT, CG, or PCG for the complex Helmholtz or saddle systems.
 - Keep performance conclusions in `DEVELOPMENT.md`; README contains commands
   and stable user-facing behavior only.
+
+## Adaptive Coarse-Mesh Calibration
+
+The fixed-fine-space adaptive Helmholtz implementation is documented in
+`HELMHOLTZ_ADAPTIVE_GUIDE.md`. It includes the mathematical status of the
+strong-residual candidates, fixed-master-mesh invariants, benchmark fields,
+validation commands, a manufactured exact solution, and pilot tables. The
+strong-residual candidates are calibrated against `u-u_LOD`, not
+`u_h-u_LOD`. Treat the current adaptive benchmark as a calibration experiment;
+uniform reliability and efficiency are not yet established.

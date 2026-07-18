@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <unordered_map>
@@ -110,6 +111,54 @@ RefineOutput identity_refinement(const TriMesh &mesh) {
     Eigen::SparseMatrix<double> P_dg(3 * nt, 3 * nt);
     P_dg.setIdentity();
     return {mesh, std::move(P_node), std::move(P_elem), std::move(P_dg)};
+}
+
+void merge_coincident_nodes(RefineOutput &refinement) {
+    const int old_node_count = static_cast<int>(refinement.mesh.nodes.size());
+    std::map<std::pair<long long, long long>, int> coordinate_to_node;
+    std::vector<int> old_to_new(old_node_count, -1);
+    std::vector<int> representatives;
+    std::vector<Point2> nodes;
+    nodes.reserve(old_node_count);
+    representatives.reserve(old_node_count);
+
+    for (int old = 0; old < old_node_count; ++old) {
+        const Point2 &point = refinement.mesh.nodes[old];
+        const auto key = std::make_pair(
+            std::llround(point.x() * 1e12),
+            std::llround(point.y() * 1e12));
+        auto [it, inserted] = coordinate_to_node.emplace(
+            key, static_cast<int>(nodes.size()));
+        if (inserted) {
+            nodes.push_back(point);
+            representatives.push_back(old);
+        }
+        old_to_new[old] = it->second;
+    }
+    if (static_cast<int>(nodes.size()) == old_node_count) return;
+
+    for (Triangle &triangle : refinement.mesh.elems) {
+        for (int &node : triangle) node = old_to_new[node];
+        if (triangle[0] == triangle[1]
+            || triangle[1] == triangle[2]
+            || triangle[2] == triangle[0]) {
+            throw std::runtime_error("NVB coincident-node merge created a degenerate element");
+        }
+    }
+    std::set<int> dirichlet;
+    for (int node : refinement.mesh.dirichlet)
+        dirichlet.insert(old_to_new[node]);
+    refinement.mesh.dirichlet.assign(dirichlet.begin(), dirichlet.end());
+    refinement.mesh.nodes = std::move(nodes);
+
+    std::vector<Eigen::Triplet<double>> selection_triplets;
+    selection_triplets.reserve(representatives.size());
+    for (int node = 0; node < static_cast<int>(representatives.size()); ++node)
+        selection_triplets.emplace_back(node, representatives[node], 1.0);
+    Eigen::SparseMatrix<double> selection(
+        static_cast<int>(representatives.size()), old_node_count);
+    selection.setFromTriplets(selection_triplets.begin(), selection_triplets.end());
+    refinement.P_node = selection * refinement.P_node;
 }
 
 } // namespace
@@ -445,6 +494,7 @@ RefineOutput bisect_newest_vertex(const TriMesh &coarse, const std::vector<int> 
         marked_edges = std::move(remaining);
     }
 
+    merge_coincident_nodes(total);
     return total;
 }
 
