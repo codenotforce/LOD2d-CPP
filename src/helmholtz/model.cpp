@@ -61,7 +61,10 @@ HelmholtzProblemData finish_problem_data(
     RefineOutput fine_output,
     std::vector<int> coarse_levels,
     int fine_level,
-    int ell) {
+    int ell,
+    std::vector<TriMesh> hierarchy_meshes,
+    std::vector<Eigen::SparseMatrix<double>> node_level_prolongations,
+    std::vector<Eigen::SparseMatrix<double>> element_level_prolongations) {
     if (ell < 0) throw std::invalid_argument("Helmholtz oversampling level must be nonnegative");
 
     HelmholtzProblemData problem;
@@ -73,6 +76,9 @@ HelmholtzProblemData finish_problem_data(
     problem.patches = build_patches(problem.coarse, ell);
     problem.coarse_element_levels = std::move(coarse_levels);
     problem.fine_level = fine_level;
+    problem.fine_hierarchy_meshes = std::move(hierarchy_meshes);
+    problem.fine_node_level_prolongations = std::move(node_level_prolongations);
+    problem.fine_element_level_prolongations = std::move(element_level_prolongations);
 
     const Eigen::SparseMatrix<double> coarse_cg_to_dg = build_cg_to_dg(problem.coarse);
     const Eigen::SparseMatrix<double> cg_to_dg = build_cg_to_dg(problem.fine);
@@ -96,7 +102,46 @@ HelmholtzProblemData finish_problem_data(
         projection_check.rows(), projection_check.cols());
     if ((projection_check - identity).norm() > 1e-9)
         throw std::runtime_error("complex quasi-interpolation does not reproduce the coarse P1 space");
+
     return problem;
+}
+struct UniformFineHierarchy {
+    RefineOutput accumulated;
+    std::vector<TriMesh> meshes;
+    std::vector<Eigen::SparseMatrix<double>> node_prolongations;
+    std::vector<Eigen::SparseMatrix<double>> element_prolongations;
+};
+
+UniformFineHierarchy build_uniform_fine_hierarchy(
+    const TriMesh &coarse,
+    int levels) {
+    UniformFineHierarchy result;
+    result.meshes.push_back(coarse);
+    const int node_count = static_cast<int>(coarse.nodes.size());
+    const int element_count = static_cast<int>(coarse.elems.size());
+    result.accumulated.P_node.resize(node_count, node_count);
+    result.accumulated.P_node.setIdentity();
+    result.accumulated.P_elem.resize(element_count, element_count);
+    result.accumulated.P_elem.setIdentity();
+    result.accumulated.P_dg.resize(3 * element_count, 3 * element_count);
+    result.accumulated.P_dg.setIdentity();
+
+    TriMesh current = coarse;
+    for (int level = 0; level < levels; ++level) {
+        RefineOutput refined = refine_nvb(current);
+        result.accumulated.P_node =
+            refined.P_node * result.accumulated.P_node;
+        result.accumulated.P_elem =
+            refined.P_elem * result.accumulated.P_elem;
+        result.accumulated.P_dg =
+            refined.P_dg * result.accumulated.P_dg;
+        result.node_prolongations.push_back(refined.P_node);
+        result.element_prolongations.push_back(refined.P_elem);
+        current = std::move(refined.mesh);
+        result.meshes.push_back(current);
+    }
+    result.accumulated.mesh = std::move(current);
+    return result;
 }
 
 } // namespace
@@ -112,14 +157,17 @@ HelmholtzProblemData build_helmholtz_problem_data(
 
     RefineOutput coarse_output = refine_mesh_nvb(initial_mesh, H);
     TriMesh coarse = std::move(coarse_output.mesh);
-    RefineOutput fine_output = refine_mesh_nvb(coarse, h - H);
-    const int coarse_elements = fine_output.P_elem.cols();
+    UniformFineHierarchy hierarchy =
+        build_uniform_fine_hierarchy(coarse, h - H);
+    const int coarse_elements = hierarchy.accumulated.P_elem.cols();
     return finish_problem_data(
         std::move(coarse),
-        std::move(fine_output),
+        std::move(hierarchy.accumulated),
         std::vector<int>(coarse_elements, H),
         h,
-        ell);
+        ell, std::move(hierarchy.meshes),
+        std::move(hierarchy.node_prolongations),
+        std::move(hierarchy.element_prolongations));
 }
 
 HelmholtzProblemData build_adaptive_helmholtz_problem_data(
@@ -142,7 +190,7 @@ HelmholtzProblemData build_adaptive_helmholtz_problem_data(
         std::move(nested.refinement),
         coarse_element_levels,
         fine_level,
-        ell);
+        ell, {}, {}, {});
 }
 
 HelmholtzLodModel HelmholtzLodModel::build(const HelmholtzProblemConfig &config) {
@@ -203,7 +251,11 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.problem_.fine_dg_prolongation,
         model.problem_.quasi_interpolation,
         model.problem_.patches,
-        model.operators_.element_blocks);
+        model.problem_.fine_hierarchy_meshes,
+        model.problem_.fine_node_level_prolongations,
+        model.problem_.fine_element_level_prolongations,
+        model.operators_,
+        model.config_.patch_solver);
     model.build_timings_.correctors_ms = elapsed_ms(stage_start);
 
     const auto &diagnostics = model.correctors_.diagnostics;

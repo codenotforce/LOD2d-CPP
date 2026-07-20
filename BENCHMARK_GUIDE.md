@@ -1,8 +1,13 @@
-# Benchmark and Corrector Coding Guide
+# Benchmark Implementation Standard
 
-This guide defines how LOD2d-C++ benchmarks should be written.  The goal is to
+This guide defines how LOD2d-C++ benchmarks should be written. The goal is to
 make every benchmark reproducible, comparable, memory-aware, and safe to clone
 and run from a clean checkout.
+
+Domain-specific commands belong in `HELMHOLTZ_GUIDE.md` or
+`HELMHOLTZ_ADAPTIVE_GUIDE.md`. Measured results and engineering decisions belong
+in `DEVELOPMENT.md`; this document contains implementation and reporting rules
+only.
 
 ## Scope
 
@@ -52,7 +57,9 @@ Reference command:
 ./build/benchmarks/bench_saddle_h3h10 --H=3 --h=10 --ell=3 --threads=8 --skip-reference
 ```
 
-Current WSL result: saddle GMRES matched the Eigen Schur corrector to `2.49e-14` in max entry difference and `4.50e-15` in `uHms`, but was slower in the corrector phase: `256.4 s` vs `232.3 s`.
+Record accuracy and timing comparisons in `DEVELOPMENT.md`, including the
+machine, thread count, mesh parameters, stopping tolerance, and reference
+solver.
 
 ### Solver Policy
 
@@ -67,7 +74,7 @@ else if (value == "auto") solver = (h >= 10) ? CorrectorSolver::Cholmod
                                              : CorrectorSolver::EigenLLT;
 ```
 
-Current empirical policy:
+Current benchmark policy:
 
 - `h <= 9`: Eigen is the default because it is stable and has lower overhead.
 - `h >= 10`: plain CHOLMOD is faster for the corrector phase, but uses more memory.
@@ -80,8 +87,8 @@ update all benchmark drivers and this guide.
 ### Thread Policy
 
 `--threads=auto` should cap h>=10 CHOLMOD runs to 8 OpenMP threads when the
-environment requests more.  Current measurements on WSL show that 8 threads are
-faster and much more memory-stable than 12 or 16 threads for h=10 CHOLMOD.
+environment requests more. This is the current memory-safe benchmark default;
+the measurements supporting it are recorded in `DEVELOPMENT.md`.
 
 ```cpp
 #ifdef _OPENMP
@@ -454,42 +461,24 @@ record timing plus peak RSS.
 
 When benchmark behavior changes, update:
 
-- `README.md` for user-facing commands and current benchmark results.
-- `DEVELOPMENT.md` for experiment history and rejected ideas.
-- This guide for coding-policy changes.
+- `README.md` only when the public quick start or stable capability list changes.
+- `DEVELOPMENT.md` for measured results, decisions, and rejected ideas.
+- This guide only for benchmark coding or reporting-policy changes.
 
 Keep benchmark text ASCII-only unless there is a specific reason not to.  This
 avoids encoding corruption in Windows/WSL round trips.
 
-## Helmholtz Wave-Number Benchmarks
 
-See `HELMHOLTZ_GUIDE.md` for mathematical conventions, all command-line
-options, output definitions, server sizing, and interpretation rules.
+## Domain-Specific Benchmark Guides
 
-```bash
-cmake --build build --target bench_helmholtz_k -j 8
-./build/benchmarks/bench_helmholtz_k --k=16 --fine-gap=8 --threads=8
-THREADS=32 K_VALUES="4 8 16 32 64" bash scripts/run_helmholtz_k_scan.sh
-```
+This document defines shared benchmark implementation and reporting rules.
+Use the domain guides for executable-specific commands and interpretation:
 
-The scan is resumable by default. Use `RESUME=0` only when existing successful
-points should be recomputed. Compare error, corrector residual, wall time, and
-peak RSS whenever changing the corrector solver or scheduling policy.
+- Helmholtz wave-number, patch-solver, and two-level Schwarz experiments:
+  [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md);
+- adaptive Helmholtz calibration:
+  [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md);
+- measured timing tables and accepted or rejected performance conclusions:
+  [DEVELOPMENT.md](DEVELOPMENT.md).
 
-## Adaptive Helmholtz Calibration
-
-```bash
-cmake --build build --target bench_helmholtz_adaptive -j 8
-./build/benchmarks/bench_helmholtz_adaptive \
-  --k=4 --H=5 --h=10 --ell=3 --iterations=3 \
-  --theta=0.5 --estimator=fine --q-limit=0.5 --threads=8 \
-  --source=manufactured
-```
-
-Use `--format=csv` for machine-readable histories and `--mesh-out=PATH` for
-the final coarse mesh and indicator field. The output includes all three
-candidate indicators, discrete-reference errors, exact LOD/fine errors for the
-manufactured source, both effectivity definitions, `q_max/q_effective`,
-residual identity, local-dual comparison, inf-sup, solver residuals, and phase
-timings. Read `HELMHOLTZ_ADAPTIVE_GUIDE.md` before treating a candidate as an
-estimator.
+Do not duplicate domain command catalogs or measured result tables here.

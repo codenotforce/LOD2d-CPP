@@ -1,0 +1,18 @@
+date_utc=2026-07-19T13:29:05Z
+git_commit=42b1334da8e90b1176486c9dfb10be01aebc0e4e
+git_status_begin
+ M DEVELOPMENT.md
+ M benchmarks/CMakeLists.txt
+?? HELMHOLTZ_ADAPTIVE_LOD_PLAN.md
+?? HELMHOLTZ_LOD_PLAN.md
+?? HELMHOLTZ_PATCH_GMRES_PLAN.md
+?? benchmarks/bench_helmholtz_manufactured.cpp
+?? results/helmholtz_manufactured/
+?? scripts/run_helmholtz_manufactured.sh
+git_status_end
+threads=8
+k=4
+H_levels=3,4,5,6
+fine_level=10
+ell_levels=2,3
+fem_levels=6,8,10

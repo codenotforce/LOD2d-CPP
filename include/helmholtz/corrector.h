@@ -1,6 +1,7 @@
 #pragma once
 
 #include "helmholtz/operators.h"
+#include "helmholtz/patch_solver.h"
 #include <Eigen/Sparse>
 #include <vector>
 
@@ -23,6 +24,18 @@ struct HelmholtzCorrectorDiagnostics {
     int parallel_threads = 1;
     int symbolic_analyses = 0;
     int symbolic_reuses = 0;
+    int direct_fallbacks = 0;
+    int gmres_right_hand_sides = 0;
+    int gmres_iterations = 0;
+    double max_vcycle_relative_residual = 0.0;
+    int max_vcycle_levels = 0;
+    int max_vcycle_coarse_dofs = 0;
+    int max_vcycle_finest_dofs = 0;
+    int gmres_max_iterations = 0;
+    int gmres_restarts = 0;
+    double max_gmres_relative_residual = 0.0;
+    double max_schur_residual = 0.0;
+    double min_schur_reciprocal_condition = 1.0;
 };
 
 struct HelmholtzCorrectorResult {
@@ -38,7 +51,11 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
     const Eigen::SparseMatrix<double> &fine_dg_prolongation,
     const Eigen::SparseMatrix<double> &quasi_interpolation,
     const Eigen::SparseMatrix<double> &patches,
-    const HelmholtzElementBlocks &element_blocks);
+    const std::vector<TriMesh> &hierarchy_meshes,
+    const std::vector<Eigen::SparseMatrix<double>> &node_level_prolongations,
+    const std::vector<Eigen::SparseMatrix<double>> &element_level_prolongations,
+    const HelmholtzOperators &operators,
+    const HelmholtzPatchSolverConfig &solver_config = {});
 
 ComplexSparseMatrix build_helmholtz_corrector_matrix(
     const TriMesh &coarse,

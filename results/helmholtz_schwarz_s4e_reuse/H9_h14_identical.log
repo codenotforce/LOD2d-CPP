@@ -1,0 +1,7 @@
+Helmholtz two-level Schwarz benchmark: H=9 h=14 ell=3 k=16 threads=8 source=manufactured boundary=dirichlet extension=weighted factorization_reuse=identical impedance_beta=1 local_solver=direct local_inverse=lu local_alpha=0.2
+coarse_dofs=545 fine_dofs=16641 coarse_meshwidth=0.0625 fine_meshwidth=0.0110485 kH=1 build_ms=2863.19 fine_sparse_lu_ms=151.876 lod_solve_ms=5.90517 schwarz_setup_ms=1085.98
+LOD baseline petrov=5.35569e-14 energy_rel=0.0188232 fine_rel=0.0043011 fem_exact_E=0.268521 fem_exact_L2=0.00240838 fem_exact_E_rel=0.0285428 fem_exact_L2_rel=0.00592687 lod_exact_E=0.322835 lod_exact_L2=0.00322284 lod_exact_E_rel=0.0343162 lod_exact_L2_rel=0.00793121 corrector_residual=1.68688e-15 constraint_residual=3.79804e-16
+Schwarz subdomains=1024 local_dofs=476..1449 owned_dofs=476..1449 uncovered=0 partition_error=1.9984e-15 artificial_edges=91520 physical_edges=22272 solver_groups=166 reused_factorizations=858 max_reuse_group=16
+hybrid    status=converged  solve_ms=429.334     iterations=9     restarts=0    prec_apps=9     residual=4.50169e-11  energy_rel=1.25618e-12  fine_rel=9.44382e-13  petrov=9.28175e-13  exact_E=0.268521     exact_L2=0.00240838   exact_E_rel=0.0285428    exact_L2_rel=0.00592687
+Local solver calls=9216 avg_iterations=0 max_iterations=0 restarts=0 max_true_residual=0 vcycle_levels=0 vcycle_coarse_dofs=0 vcycle_finest_dofs=0
+Benchmark total_ms=4597.09

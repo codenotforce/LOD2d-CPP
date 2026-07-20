@@ -1,11 +1,49 @@
 # LOD2d-C++ Development Log
 
-This file records the MATLAB-to-C++ migration decisions, correctness traps, and
-performance experiments.
+## Document Role
 
-## Current Baseline
+This is the chronological engineering record. It is the only documentation
+file that stores measured timing tables, memory measurements, rejected
+experiments, migration defects, and performance conclusions.
 
-Environment used for the latest validation:
+- Public quick start and capability summary: [README.md](README.md)
+- Helmholtz commands and stable options: [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md)
+- Benchmark implementation rules: [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md)
+- Future work and acceptance gates: the three `*_PLAN.md` files
+
+Do not copy command catalogs or future task lists into this log. A command is
+shown here only when it is needed to reproduce a recorded result.
+
+## Current Engineering Summary
+
+| Area | Current decision |
+|---|---|
+| Elliptic corrector | Eigen LLT remains the default; CHOLMOD and saddle GMRES are explicit experiments |
+| Repeated elliptic RHS | Reuse `LodModel`, correctors, basis, and coarse factorization |
+| Helmholtz corrector | DirectSaddle is the default; DirectSchur is the leading large-patch experiment |
+| Shifted patch GMRES | Correct, but no runtime crossover over direct methods |
+| Two-level Schwarz | S4e complete; useful iteration/memory behavior, still experimental |
+| Adaptive Helmholtz | Stage-1 calibration implemented; no production estimator frozen |
+
+## Navigation
+
+- Elliptic migration baseline and correctness decisions: sections below
+  through **Modular API Layers**.
+- Inverse-inequality experiments: **Inverse Inequality Verification**.
+- Elliptic performance work and rejected optimizations: **Latest Performance
+  Changes** and **Failed or Rejected Experiments**.
+- Helmholtz foundation and wave-number work: sections 13-16.
+- Adaptive Helmholtz stage 1: section 17.
+- Helmholtz patch solver: section 18.
+- Coarse and fine-space Schwarz studies: sections 19-27.
+
+## Elliptic Migration Baseline
+
+This section records the established MATLAB-to-C++ elliptic baseline. It is
+historical measurement data, not the public quick start.
+
+
+Environment used for this recorded elliptic baseline:
 
 - WSL2 Ubuntu 22.04
 - g++ 11.4
@@ -637,16 +675,14 @@ applied to one benchmark but forgotten in another.
 | MATLAB GPU sparse path | Sparse GPU indexing does not support the needed submatrix access |
 | PCG + incomplete Cholesky | Multi-RHS local solves favored direct Cholesky |
 
-## Remaining Opportunities
+## Research Roadmap
 
-- Profile `C_ell + G` assembly and coarse/reference solves after corrector
-  improvements; they are now a larger share of runtime.
-- Consider a sparse column extraction helper for `G0`, `Sh_free`, and RHS
-  assembly in benchmark/full pipeline code.
-- Add CTest working-directory settings so `ctest --test-dir build` can find the
-  golden files without running from the repository root.
-- Keep Windows `D:\code\femcode\LOD2d_C++` as a mirror of the WSL-tested source
-  to avoid line-ending and build-cache confusion.
+This log does not duplicate detailed future task lists. The remaining public
+research directions are:
+
+- PML and additional Helmholtz boundary models;
+- a production policy for shifted-GMRES patch solves;
+- adaptive LOD beyond the current stage-1 calibration gate.
 
 ## 13. Helmholtz Petrov-Galerkin Foundation
 
@@ -729,6 +765,77 @@ CTest                         : 9/9 passed
 
 Both the two-sided and corrected-test-only Petrov-Galerkin systems agree with
 independent dense coarse solves on the small verification mesh.
+
+### Manufactured global-NVB convergence on 2026-07-19
+
+`bench_helmholtz_manufactured` provides a reproducible convergence gate for
+the homogeneous impedance Robin problem
+
+```text
+-Delta u - k^2 u = f,
+partial_n u - i k u = 0 on the boundary.
+```
+
+The run used `k=4`, the two-sided Petrov-Galerkin formulation, a fixed fine
+level `h=10`, coarse levels `H=3,4,5,6`, and oversampling levels `ell=2,3`.
+The manufactured solution was
+
+```text
+u(x,y) = phi(x) phi(y) exp(i k x),
+phi(t) = 16 t^2 (1-t)^2.
+```
+
+Both `phi` and `phi'` vanish at the endpoints, so the exact solution satisfies
+the homogeneous Robin condition on all four sides. The source is evaluated by
+the shared `make_polynomial_plane_wave_solution` implementation. The separate
+fine-P1 calibration used global NVB levels 6, 8, and 10:
+
+| NVB level | nodes / elements | measured `h_max` | energy error | energy rate | L2 error | L2 rate | relative linear residual |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 6 | 81 / 128 | 1.767767e-1 | 8.320692e-1 | - | 4.245765e-2 | - | 1.03e-15 |
+| 8 | 289 / 512 | 8.838835e-2 | 4.176412e-1 | 0.9944 | 1.121713e-2 | 1.9203 | 4.27e-15 |
+| 10 | 1,089 / 2,048 | 4.419417e-2 | 2.088422e-1 | 0.9999 | 2.843028e-3 | 1.9802 | 1.77e-14 |
+
+The expected P1 rates are recovered: first order in the Helmholtz energy norm
+and approximately second order in `L2`. On the fixed level-10 fine grid, the
+LOD results were:
+
+| `H` level | measured `H_max` | `ell` | exact energy error | local energy rate | exact L2 error | local L2 rate | LOD-to-fine energy | LOD-to-fine L2 |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 3 | 5.000000e-1 | 2 | 1.448194e+0 | - | 1.259591e-1 | - | 1.428401e+0 | 1.242684e-1 |
+| 4 | 3.535534e-1 | 2 | 8.549633e-1 | 1.5206 | 5.531563e-2 | 2.3744 | 8.259847e-1 | 5.376757e-2 |
+| 5 | 2.500000e-1 | 2 | 5.303743e-1 | 1.3777 | 2.290905e-2 | 2.5435 | 4.856312e-1 | 2.140134e-2 |
+| 6 | 1.767767e-1 | 2 | 3.304008e-1 | 1.3656 | 8.754737e-3 | 2.7756 | 2.550294e-1 | 7.244207e-3 |
+| 3 | 5.000000e-1 | 3 | 1.449053e+0 | - | 1.260970e-1 | - | 1.429264e+0 | 1.244059e-1 |
+| 4 | 3.535534e-1 | 3 | 8.550645e-1 | 1.5220 | 5.534252e-2 | 2.3761 | 8.260938e-1 | 5.379733e-2 |
+| 5 | 2.500000e-1 | 3 | 5.294103e-1 | 1.3833 | 2.288520e-2 | 2.5479 | 4.845916e-1 | 2.138612e-2 |
+| 6 | 1.767767e-1 | 3 | 3.284277e-1 | 1.3776 | 8.666529e-3 | 2.8018 | 2.524960e-1 | 7.168535e-3 |
+
+Across the full `H=3` to `H=6` range, the exact-solution energy/L2 rates are
+approximately `1.42/2.56` for `ell=2` and `1.43/2.58` for `ell=3`. The two
+oversampling choices are nearly indistinguishable on this smooth test, so
+localization is not the dominant error. Petrov residuals were below
+`1.1e-14`, primal corrector residuals below `2.2e-15`, and interpolation
+constraint residuals below `6.1e-16`.
+
+NVB level numbers must not be reported as literal powers of the geometric
+meshwidth. Each global NVB sweep bisects element area, and this initial mesh
+satisfies approximately
+
+```text
+max_element_diameter(level j) = 2^((1-j)/2).
+```
+
+Consequently the requested project parameters `H=3,...,6`, `h=10` have actual
+diameters shown above; a literal geometric `h approximately 2^-10` would need
+about NVB level 21 and roughly 4.2 million triangles. That high-memory case is
+not part of this WSL validation.
+
+The automated `--check` gate verifies homogeneous Robin data, FEM rates,
+algebraic residuals, and decreasing LOD-to-exact and LOD-to-fine errors for
+each `ell`. Results and metadata are stored in
+`results/helmholtz_manufactured/`. The archived run passed, and all six
+registered `helmholtz_` CTest targets also passed.
 
 ## 14. Helmholtz Wave-Number Scan
 
@@ -814,12 +921,13 @@ residuals near `1e-15`. Symbolic reuse is useful in serial runs but contributes
 less with many workers because each thread owns its cache; parallelism and
 reduced local assembly are the main gains.
 
-## 16. Helmholtz Reproduction Workflow
+## 16. Helmholtz Reproduction Infrastructure
 
-`HELMHOLTZ_GUIDE.md` is the user and server guide. The scan script now records
-run metadata, applies explicit OpenMP placement, writes one log and CSV per wave
-number, continues after a failed point, and skips completed points by default.
-Set `RESUME=0` to force a fresh run. Independent benchmark processes ensure that
+This milestone added configuration-aware resume keys, explicit OpenMP
+placement, per-wave-number process isolation, metadata, CSV output, and
+`/usr/bin/time` resource logs. These facts are retained here because they
+explain the recorded measurements. Current commands and options are maintained
+only in [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md).
 
 ## 17. Adaptive Helmholtz Stage-1 Baseline
 
@@ -858,3 +966,573 @@ regression tests check unique coordinates and fixed master-fine node counts.
 
 For an estimator of `u_h-u_LOD`, an algebraic dual-residual or hierarchical
 two-level estimator remains the appropriate next candidate.
+
+## 18. Helmholtz Patch Right-Preconditioned GMRES (M1-M4)
+
+Implemented on 2026-07-19. Adaptive Helmholtz work remains paused after
+stage 1; this change is confined to the local corrector solver.
+
+### Architecture
+
+- `HelmholtzPatchAssembler` owns patch topology, free-DOF selection, physical
+  Robin/artificial Dirichlet boundaries, restricted `K/M/R`, independent
+  quasi-interpolation constraints, and the three element right-hand sides.
+- `solve_helmholtz_patch` owns `DirectSaddle`, `DirectSchur`, and
+  `ShiftedGmres`. Corrector scheduling and compact output are separate.
+- `solve_right_preconditioned_gmres` is a complex restarted implementation
+  with modified Gram-Schmidt, optional reorthogonalization, and explicit true
+  residual checks after every update.
+- `HelmholtzProblemConfig::patch_solver` exposes the experiment without
+  changing the default `DirectSaddle` behavior.
+- `HelmholtzPatchVcycle` builds Galerkin coarse shifted operators from the
+  uniform NVB hierarchy, keeps the patch boundary semantics on every level,
+  uses fixed weighted-Jacobi smoothing, and applies SparseLU only on the
+  selected coarse patch grid.
+
+`DirectSchur` computes `Y=A^-1 F`, `Z=A^-1 B*`, solves
+`(B Z) Lambda=B Y`, and returns `X=Y-Z Lambda`. `ShiftedGmres` replaces each
+`A^-1` application by right-preconditioned GMRES with
+`P=K-(k^2+i epsilon)M-i k R`. SparseLU remains the exact shifted-inverse
+reference. M4 can instead apply a fixed geometric V-cycle. Uniform global NVB
+data supplies the hierarchy; adaptive/non-nested data rejects this path
+explicitly.
+
+### Correctness
+
+- All 16 registered Debug CTests pass, including both Schwarz tests.
+- The standalone nonnormal complex test covers restarted GMRES, zero RHS,
+  and one-iteration convergence with an exact right preconditioner.
+- On `H=1,h=4,ell=1,k=1.5`, DirectSchur agrees with DirectSaddle below
+  `1e-10`; both exact-shifted and V-cycle ShiftedGmres agree below `1e-8`
+  with no fallback.
+- Primal, adjoint, interpolation-constraint, Schur, and true GMRES residuals
+  are all checked. Failures throw unless explicit fallback is enabled.
+- The user-added global-NVB manufactured benchmark still runs through the
+  default DirectSaddle path; a small `k=2,h=6,H=2,3` regression completed
+  with Petrov and corrector residuals near machine precision.
+
+### Release measurements
+
+Both runs used `epsilon=0.2 k^2`, GMRES tolerance `1e-10`, and no fallback.
+
+| case | DirectSaddle corrector | DirectSchur corrector | ShiftedGmres corrector | GMRES avg/max | GMRES basis difference |
+|---|---:|---:|---:|---:|---:|
+| `H=1,h=5,ell=1,k=4,1t` | 0.550 ms | 0.439 ms | 2.579 ms | 7.625 / 8 | 2.05e-11 |
+| `H=2,h=7,ell=2,k=4,4t` | 2.706 ms | 1.383 ms | 8.230 ms | 7.500 / 8 | 1.20e-11 |
+
+DirectSchur is 1.25-1.96 times faster than DirectSaddle in these small M3
+tests. Exact-shifted GMRES is roughly 5-6 times slower because every Krylov
+step applies a sparse triangular solve and adds orthogonalization and
+true-residual work. M4 below tests whether a geometric V-cycle changes that
+conclusion. `DirectSaddle` remains the default while DirectSchur still needs
+larger wave-number scans for robustness against local `A_omega` resonances.
+
+### M4 V-cycle scale study
+
+The following Release runs used `H=5`, `ell=3`, `k=4`, eight OpenMP
+threads, `epsilon=0.2 k^2`, two pre/post weighted-Jacobi steps,
+`omega=0.6`, coarse threshold 200, GMRES tolerance `1e-10`, and no
+fallback. Here `h` is the global NVB sweep count, not a mesh width.
+
+| h | global fine triangles | largest patch DOF | DirectSaddle | DirectSchur | GMRES+shifted LU | GMRES+V-cycle | V-cycle avg/max it. | basis rel. |
+|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 10 | 2,048 | 999 | 68.0 ms | 79.2 ms | 577.6 ms | 1,306.5 ms | 9.34 / 10 | 1.11e-11 |
+| 12 | 8,192 | 3,919 | 887.2 ms | 541.7 ms | 4,319.7 ms | 5,518.0 ms | 9.66 / 10 | 1.28e-11 |
+| 14 | 32,768 | 15,519 | 19,657.5 ms | 3,703.9 ms | 25,251.1 ms | 31,575.9 ms | 9.75 / 10 | 1.44e-11 |
+
+For `h=10`, the V-cycle run used about 100 MiB peak RSS versus 123 MiB for
+the exact shifted-LU comparison process. One V-cycle had worst observed
+relative residual about `0.142`; GMRES true residual stayed below `1e-10`,
+and the primal corrector residual stayed below `7.2e-11`.
+
+The V-cycle is numerically correct and its iteration count is nearly
+mesh-independent over this range. It is nevertheless slower than exact
+shifted LU by `2.26x, 1.28x, 1.25x`, and much slower than DirectSchur. Each
+patch has `m_omega+3` right-hand sides: direct Schur pays one factorization
+and cheap triangular solves, whereas the current path performs about ten
+V-cycles plus Krylov orthogonalization for every right-hand side. Therefore
+`DirectSaddle` remains the public default and `DirectSchur` is the fastest
+tested experimental path. The next performance work should prioritize
+block/multi-RHS Krylov and reference-patch hierarchy reuse before further smoother tuning.
+
+### Unpreconditioned patch GMRES baseline
+
+`--inverse=none` applies the identity right preconditioner and therefore runs
+GMRES directly on each local Helmholtz block. The `H=5,h=10,ell=3,k=4`,
+eight-thread Release case used 2,240 right-hand sides and tolerance `1e-10`.
+
+| restart / max-iters | status | corrector | avg/max iteration | basis rel. | primal residual |
+|---:|---|---:|---:|---:|---:|
+| 30 / 500 | failed | 0.26 s before abort | at least one RHS reached 500 | n/a | n/a |
+| 100 / 2,000 | converged | 38.73 s | 259.76 / 385 | 4.66e-11 | 9.99e-11 |
+| 500 / 2,000 | converged | 66.89 s | 160.44 / 200 | 4.96e-11 | 9.27e-11 |
+
+The converged solutions are correct, but direct GMRES is not competitive:
+shifted-LU and V-cycle preconditioning reduced the same problem to about
+`7.35` and `9.34` average iterations. Restart 100 was faster than restart 500
+despite more iterations because orthogonalizing a much larger Krylov basis is
+expensive. Restart 30 stagnated, so a low iteration cap can hide the severity
+of the unpreconditioned problem rather than produce an approximate corrector.
+
+## 19. Coarse LOD Weighted RAS Pilot (M6/S0-S1)
+
+Implemented on 2026-07-20 as an experimental solver for the assembled
+Petrov-Galerkin LOD coefficient system. It is separate from the constrained
+corrector patch solver and does not change any default.
+
+`HelmholtzCoarseRasPreconditioner` maps every element patch to the union of
+its coarse vertices, extracts the principal block
+`R_T A_LOD R_T^*`, factors every block once with SparseLU, and injects local
+solutions with inverse-overlap weights. The weights form a discrete partition
+of unity. Independent local factorizations and applications use OpenMP; each
+thread accumulates into a private global vector before deterministic reduction.
+
+The dedicated test checks patch coverage, proper local subdomains, the
+partition-of-unity identity, true GMRES residual, and agreement with a global
+SparseLU reference. All 14 registered Debug CTests pass.
+
+Release measurements used right GMRES with restart 100, tolerance `1e-10`,
+`ell=3`, and eight threads. The first two rows are medians of three runs.
+
+| case | coarse DOF | identity / Jacobi / RAS it. | SparseLU | RAS setup | identity / Jacobi / RAS solve |
+|---|---:|---:|---:|---:|---:|
+| `H=5,h=10,k=4` | 41 | 30 / 26 / 9 | 0.076 ms | 0.851 ms | 0.831 / 0.665 / 0.514 ms |
+| `H=9,h=14,k=16` | 545 | 191 / 182 / 36 | 23.58 ms | 40.34 ms | 143.20 / 127.25 / 143.14 ms |
+| `H=11,h=16,k=32` | 2113 | 450 / 461 / 145 | 369.04 ms | 211.02 ms | 1475.55 / 1492.89 / 2185.89 ms |
+
+RAS substantially reduces iteration counts but does not reduce end-to-end
+solve time at the tested sizes. At 545 DOFs it only matches identity GMRES
+solve time and loses to Jacobi after setup; at 2113 DOFs it is slower even
+before setup. Global SparseLU remains decisively faster. The reconstructed
+fine-vector differences from SparseLU stayed below `5.0e-10`, so this is a
+performance rejection rather than a correctness failure.
+
+Keep this one-level method as a reproducible coarse-smoother candidate. The
+fine-space two-level additive/hybrid implementation and its discrete
+Helmholtz energy-error benchmark are recorded in Section 20.
+
+## 20. Fine-Space Two-Level LOD Hybrid Schwarz (M6/S2a-S2b)
+
+Implemented on 2026-07-20 for homogeneous Dirichlet boundaries and extended
+the same day with an explicit artificial-impedance experiment. The
+implementation is experimental and does not change the fine
+FEM or LOD default solvers.
+
+`HelmholtzTwoLevelSchwarzPreconditioner` exposes independent coarse, local,
+additive, and hybrid actions. The coarse action reuses the model's factored
+Petrov-Galerkin LOD system. The local action uses unconstrained Helmholtz
+blocks from a dedicated `HelmholtzSchwarzPatchAssembler`, exact local SparseLU,
+and inverse-overlap
+partition-of-unity weights. It deliberately ignores the corrector constraint
+matrix, Schur complement, and element right-hand sides.
+
+For a residual `r`, the hybrid action is evaluated in factored form:
+
+```text
+coarse = B0 * r
+projected = r - A * coarse
+local = Bloc * projected
+result = coarse + local - B0 * (A * local)
+```
+
+This is `B0 + (I-B0*A) Bloc (I-A*B0)`. The dedicated Schwarz assembler
+selects complete-star vertices for homogeneous Dirichlet patches. In impedance
+mode it retains artificial-boundary vertices and adds their boundary mass term.
+Physical-domain vertices remain present and retain the original Robin term.
+
+The dedicated Debug test checks full fine-DOF coverage, partition of unity,
+the Petrov coarse equation, the factorized hybrid formula, true residual, and
+the discrete Helmholtz energy error against fine-grid SparseLU. All 15
+registered CTests pass. On the small gold case, additive/hybrid required 15/9
+iterations, with true residuals `4.78e-11`/`7.33e-12` and energy errors
+`3.94e-11`/`4.57e-12`.
+
+Eight-thread Release scale points used direct saddle correctors, exact local
+LU, restart 100, and tolerance `1e-10`:
+
+| case | fine DOF | fine SparseLU | setup | identity it./solve | hybrid it./solve | energy rel. |
+|---|---:|---:|---:|---:|---:|---:|
+| `H=5,h=10,k=4,ell=3` | 1089 | 3.19 ms | 55.1 ms | 307 / 90.3 ms | 7 / 15.7 ms | 2.46e-12 |
+| `H=7,h=12,k=8,ell=3` | 4225 | 18.34 ms | 398.3 ms | 1022 / 1067.5 ms | 8 / 112.1 ms | 7.56e-13 |
+| `H=9,h=14,k=16,ell=3` | 16641 | 166.8 ms | 2370.7 ms | not run | 9 / 619.8 ms | 1.10e-12 |
+
+Hybrid iterations are promisingly stable, but exact local setup and applying
+all local solves every outer iteration remain more expensive than global fine
+SparseLU at these sizes. The `H=9` process peaked near 1.91 GiB RSS.
+
+At `H=7,h=12,k=8`, increasing `ell=2,3,4` changed hybrid iterations from
+`9,8,7`, while setup rose from `171,398,854 ms` and solve time from
+`66,112,170 ms`. Larger patches are therefore not a performance win with the
+current exact-local-LU implementation.
+
+S2b now assembles patch volume blocks directly and adds
+`-i*k*beta*M_boundary` only on artificial edges. A 16-patch matrix golden
+test matches the legacy Dirichlet blocks below `1e-13`; a whole-domain patch
+matches the global operator to `3.93e-17`. Small-case impedance
+additive/hybrid converge in 19/15 iterations with fine-SparseLU energy errors
+below `1e-10`.
+
+Release comparisons rejected impedance as the current default. At
+`H=5,h=10,k=4,ell=3`, Dirichlet used 7 iterations and 15.7 ms, while
+impedance beta 1 used 21 and 55.0 ms; beta 4 used 14 and 32.0 ms. At
+`H=7,h=12,k=8,ell=3`, the corresponding values were 8/141.5 ms,
+24/371.6 ms, and 15/204.6 ms. The beta scan 0.25, 0.5, 1, 2, 4 showed monotone
+movement toward Dirichlet rather than an optimized Robin window.
+
+The lightweight assembler nevertheless reduced the rerun Dirichlet setup from
+55.1 to 42.8 ms at H=5 and from 398.3 to 289.1 ms at H=7. S3 should retain
+Dirichlet exact-local LU as the gold path, then evaluate shifted-Laplacian
+V-cycles, reusable local hierarchies/factorizations, and a mathematically
+consistent ORAS restriction/extension separately.
+
+## 21. Fine-Space Schwarz Shifted Local Solver (M6/S3a)
+
+Implemented on 2026-07-20 as an explicit alternative to exact local SparseLU.
+`HelmholtzSchwarzLocalSolver` owns one unconstrained patch solve and supports
+`SparseLu` or right-preconditioned `ShiftedGmres` with
+
+```math
+P_j=A_j-i\alpha k^2M_j.
+```
+
+The Schwarz assembler forms `M_j` from patch elements, not a global principal
+submatrix. It does so only for shifted local solvers; the default direct path
+neither stores global element mass blocks nor assembles local mass matrices.
+The `alpha=0` golden converges in one inner iteration. On a 44-DOF patch,
+`alpha=0.2` used six iterations with true residual `8.52e-14` and matched
+the direct local solution below `1e-10`.
+
+Tolerance-based inner GMRES makes the Schwarz action variable. The outer
+shifted-local path therefore calls the explicit FGMRES API. The Krylov core
+already stored each preconditioned vector, so this required an API-level
+clarification plus a stateful variable-preconditioner regression test, not a
+second algorithm implementation. Direct local Schwarz continues to use
+ordinary right GMRES.
+
+Eight-thread Release results with Dirichlet artificial boundaries, hybrid
+outer iteration, and tolerance `1e-10` were:
+
+| case | local solver | alpha | setup | outer it. / solve | avg/max inner it. |
+|---|---|---:|---:|---:|---:|
+| `H=5,h=10,k=4,ell=3` | direct | - | 43.2 ms | 7 / 19.5 ms | 0 / 0 |
+| same | shifted | 0 | 47.4 ms | 7 / 49.0 ms | 1 / 1 |
+| same | shifted | 0.05 | 53.2 ms | 7 / 84.8 ms | 4.95 / 6 |
+| same | shifted | 0.2 | 48.1 ms | 7 / 103.2 ms | 6.61 / 8 |
+| `H=7,h=12,k=8,ell=3` | direct | - | 269.3 ms | 8 / 119.9 ms | 0 / 0 |
+| same | shifted | 0 | 323.9 ms | 8 / 298.2 ms | 1 / 1 |
+| same | shifted | 0.05 | 308.6 ms | 8 / 686.0 ms | 5.22 / 6 |
+| same | shifted | 0.2 | 308.5 ms | 8 / 691.6 ms | 7.11 / 8 |
+
+All shifted runs retained the same outer iteration count and fine-SparseLU
+accuracy as direct local solves. The cost model explains the loss: the H=7
+hybrid run applies 256 local solvers eight times, so even one Krylov step means
+2,048 local triangular solves plus matrix products and orthogonalization.
+Exact shifted SparseLU is therefore a correctness reference, not an
+optimization.
+
+S3a is complete and does not change defaults. S3b should test a fixed,
+linear geometric V-cycle and reuse patch hierarchy/workspace. Only that path
+can remove the per-patch shifted factorization; if it remains slower, further
+inner tolerance tuning is not justified. A true ORAS restriction/extension
+remains a separate experiment.
+
+
+## 22. Fine-Space Schwarz Geometric V-Cycle (M6/S3b)
+
+Implemented on 2026-07-20 as the second explicit shifted-local experiment.
+`HelmholtzDirichletPatchHierarchyBuilder` restricts the model's nested NVB
+node prolongations to complete-star Dirichlet patch spaces. It validates that
+the final local ordering exactly matches the Schwarz block and constructs the
+hierarchy only when `shifted_inverse=GeometricVcycle`; direct local LU and
+shifted-LU setup remain unchanged.
+
+For each patch, the fixed linear V-cycle approximates
+
+```math
+P_j^{-1},\qquad
+P_j=A_j-\mathrm{i}\alpha k^2M_j,
+```
+
+using Galerkin coarse operators, damped Jacobi pre/post smoothing, and
+SparseLU only on the selected coarsest local level. Right-preconditioned
+local GMRES still solves the unshifted equation `A_j z_j=r_j` and stops on
+its true residual. Artificial impedance boundaries are rejected for this
+hierarchy because the current level construction represents homogeneous
+Dirichlet patch spaces only.
+
+The focused tests check hierarchy dimensions, fixed-V-cycle linearity,
+agreement with a direct local solve, local true residual, the impedance guard,
+and an end-to-end hybrid solve against fine SparseLU. On the 44-DOF local
+golden, shifted-LU and V-cycle used 6 and 10 inner iterations, respectively,
+with residuals below `9e-14`. The hybrid test retained 9 outer iterations
+and `4.57e-12` relative discrete energy error. All 16 Debug CTests pass.
+
+Eight-thread Release results used Dirichlet patches, `alpha=0.2`, local and
+outer tolerance `1e-10`, and two pre/post Jacobi steps:
+
+| case | local inverse | setup | outer it. / solve | avg/max inner it. | V-cycle levels / coarse DOF |
+|---|---|---:|---:|---:|---:|
+| `H=5,h=10,k=4,ell=3` | direct LU | 50.1 ms | 7 / 19.1 ms | 0 / 0 | - |
+| same | shifted LU | 49.7 ms | 7 / 105.0 ms | 6.61 / 8 | - |
+| same | V-cycle | 42.0 ms | 7 / 236.7 ms | 8.62 / 9 | 4 / 127 |
+| `H=7,h=12,k=8,ell=3` | direct LU | 289.1 ms | 8 / 124.6 ms | 0 / 0 | - |
+| same | V-cycle | 215.8 ms | 8 / 1601.4 ms | 9.30 / 11 | 4 / 127 |
+
+All paths retained the same outer iteration count, true residual, and
+fine-SparseLU accuracy. The V-cycle removes most full-size shifted
+factorizations and cuts setup by about 16% at H=5 and 25% at H=7, but every
+hybrid application performs all patch solves and each local Krylov step now
+contains a multi-level sparse cycle. Solve time is therefore about 12.4 to
+12.9 times direct LU in the tested cases.
+
+S3b is complete as a correct modular experiment and is rejected as a runtime
+default. Do not spend the next stage on looser inner tolerances or isolated
+Jacobi tuning. A plausible next stage must amortize local work across the many
+right-hand sides and translated patch types, for example block Krylov,
+reference-patch hierarchy/operator reuse, or a separately derived ORAS
+restriction/extension.
+
+
+## 23. Fine-Space Schwarz Robustness Baseline (M6/S4a)
+
+Implemented on 2026-07-20 without changing any solver default.
+`bench_helmholtz_two_level_schwarz` now accepts
+`--source=gaussian|manufactured`. Manufactured mode reuses
+`make_polynomial_plane_wave_solution` and reports the continuous energy and
+L2 errors, their exact-solution-normalized values, the LOD Petrov residual,
+corrector/constraint residuals, and the Petrov residual of every outer Krylov
+solution. It also prints physical coarse/fine meshwidths, `kH`, and a
+`steady_clock` total; the latter is the trusted total when operating-system
+wall time is disturbed by a clock adjustment.
+
+The executable `scripts/run_helmholtz_schwarz_scale.sh` builds the Release
+target, accepts resumable `H:h:k` cases and ell lists, records one log and
+resource file per case, and writes a machine-readable `summary.csv`.
+Defaults are the fixed-`kH=1` sequence
+`5:10:4 7:12:8 9:14:16`, `ell=3`, manufactured source, Dirichlet
+artificial boundaries, direct local LU, and hybrid outer GMRES.
+
+The eight-thread S4a study covered `k=4,8,16`, fine gaps 4, 5, and 6.
+For every gap, coarse patches increased from 64 to 1,024 and the hybrid
+iteration count stayed in the narrow range 7 to 9:
+
+| fine gap | k=4 | k=8 | k=16 |
+|---:|---:|---:|---:|
+| 4 | 7 | 8 | 9 |
+| 5 | 8 | 8 | 9 |
+| 6 | 8 | 8 | 9 |
+
+All runs converged with fine-system true residual below `1e-10`; outer
+Petrov residuals stayed below `1.6e-12`, and the hybrid/fine-SparseLU
+relative discrete energy difference stayed below `3.6e-12`. Corrector and
+constraint residuals remained below `2.2e-15` and `4.8e-16`.
+The normalized fine-FEM manufactured energy error decreased along every
+fixed-gap sequence:
+
+| fine gap | k=4 | k=8 | k=16 |
+|---:|---:|---:|---:|
+| 4 | 9.99e-2 | 6.08e-2 | 4.92e-2 |
+| 5 | 6.87e-2 | 3.93e-2 | 2.85e-2 |
+| 6 | 5.00e-2 | 3.02e-2 | 2.37e-2 |
+
+At the representative `H=7,h=12,k=8` point, `ell=2,3,4` required
+9, 8, and 7 outer iterations. Larger oversampling reduced one iteration per
+layer but increased setup from 138.5 to 289.5 to 531.9 ms and solve from
+69.4 to 117.2 to 233.8 ms.
+
+This establishes iteration robustness, not runtime competitiveness. The
+largest local run `H=9,h=15,k=16,ell=3` used 33,025 fine DOFs, 1,024
+patches, and about 4.54 GB peak RSS. Local setup plus hybrid solve was about
+5.73 s, versus 0.447 s for the fine SparseLU reference; complete benchmark
+time was 15.53 s. The default therefore remains global fine SparseLU for a
+single fine solve and direct local LU inside the experimental hybrid action.
+
+S4a established the fixed-`kH` hybrid baseline. S4b now compares identity,
+local, additive, and hybrid actions on the same manufactured dataset; the
+results and remaining S4c work are recorded below. M5 remains open because
+no corrector iterative policy has crossed the DirectSaddle runtime threshold.
+
+## 24. Fine-Space Schwarz Solver Comparison (M6/S4b)
+
+Completed on 2026-07-20 without changing solver defaults. The resumable scale
+driver now stores `source`, `solver`, `boundary`, `local_solver`, and
+`local_inverse` in every CSV row and uses the same fields in its resume key.
+Different outer actions can therefore share one result directory without
+silently skipping or mixing cases.
+
+Using the S4a manufactured problem, fixed `kH=1`, `ell=3`, Dirichlet
+artificial boundaries, direct local LU, and eight threads gave:
+
+| case | identity | local | additive | hybrid |
+|---|---:|---:|---:|---:|
+| `H=5,h=10,k=4` | 466 / 66.93 ms | 11 / 21.36 ms | 15 / 42.72 ms | 8 / 27.23 ms |
+| `H=7,h=12,k=8` | 1285 / 679.04 ms | 20 / 219.00 ms | 18 / 234.41 ms | 8 / 124.27 ms |
+| `H=9,h=14,k=16` | 2750 / 7533.72 ms | 51 / 2827.82 ms | 22 / 1397.20 ms | 9 / 627.71 ms |
+
+Each entry is outer iterations / outer solve time. All 12 runs converged;
+true residuals were below `1e-10`, Petrov residuals below `1.3e-10`, and
+relative discrete energy errors against fine SparseLU below `2.5e-10`.
+Manufactured-solution errors agree across all actions.
+
+The comparison separates the roles of the two levels. Local correction alone
+eventually degrades, additive remains useful, and the multiplicative hybrid
+coarse/local composition is the only tested action staying at 8-9 iterations.
+It is nevertheless not the runtime default: at `H=9,h=14,k=16`, hybrid setup
+plus solve is about 2.22 s versus 0.151 s for fine SparseLU. The identity rows
+also pay Schwarz setup because the benchmark constructs common diagnostics;
+use `outer_solve_ms` for Krylov-only comparisons and setup plus solve for an
+algorithm-level comparison.
+
+Raw S4b logs and the configuration-aware CSV are in
+`results/helmholtz_schwarz_s4b/`. The local higher-wave-number S4c extension
+is recorded in the next section; its equal-accuracy server continuation is
+deferred. M5 remains open because neither iterative path has crossed the
+relevant direct-solver runtime.
+
+## 25. Local High-Wavenumber Schwarz Study (M6/S4c)
+
+Completed locally on 2026-07-20 after deferring the large-memory server run.
+All cases use the manufactured source, fixed `kH=1`, Dirichlet artificial
+boundaries, direct local LU, eight threads, restart 50, and outer tolerance
+`1e-10`.
+
+At `H=11,h=15,k=32,ell=3` (33,025 fine DOFs and 4,096 patches),
+identity/local/additive/hybrid required `2869/385/29/9` iterations. Their
+outer solve times were `16.93/39.18/3.64/1.45 s`. All true residuals were
+below `1e-10`, and relative discrete energy errors against fine SparseLU
+were below `1.1e-10`. One-level local is therefore not merely less robust:
+its expensive all-patch actions make it about 2.3 times slower than identity.
+
+The local memory limit still permits a controlled `k=64` probe by reducing
+the fine gap from four to three. The hybrid oversampling comparison is:
+
+| case | ell | iterations | setup | solve | peak RSS | LOD exact energy rel. |
+|---|---:|---:|---:|---:|---:|---:|
+| `k=32,H=11,h=15` | 2 | 9 | 1.31 s | 0.52 s | 1.66 GiB | 5.35e-2 |
+| same | 3 | 9 | 3.43 s | 1.45 s | 3.64 GiB | 5.27e-2 |
+| `k=64,H=13,h=16` | 2 | 8 | 3.02 s | 1.32 s | 3.91 GiB | 8.94e-2 |
+| same | 3 | 9 | 6.87 s | 4.65 s | 6.93 GiB | 8.71e-2 |
+
+The `k=64,ell=3` additive action took 34 iterations. Thus hybrid iteration
+robustness extends through `k=64` in the tested range, while `ell=2` is much
+cheaper than `ell=3`. This is empirical and does not remove the theoretical
+need for oversampling that grows logarithmically with wavenumber.
+
+The `k=64` fine-FEM normalized exact energy error is about `8.69e-2`, so the
+gap-three case is an iteration/memory probe rather than an equal-accuracy
+runtime comparison. Even the faster ell-two hybrid setup plus solve is
+about 4.34 s versus 1.73 s for fine SparseLU. A gap-four `k=64,ell=3` run
+was not attempted because extrapolated storage exceeds the 12 GiB WSL
+budget. Raw data are in `results/helmholtz_schwarz_s4c_local/`.
+
+S4c-local is complete. S4d now makes both ORAS extension choices explicit;
+the following section records their validation and rejection as runtime
+defaults. Block/multi-RHS and reference-patch reuse move to S4e.
+
+## 26. Explicit ORAS Extensions (M6/S4d)
+
+Completed on 2026-07-20 without changing the default action. The local
+preconditioner is now represented as
+
+```text
+B_local = sum_j R_j^T D_j B_j^{-1} R_j,
+sum_j R_j^T D_j R_j = I.
+```
+
+`WeightedOverlap` uses inverse multiplicity on every overlapping copy.
+`RestrictedCore` assigns each fine DOF to one deterministic coarse-element
+core, solves on the full overlapping patch, and injects only owner-core
+values. With an impedance artificial boundary, the first path is weighted
+ORAS and the second is a Boolean-core RAS/ORAS variant. This corrects the
+earlier overly narrow statement that an impedance local solve was not ORAS
+unless it used Boolean restriction.
+
+The patch assembler now exposes core DOFs. The preconditioner stores
+per-subdomain extension weights and reports min/max owned DOFs in addition
+to local patch sizes. Both extensions satisfy partition of unity to roundoff.
+The scale driver records `extension`, `impedance_beta`, and owned sizes in
+the CSV identity and includes them in collision-free log names.
+
+The Debug golden case gave:
+
+| action | additive | hybrid |
+|---|---:|---:|
+| Dirichlet weighted | 15 | 9 |
+| weighted ORAS, beta=1 | 19 | 15 |
+| Boolean-core ORAS, beta=1 | 30 | 23 |
+
+All converged solutions agree with fine SparseLU within the established
+energy and true-residual tolerances. Full Debug CTest passes 16/16.
+
+Release results with eight threads and `ell=3` were:
+
+| case | method | iterations | solve |
+|---|---|---:|---:|
+| `k=8,H=7,h=12` | Dirichlet weighted hybrid | 8 | 0.108 s |
+| same | weighted ORAS hybrid, beta=4 | 15 | 0.247 s |
+| same | weighted ORAS additive, beta=4 | 22 | 0.321 s |
+| same | RestrictedCore Dirichlet hybrid | 21 | 0.302 s |
+| `k=16,H=9,h=14` | Dirichlet weighted hybrid | 9 | 0.674 s |
+| same | weighted ORAS hybrid, beta=4 | 16 | 1.349 s |
+| same | weighted ORAS additive, beta=4 | 25 | 1.693 s |
+| same | RestrictedCore Dirichlet hybrid | 41 | 2.592 s |
+
+At `k=8`, RestrictedCore ORAS with beta `1,2` failed at 4,000 iterations;
+beta `4,8,16,32,64,128` required `276,74,37,25,22,21` iterations.
+The beta-to-infinity limit matches the 21-step RestrictedCore Dirichlet
+case. At `k=16`, RestrictedCore beta 16/64 required 74/42 iterations,
+while RestrictedCore Dirichlet required 41.
+
+The Boolean core owns only 9-25 DOFs per subdomain versus 509-1,561 local
+patch DOFs. This sharp extension loses the smooth overlap exchange supplied
+by multiplicity weights. Weighted ORAS is better than Boolean-core ORAS but
+still loses to Dirichlet weighted hybrid on both scales. Both remain explicit
+research switches; neither changes the runtime default.
+
+Raw logs are in `results/helmholtz_schwarz_s4d_oras/`. S4e moves to
+block/multi-RHS local solves and translated-patch symbolic/hierarchy reuse.
+
+## 27. Identical-Matrix Schwarz Factorization Reuse (M6/S4e)
+
+Completed on 2026-07-21 without changing the default. A Schwarz application
+has one right-hand side per patch, so block GMRES inside one patch has no
+natural batch. On uniform meshes with constant coefficients, however, many
+translated patches have exactly the same local matrix. They are grouped as
+
+```text
+G_q = {j : A_j == A_q}
+F_q = [R_j r] for j in G_q
+X_q = SparseLU(A_q).solve(F_q)
+```
+
+The sparse hash covers dimensions, compressed outer/inner indices, and every
+real and imaginary coefficient. A hash hit is followed by full exact matrix
+comparison. This is a correctness boundary, not a tolerance-based geometric
+guess. One `SparseLU` is owned per group, one dense multi-RHS solve handles
+all group columns, and groups remain OpenMP-parallel. Consequently a shared
+Eigen factorization is never called concurrently.
+
+`HelmholtzSchwarzFactorizationReuse::IdenticalMatrix` is an explicit direct-LU
+switch; `None` remains the default, and shifted GMRES/V-cycle rejects reuse.
+Diagnostics expose solver group count, saved factorizations, and maximum group
+size. Tests compare block columns against scalar SparseLU, compare reused and
+unreused local actions, and validate the final fine-SparseLU solution.
+
+Eight-thread Release measurements are in
+`results/helmholtz_schwarz_s4e_reuse/summary.csv`:
+
+| case | mode | groups | setup | hybrid solve | iterations | peak RSS |
+|---|---|---:|---:|---:|---:|---:|
+| `k=8,H=5,h=10` | none | 64 | 37.0 ms | 17.1 ms | 8 | 116,540 KiB |
+| same | identical | 36 | 41.3 ms | 16.0 ms | 8 | 92,768 KiB |
+| `k=8,H=7,h=12` | none median | 256 | 237.8 ms | 103.1 ms | 8 | 500,000 KiB |
+| same | identical median | 75 | 194.6 ms | 87.7 ms | 8 | 289,552 KiB |
+| `k=16,H=9,h=14` | none | 1024 | 1.520 s | 0.781 s | 9 | 2,010,232 KiB |
+| same | identical | 166 | 1.086 s | 0.429 s | 9 | 823,180 KiB |
+
+The `H=7` row is the median of three runs. True residuals and energy errors
+are unchanged to roundoff. At `H=9`, 858 factorizations are removed; setup,
+solve, and peak memory fall by about 29%, 45%, and 59%, respectively.
+`H=3,h=7` remains slightly slower because grouping overhead dominates tiny
+LU factors, so automatic/default reuse would be premature. The complete
+Schwarz method still does not cross fine SparseLU wall time; M5 remains open.

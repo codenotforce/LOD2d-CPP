@@ -22,5 +22,17 @@ target_link_libraries(bench_saddle_h3h10 PRIVATE lod2d_core OpenMP::OpenMP_CXX)
 add_executable(bench_helmholtz_k bench_helmholtz_k.cpp)
 target_link_libraries(bench_helmholtz_k PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_manufactured bench_helmholtz_manufactured.cpp)
+target_link_libraries(bench_helmholtz_manufactured PRIVATE lod2d_core)
+
 add_executable(bench_helmholtz_adaptive bench_helmholtz_adaptive.cpp)
 target_link_libraries(bench_helmholtz_adaptive PRIVATE lod2d_core)
+
+add_executable(bench_helmholtz_patch_solver bench_helmholtz_patch_solver.cpp)
+target_link_libraries(bench_helmholtz_patch_solver PRIVATE lod2d_core)
+
+add_executable(bench_helmholtz_coarse_schwarz bench_helmholtz_coarse_schwarz.cpp)
+target_link_libraries(bench_helmholtz_coarse_schwarz PRIVATE lod2d_core)
+
+add_executable(bench_helmholtz_two_level_schwarz bench_helmholtz_two_level_schwarz.cpp)
+target_link_libraries(bench_helmholtz_two_level_schwarz PRIVATE lod2d_core)

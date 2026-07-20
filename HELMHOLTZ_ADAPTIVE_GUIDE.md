@@ -1,54 +1,40 @@
-# Helmholtz Adaptive LOD Stage 1
+# Helmholtz Adaptive LOD Stage-1 User Guide
 
-## Status
+## Purpose And Status
 
-The stage-1 engineering baseline is implemented. The strong-residual candidates
-must be interpreted against the continuous error `u-u_LOD`, not against the
-purely discrete difference `u_h-u_LOD`. A manufactured exact solution is now
-available for that distinction. A full reliability and efficiency theorem is
-still outside the current numerical validation.
+Stage 1 is implemented as a correctness-first calibration workflow:
 
-Implemented components:
+- the fine finite-element space is fixed;
+- only the coarse NVB mesh is adaptively refined;
+- every iteration fully rebuilds the LOD model;
+- strong-residual candidates are compared with exact or fine-reference errors.
 
-- one NVB hierarchy with stable coarse-element IDs and explicit parent IDs;
-- completion of every adaptive coarse mesh to one fixed master fine level;
-- exact checks of element and nodal prolongation identities;
-- an adaptive Helmholtz model entry point sharing the uniform model pipeline;
-- one-pass broken element, interior-flux-jump, and Robin residual assembly;
-- fine, mixed, and macro coarse-element aggregations;
-- local energy-Riesz dual indicators for calibration;
-- deterministic minimal Dorfler marking;
-- reliability-envelope evaluation, constrained fitting, and holdout utilities;
-- a full-rebuild SOLVE-ESTIMATE-MARK-REFINE driver;
-- CSV/human benchmark output, mesh snapshots, timings, residual diagnostics,
-  scale-separation diagnostics, and a dense energy inf-sup diagnostic.
+Incremental corrector reuse, L-shaped domains, joint `H/h/ell` adaptation, and
+PML are not part of stage 1. This guide documents only the implemented
+calibration workflow. Measured calibration histories are recorded in
+[DEVELOPMENT.md](DEVELOPMENT.md).
 
-Incremental corrector reuse is intentionally deferred. The full-rebuild path is
-the numerical gold standard that an incremental implementation must match.
+## Implemented Invariants
+
+- One NVB tree supplies all coarse meshes and the fixed master fine mesh.
+- Coarse elements retain stable IDs and explicit parents.
+- Every adaptive coarse mesh is completed to the same master fine level.
+- Element and nodal prolongation identities are checked.
+- NVB closure may not create duplicate global midpoint nodes.
+- The reference fine solution and finite-element space remain unchanged
+  throughout one adaptive run.
 
 ## Build And Test
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug
-cmake --build build -j 8
-ctest --test-dir build --output-on-failure
+cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug --target \
+  test_helmholtz_adaptive test_helmholtz_reliability -j 8
+ctest --test-dir build-debug -R 'helmholtz_(adaptive|reliability)' \
+  --output-on-failure
 ```
 
-The stage-1 tests are:
-
-```bash
-./build/tests/test_helmholtz_adaptive
-./build/tests/test_helmholtz_reliability
-```
-
-They check fixed-fine-mesh geometry, adaptive NVB closure, prolongation,
-complex residual reconstruction, all three aggregations, local Riesz solves,
-Dorfler minimality, decay fitting, reliability-domain rejection, constrained
-training envelopes, Spearman correlation, and marking overlap. The NVB tests
-also reject coincident nodes with different global indices, which would change
-the fixed fine finite element space during coarse-mesh adaptation.
-
-## Run The Calibration Benchmark
+## Run A Calibration
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
@@ -60,104 +46,99 @@ cmake --build build-release --target bench_helmholtz_adaptive -j 8
   --source=manufactured
 ```
 
-Available production-candidate names are `fine`, `mixed`, and `macro`.
-`--source=manufactured` uses `u=phi(x)phi(y)exp(i*k*x)`, where
-`phi(t)=16*t^2*(1-t)^2`, and reports both `u-u_LOD` and `u-u_h` errors.
-Use `--no-dual` for larger timing runs. Use `--format=csv` for tables and
-`--mesh-out=mesh.csv` for the final element IDs, levels, coordinates, and
-indicators.
+Key options:
 
-The driver stops before a marked refinement whose NVB closure would violate
-the configured coarse/fine scale-separation limit. The dense inf-sup SVD is
-reported only up to 512 coarse unknowns; larger systems report `nan`.
+| Option | Meaning |
+|---|---|
+| `--H` | Initial coarse NVB level |
+| `--h` | Fixed master fine level |
+| `--ell` | Corrector oversampling layers |
+| `--iterations` | Maximum adaptive iterations |
+| `--theta` | Dorfler marking fraction |
+| `--estimator` | `fine`, `mixed`, or `macro` aggregation |
+| `--q-limit` | Coarse/fine scale-separation gate |
+| `--source` | `manufactured` or `gaussian` |
+| `--no-dual` | Skip expensive local energy-Riesz calibration |
+| `--format=csv` | Emit a machine-readable history |
+| `--mesh-out=PATH` | Write final mesh IDs, geometry, levels, and indicators |
+
+The driver stops before a refinement whose NVB closure would violate the
+configured scale-separation limit. Dense inf-sup diagnostics are omitted for
+large coarse systems.
+
+## Manufactured Solution
+
+The exact validation problem uses
+
+```math
+\phi(t)=16t^2(1-t)^2,
+\qquad
+u(x,y)=\phi(x)\phi(y)e^{ikx},
+```
+
+and
+
+```math
+f=-e^{ikx}\left[
+\phi''(x)\phi(y)+\phi(x)\phi''(y)
++2ik\phi'(x)\phi(y)\right].
+```
+
+Because `phi=phi'=0` at the endpoints, the homogeneous impedance condition is
+satisfied. This source reports both the exact LOD error and the fixed fine-FEM
+discretization floor.
 
 ## Residual Identity
 
-The implementation reconstructs the nodal residual from the integrated broken
-volume, flux-jump, and Robin terms and compares it with
+The estimator assembly reconstructs the integrated nodal residual from broken
+volume terms, interior flux jumps, and Robin boundary terms. It must agree
+with
 
-```text
-r_h = b_h - A_h u_LOD.
+```math
+r_h=b_h-A_hu_{\mathrm{LOD}}.
 ```
 
-The Debug test gives a relative difference of approximately `2.53e-17`,
-well below the `1e-10` gate. This also caught and fixed a complex-flux bug:
-Eigen's complex `dot` conjugates its left operand, so the real normal must be
-placed on the left.
+This identity is a correctness gate for signs, edge ownership, and complex
+conjugation. It is not by itself a reliability theorem.
 
-## Error Target And Scientific Gate
+## Interpreting The Indicators
 
-For `T_H = T_h`, the discrete difference `u_h-u_LOD` and algebraic residual
-vanish, but the continuous error `u-u_h` generally does not. Likewise, the sum
-of squared strong volume and jump residuals generally does not vanish. Galerkin
-orthogonality is obtained only after the signed terms are tested and cancel;
-squaring the terms separately removes that cancellation.
+The strong-residual candidates target the continuous error
+`u-u_LOD`. They are not estimators of the purely discrete difference
+`u_h-u_LOD`.
 
-Consequences:
+When the coarse and fine meshes coincide, `u_h-u_LOD` and the algebraic
+residual vanish, while `u-u_h` and squared strong volume/jump residuals need
+not vanish. Therefore:
 
-- `eta_fine`, `eta_mix`, and `eta_macro` are not estimators of
-  `u_h-u_LOD`;
-- their discrete effectivity `eta/||u_h-u_LOD||` can grow without bound;
-- this does not invalidate them as candidates for the continuous error
-  `u-u_LOD`, whose limiting value is the nonzero fine discretization error;
-- the plan's original requirement that a strong residual indicator reach
-  machine precision at `T_H=T_h` is mathematically incompatible with these
-  definitions;
-- the local algebraic energy-dual residual is still a valid calibration
-  quantity because it acts on `V_h` and does vanish with `r_h`.
+- do not divide a strong-residual indicator by a vanishing discrete error and
+  interpret the resulting effectivity as a failure;
+- use the manufactured exact solution for continuous-error calibration;
+- use the local algebraic energy-dual residual as a discrete calibration
+  quantity;
+- require parameter sweeps and holdout validation before claiming uniform
+  reliability or efficiency.
 
-For a discrete-error estimator, the next candidate remains an algebraic
-dual-residual localization or a hierarchical two-level estimator. For the
-continuous-error target, the manufactured solution provides the appropriate
-calibration; broader parameter sweeps are still required before claiming
-uniform reliability or efficiency.
+A future estimator specifically targeting `u_h-u_LOD` should use an algebraic
+dual-residual localization or a hierarchical two-level construction.
 
-## Manufactured-Solution Validation
+## Output Checklist
 
-The exact pair is
+For every adaptive iteration retain:
 
-```text
-phi(t) = 16 t^2 (1-t)^2,
-u(x,y) = phi(x) phi(y) exp(i k x),
-f = -exp(i k x) [phi''(x)phi(y) + phi(x)phi''(y)
-                  + 2 i k phi'(x)phi(y)].
-```
+- coarse element and DOF counts;
+- exact and/or fine-reference errors;
+- all requested indicators and effectivities;
+- marked elements and NVB closure growth;
+- `q_max` and effective scale separation;
+- residual identity and solver residuals;
+- inf-sup value when available;
+- solve, estimate, mark, refine, and total timings;
+- final mesh output and run metadata.
 
-Because `phi=phi'=0` at both endpoints, this solution satisfies the
-homogeneous Robin condition. Direct differentiation gives
-`-Delta u-k^2 u=f`.
+## Scientific Gate
 
-Release run: `k=4,H=5,h=10,ell=3`, `theta=0.5`, seven iterations.
-
-| iteration | coarse elements | exact LOD energy error | exact fine energy error | fine eta | exact effectivity |
-|---:|---:|---:|---:|---:|---:|
-| 0 | 64 | 0.529410 | 0.208842 | 1.26604 | 2.39142 |
-| 1 | 84 | 0.417764 | 0.208842 | 1.25424 | 3.00226 |
-| 2 | 116 | 0.363453 | 0.208842 | 1.24709 | 3.43122 |
-| 3 | 176 | 0.280067 | 0.208842 | 1.24106 | 4.43129 |
-| 4 | 282 | 0.240944 | 0.208842 | 1.23662 | 5.13238 |
-| 5 | 404 | 0.228634 | 0.208842 | 1.23151 | 5.38640 |
-| 6 | 648 | 0.214176 | 0.208842 | 1.22683 | 5.72816 |
-
-The invariant fine error confirms that every adaptive coarse mesh uses the same
-master fine finite element space. The exact LOD error decreases monotonically
-toward that fine-discretization floor. In contrast, the discrete effectivity
-grows from `2.61` to `25.91`, illustrating why the reference and exact
-solutions answer different estimator questions.
-
-## Gaussian Pilot Result
-
-Release pilot: `k=4`, initial level 5, fine level 10, `ell=3`,
-`theta=0.5`, Gaussian source, four threads.
-
-| iteration | coarse elements | relative energy error | fine eta | effectivity | inf-sup |
-|---:|---:|---:|---:|---:|---:|
-| 0 | 64 | 0.122562 | 0.0103049 | 2.27068 | 0.318864 |
-| 1 | 70 | 0.155091 | 0.0175353 | 7.04001 | 0.558892 |
-| 2 | 88 | 0.108361 | 0.0170622 | 12.1898 | 0.664904 |
-
-Increasing `ell` from 3 to 6 produced essentially the same trajectory.
-The inf-sup value improves rather than collapses, so the temporary error
-increase is not caused by Petrov-Galerkin instability. It is consistent with
-non-nested multiscale spaces after local coarse refinement, while the rapidly
-growing effectivity exposes the strong-residual mismatch described above.
+Stage 1 validates implementation and estimator behavior on the unit square.
+It does not yet establish a theorem or an adaptive optimality result. Continue
+to stage 2 only after the candidate estimator has a stable reliability
+envelope and acceptable marking correlation on training and holdout cases.

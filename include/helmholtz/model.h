@@ -22,6 +22,7 @@ struct HelmholtzProblemConfig {
     double boundary_beta = 1.0;
     HelmholtzPetrovMode mode = HelmholtzPetrovMode::TwoSided;
     TriMesh initial_mesh;
+    HelmholtzPatchSolverConfig patch_solver;
     std::vector<double> diffusion;
     std::vector<double> refractive_index;
 };
@@ -33,6 +34,9 @@ struct HelmholtzProblemData {
     Eigen::SparseMatrix<double> fine_element_prolongation;
     Eigen::SparseMatrix<double> fine_dg_prolongation;
     Eigen::SparseMatrix<double> quasi_interpolation;
+    std::vector<TriMesh> fine_hierarchy_meshes;
+    std::vector<Eigen::SparseMatrix<double>> fine_node_level_prolongations;
+    std::vector<Eigen::SparseMatrix<double>> fine_element_level_prolongations;
     Eigen::SparseMatrix<double> patches;
     std::vector<int> coarse_element_levels;
     int fine_level = -1;

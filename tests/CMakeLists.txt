@@ -1,4 +1,8 @@
 add_executable(test_mesh test_mesh.cpp)
+add_executable(test_right_gmres test_right_gmres.cpp)
+target_link_libraries(test_right_gmres PRIVATE lod2d_core)
+add_test(NAME right_preconditioned_gmres COMMAND test_right_gmres)
+
 target_link_libraries(test_mesh PRIVATE lod2d_core)
 add_test(NAME mesh_refinement COMMAND test_mesh)
 
@@ -40,6 +44,22 @@ add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)
 add_executable(test_helmholtz_adaptive test_helmholtz_adaptive.cpp)
 target_link_libraries(test_helmholtz_adaptive PRIVATE lod2d_core)
 add_test(NAME helmholtz_adaptive COMMAND test_helmholtz_adaptive)
+
+add_executable(test_helmholtz_coarse_schwarz test_helmholtz_coarse_schwarz.cpp)
+target_link_libraries(test_helmholtz_coarse_schwarz PRIVATE lod2d_core)
+add_test(NAME helmholtz_coarse_schwarz COMMAND test_helmholtz_coarse_schwarz)
+
+add_executable(test_helmholtz_schwarz_local_solver test_helmholtz_schwarz_local_solver.cpp)
+target_link_libraries(test_helmholtz_schwarz_local_solver PRIVATE lod2d_core)
+add_test(NAME helmholtz_schwarz_local_solver COMMAND test_helmholtz_schwarz_local_solver)
+
+add_executable(test_helmholtz_schwarz_patch test_helmholtz_schwarz_patch.cpp)
+target_link_libraries(test_helmholtz_schwarz_patch PRIVATE lod2d_core)
+add_test(NAME helmholtz_schwarz_patch COMMAND test_helmholtz_schwarz_patch)
+
+add_executable(test_helmholtz_two_level_schwarz test_helmholtz_two_level_schwarz.cpp)
+target_link_libraries(test_helmholtz_two_level_schwarz PRIVATE lod2d_core)
+add_test(NAME helmholtz_two_level_schwarz COMMAND test_helmholtz_two_level_schwarz)
 
 add_executable(test_helmholtz_reliability test_helmholtz_reliability.cpp)
 target_link_libraries(test_helmholtz_reliability PRIVATE lod2d_core)

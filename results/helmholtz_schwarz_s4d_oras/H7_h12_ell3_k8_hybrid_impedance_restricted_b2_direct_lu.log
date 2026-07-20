@@ -1,0 +1,11 @@
+=== H=7 h=12 ell=3 k=8 solver=hybrid threads=8 ===
+command: /home/qcxubuntu/learning/FemCode/.s4b_work_20260720/build-release/benchmarks/bench_helmholtz_two_level_schwarz --H=7 --h=12 --ell=3 --k=8 --threads=8 --source=manufactured --solver=hybrid --boundary=impedance --extension=restricted --impedance-beta=2 --local-solver=direct --local-inverse=lu --restart=50 --max-iters=4000 --tol=1e-10
+Helmholtz two-level Schwarz benchmark: H=7 h=12 ell=3 k=8 threads=8 source=manufactured boundary=impedance extension=restricted impedance_beta=2 local_solver=direct local_inverse=lu local_alpha=0.2
+coarse_dofs=145 fine_dofs=4225 coarse_meshwidth=0.125 fine_meshwidth=0.0220971 kH=1 build_ms=522.302 fine_sparse_lu_ms=17.7643 lod_solve_ms=1.02079 schwarz_setup_ms=297.325
+LOD baseline petrov=1.06865e-14 energy_rel=0.0517112 fine_rel=0.013299 fem_exact_E=0.197005 fem_exact_L2=0.00203764 fem_exact_E_rel=0.0393238 fem_exact_L2_rel=0.00501452 lod_exact_E=0.326063 lod_exact_L2=0.00610152 lod_exact_E_rel=0.0650848 lod_exact_L2_rel=0.0150155 corrector_residual=1.17499e-15 constraint_residual=3.06548e-16
+Schwarz subdomains=256 local_dofs=509..1561 owned_dofs=9..25 uncovered=0 partition_error=0 artificial_edges=17536 physical_edges=10240
+hybrid    status=failed     solve_ms=66183.5     iterations=4000  restarts=80   prec_apps=4000  residual=0.123919     energy_rel=0.0083843    fine_rel=0.00638518   petrov=0.00631737   exact_E=0.201884     exact_L2=0.0035092    exact_E_rel=0.0402978    exact_L2_rel=0.00863591 message="GMRES reached the maximum iteration count"
+Local solver calls=1024000 avg_iterations=0 max_iterations=0 restarts=0 max_true_residual=0 vcycle_levels=0 vcycle_coarse_dofs=0 vcycle_finest_dofs=0
+Benchmark total_ms=67037.3
+wall_seconds=61.95
+max_rss_kb=529712

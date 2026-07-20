@@ -1,0 +1,11 @@
+=== H=7 h=12 ell=3 k=8 solver=hybrid threads=8 ===
+command: /home/qcxubuntu/learning/FemCode/.s4b_work_20260720/build-release/benchmarks/bench_helmholtz_two_level_schwarz --H=7 --h=12 --ell=3 --k=8 --threads=8 --source=manufactured --solver=hybrid --boundary=dirichlet --extension=weighted --impedance-beta=1 --local-solver=direct --local-inverse=lu --restart=50 --max-iters=4000 --tol=1e-10
+Helmholtz two-level Schwarz benchmark: H=7 h=12 ell=3 k=8 threads=8 source=manufactured boundary=dirichlet extension=weighted impedance_beta=1 local_solver=direct local_inverse=lu local_alpha=0.2
+coarse_dofs=145 fine_dofs=4225 coarse_meshwidth=0.125 fine_meshwidth=0.0220971 kH=1 build_ms=582.268 fine_sparse_lu_ms=20.2261 lod_solve_ms=1.09834 schwarz_setup_ms=282.512
+LOD baseline petrov=1.06865e-14 energy_rel=0.0517112 fine_rel=0.013299 fem_exact_E=0.197005 fem_exact_L2=0.00203764 fem_exact_E_rel=0.0393238 fem_exact_L2_rel=0.00501452 lod_exact_E=0.326063 lod_exact_L2=0.00610152 lod_exact_E_rel=0.0650848 lod_exact_L2_rel=0.0150155 corrector_residual=1.17499e-15 constraint_residual=3.06548e-16
+Schwarz subdomains=256 local_dofs=476..1449 owned_dofs=476..1449 uncovered=0 partition_error=1.9984e-15 artificial_edges=17536 physical_edges=10240
+hybrid    status=converged  solve_ms=107.73      iterations=8     restarts=0    prec_apps=8     residual=3.52692e-11  energy_rel=1.60162e-12  fine_rel=8.08066e-13  petrov=7.89914e-13  exact_E=0.197005     exact_L2=0.00203764   exact_E_rel=0.0393238    exact_L2_rel=0.00501452
+Local solver calls=2048 avg_iterations=0 max_iterations=0 restarts=0 max_true_residual=0 vcycle_levels=0 vcycle_coarse_dofs=0 vcycle_finest_dofs=0
+Benchmark total_ms=1010.44
+wall_seconds=1.03
+max_rss_kb=486188

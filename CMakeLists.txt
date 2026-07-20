@@ -47,6 +47,16 @@ add_library(lod2d_core STATIC
     src/lod/patches.cpp
     src/lod/corrector.cpp
     src/lod/lod_model.cpp
+    src/helmholtz/patch_system.cpp
+    src/helmholtz/patch_solver.cpp
+    src/helmholtz/corrector_pipeline.cpp
+    src/helmholtz/coarse_schwarz.cpp
+    src/helmholtz/schwarz_patch.cpp
+    src/helmholtz/patch_hierarchy.cpp
+    src/helmholtz/schwarz_local_solver.cpp
+    src/helmholtz/two_level_schwarz.cpp
+    src/helmholtz/shifted_laplacian.cpp
+    src/helmholtz/patch_multigrid.cpp
     src/helmholtz/operators.cpp
     src/helmholtz/corrector.cpp
     src/helmholtz/model.cpp
@@ -55,6 +65,7 @@ add_library(lod2d_core STATIC
     src/helmholtz/adaptive/reliability.cpp
     src/helmholtz/adaptive/driver.cpp
     src/solver/coarse_solve.cpp
+    src/solver/right_gmres.cpp
     src/solver/lod_reuse.cpp
 )
 target_include_directories(lod2d_core PUBLIC include)

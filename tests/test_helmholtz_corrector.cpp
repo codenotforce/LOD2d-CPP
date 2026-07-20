@@ -99,6 +99,112 @@ int main() {
         require(boundary_corrector_max > 1e-12,
                 "physical Robin boundary DOFs were incorrectly eliminated from all correctors");
 
+        HelmholtzProblemConfig schur_config = config;
+        schur_config.patch_solver.kind = HelmholtzPatchSolverKind::DirectSchur;
+        HelmholtzLodModel schur_model = HelmholtzLodModel::build(schur_config);
+        const ComplexMatrix schur_basis(schur_model.corrected_trial_basis());
+        const double direct_schur_difference =
+            (schur_basis - primal_dense).norm() / std::max(1.0, primal_dense.norm());
+        require(direct_schur_difference < 1e-10,
+                "DirectSchur correctors disagree with DirectSaddle");
+        require(schur_model.correctors().diagnostics.max_schur_residual < 1e-11,
+                "DirectSchur multiplier residual is too large");
+        require(schur_model.correctors().diagnostics.min_schur_reciprocal_condition > 0.0,
+                "DirectSchur reported a singular Schur complement");
+
+        HelmholtzProblemConfig gmres_config = config;
+        gmres_config.patch_solver.kind = HelmholtzPatchSolverKind::ShiftedGmres;
+        gmres_config.patch_solver.shifted.rule = HelmholtzShiftRule::KappaSquared;
+        gmres_config.patch_solver.shifted.alpha = 0.2;
+        gmres_config.patch_solver.gmres.restart = 30;
+        gmres_config.patch_solver.gmres.max_iterations = 120;
+        gmres_config.patch_solver.gmres.relative_tolerance = 1e-11;
+        HelmholtzLodModel gmres_model = HelmholtzLodModel::build(gmres_config);
+        const auto &gmres_diagnostics = gmres_model.correctors().diagnostics;
+        const ComplexMatrix gmres_basis(gmres_model.corrected_trial_basis());
+        const double gmres_difference =
+            (gmres_basis - primal_dense).norm() / std::max(1.0, primal_dense.norm());
+        require(gmres_difference < 1e-8,
+                "shifted-Laplacian GMRES correctors disagree with DirectSaddle");
+        require(gmres_diagnostics.gmres_right_hand_sides > 0,
+                "shifted-Laplacian path did not execute GMRES");
+        require(gmres_diagnostics.gmres_iterations
+                    >= gmres_diagnostics.gmres_right_hand_sides,
+                "GMRES iteration statistics are inconsistent");
+        require(gmres_diagnostics.max_gmres_relative_residual < 1e-10,
+                "shifted-Laplacian GMRES true residual is too large");
+        require(gmres_diagnostics.max_primal_residual < 1e-9,
+                "shifted-Laplacian corrector primal residual is too large");
+        require(gmres_diagnostics.max_constraint_residual < 1e-9,
+                "shifted-Laplacian corrector constraint residual is too large");
+        require(gmres_diagnostics.direct_fallbacks == 0,
+                "shifted-Laplacian correctness test unexpectedly used a fallback");
+
+        HelmholtzProblemConfig exact_shift_config = gmres_config;
+        exact_shift_config.patch_solver.shifted.rule = HelmholtzShiftRule::Absolute;
+        exact_shift_config.patch_solver.shifted.absolute_epsilon = 0.0;
+        HelmholtzLodModel exact_shift_model =
+            HelmholtzLodModel::build(exact_shift_config);
+        const auto &exact_shift_diagnostics =
+            exact_shift_model.correctors().diagnostics;
+        require(exact_shift_diagnostics.gmres_max_iterations == 1,
+                "epsilon=0 shifted GMRES should converge in one iteration");
+        const ComplexMatrix exact_shift_basis(
+            exact_shift_model.corrected_trial_basis());
+        require(
+            (exact_shift_basis - primal_dense).norm()
+                / std::max(1.0, primal_dense.norm()) < 1e-10,
+            "epsilon=0 shifted GMRES disagrees with DirectSaddle");
+
+        HelmholtzProblemConfig vcycle_config = gmres_config;
+        vcycle_config.patch_solver.shifted.inverse =
+            HelmholtzShiftedInverseKind::GeometricVcycle;
+        vcycle_config.patch_solver.shifted.pre_smooth = 2;
+        vcycle_config.patch_solver.shifted.post_smooth = 2;
+        vcycle_config.patch_solver.shifted.coarse_max_dofs = 20;
+        vcycle_config.patch_solver.shifted.jacobi_weight = 0.6;
+        HelmholtzLodModel vcycle_model =
+            HelmholtzLodModel::build(vcycle_config);
+        const auto &vcycle_diagnostics =
+            vcycle_model.correctors().diagnostics;
+        const ComplexMatrix vcycle_basis(
+            vcycle_model.corrected_trial_basis());
+        require(
+            (vcycle_basis - primal_dense).norm()
+                / std::max(1.0, primal_dense.norm()) < 1e-8,
+            "V-cycle shifted GMRES disagrees with DirectSaddle");
+        require(vcycle_diagnostics.max_vcycle_levels >= 2,
+                "V-cycle regression test did not use a multilevel hierarchy");
+        require(vcycle_diagnostics.max_vcycle_coarse_dofs
+                    < vcycle_diagnostics.max_vcycle_finest_dofs,
+                "V-cycle coarse grid is not smaller than the fine patch grid");
+        require(vcycle_diagnostics.max_vcycle_relative_residual < 0.5,
+                "one V-cycle does not sufficiently reduce the shifted residual");
+        require(vcycle_diagnostics.max_gmres_relative_residual < 1e-10,
+                "V-cycle GMRES true residual is too large");
+        require(vcycle_diagnostics.direct_fallbacks == 0,
+                "V-cycle regression test unexpectedly used a fallback");
+
+        HelmholtzProblemConfig identity_config = gmres_config;
+        identity_config.patch_solver.shifted.inverse =
+            HelmholtzShiftedInverseKind::Identity;
+        HelmholtzLodModel identity_model =
+            HelmholtzLodModel::build(identity_config);
+        const auto &identity_diagnostics =
+            identity_model.correctors().diagnostics;
+        const ComplexMatrix identity_basis(
+            identity_model.corrected_trial_basis());
+        require(
+            (identity_basis - primal_dense).norm()
+                / std::max(1.0, primal_dense.norm()) < 1e-8,
+            "unpreconditioned GMRES correctors disagree with DirectSaddle");
+        require(identity_diagnostics.max_gmres_relative_residual < 1e-10,
+                "unpreconditioned GMRES true residual is too large");
+        require(identity_diagnostics.gmres_max_iterations
+                    > gmres_diagnostics.gmres_max_iterations,
+                "unpreconditioned GMRES unexpectedly used no extra iterations");
+        require(identity_diagnostics.direct_fallbacks == 0,
+                "unpreconditioned GMRES unexpectedly used a fallback");
         std::cout << "Helmholtz correctors: primal=" << diagnostics.max_primal_residual
                   << " adjoint=" << diagnostics.max_adjoint_residual
                   << " constraint=" << diagnostics.max_constraint_residual << '\n';
