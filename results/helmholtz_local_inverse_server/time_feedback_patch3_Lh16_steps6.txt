@@ -1,0 +1,23 @@
+	Command being timed: "/home/sutai/code/LOD2d-CPP/build-server/benchmarks/bench_helmholtz_local_inverse --k=2 --initial-H=3 --fine-level=16 --steps=6 --ell=3 --mark=argmax-patch --neighbor-layers=0 --basis=trial --denominators=matched --element-out=/home/sutai/code/LOD2d-CPP/results/helmholtz_local_inverse_server/elements_feedback_patch3_Lh16_steps6.csv --mesh-out=/home/sutai/code/LOD2d-CPP/results/helmholtz_local_inverse_server/mesh_feedback_patch3_Lh16_steps6.csv --format=csv --check"
+	User time (seconds): 56462.70
+	System time (seconds): 2577.14
+	Percent of CPU this job got: 1630%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:00:22
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 248621176
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 1419284679
+	Voluntary context switches: 3640413
+	Involuntary context switches: 112287
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 120
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

@@ -1,0 +1,1 @@
+/home/sutai/code/LOD2d-CPP/build-server/benchmarks/bench_helmholtz_local_inverse --k=2 --initial-H=3 --fine-level=14 --steps=5 --ell=3 --mark=single-chain --only-final --basis=trial --denominators=element-matched --format=csv --check
