@@ -25,6 +25,20 @@ target_link_libraries(bench_helmholtz_k PRIVATE lod2d_core)
 add_executable(bench_helmholtz_manufactured bench_helmholtz_manufactured.cpp)
 target_link_libraries(bench_helmholtz_manufactured PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_local_inverse bench_helmholtz_local_inverse.cpp)
+target_link_libraries(bench_helmholtz_local_inverse PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_local_inverse_smoke
+        COMMAND bench_helmholtz_local_inverse
+            --k=2 --initial-H=2 --fine-level=7 --steps=2 --ell=2
+            --mark=single-chain --check --format=csv)
+    add_test(NAME helmholtz_local_inverse_server_smoke
+        COMMAND bench_helmholtz_local_inverse
+            --k=2 --initial-H=2 --fine-level=7 --steps=1 --ell=2
+            --mark=argmax-patch --basis=trial --denominators=matched
+            --check --format=csv)
+endif()
+
 add_executable(bench_helmholtz_adaptive bench_helmholtz_adaptive.cpp)
 target_link_libraries(bench_helmholtz_adaptive PRIVATE lod2d_core)
 

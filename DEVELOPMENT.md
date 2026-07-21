@@ -1536,3 +1536,264 @@ solve, and peak memory fall by about 29%, 45%, and 59%, respectively.
 `H=3,h=7` remains slightly slower because grouping overhead dominates tiny
 LU factors, so automatic/default reuse would be premature. The complete
 Schwarz method still does not cross fine SparseLU wall time; M5 remains open.
+
+## 28. Helmholtz Local Inverse Inequality on Graded NVB Meshes
+
+Implemented and run locally on 2026-07-21. The experiment follows
+`HELMHOLTZ_LOCAL_INVERSE_NONQUASI_PLAN.md` and deliberately distinguishes the
+same-element quotient from the more robust one-layer-patch denominator. It
+does not turn the numerical observations into a proof.
+
+### Implementation and nesting boundary
+
+`bench_helmholtz_local_inverse` starts from the compatible unit-square NVB
+mesh and, at every iteration, marks only a deterministic subset of the
+currently finest leaves. The resulting triangulation is globally conforming
+and shape regular but increasingly non-quasi-uniform. The benchmark computes
+the coarse P1, corrected trial, and corrected test spaces for
+
+```text
+Q_T = H_T sup ||grad G a||_T / ||G a||_T
+```
+
+and for the one-layer-patch denominator
+
+```text
+Q_T_patch = H_T sup ||grad G a||_T / ||G a||_{omega_T^1}.
+```
+
+The complex local matrices are `G^* S_T G` and `G^* M_T G`; they use
+`adjoint()`, are checked for Hermitian defects, and are reduced to the positive
+mass eigenspace before the maximum eigenvalue is computed. Trial and test are
+kept as separate output rows even though they are conjugates for the current
+real coefficients.
+
+The fixed-master-fine-space invariant is checked independently on every
+coarse mesh. The reported nesting residual is the maximum of:
+
+1. prolongation errors for the constant, `x`, and `y` coarse P1 functions;
+2. unique fine-element parent mapping and parent/child area conservation;
+3. CG/DG prolongation consistency;
+4. `||I_H P_H-I||`.
+
+The fine mesh is also compared with the canonical global-NVB mesh at the
+requested fixed level. Across all three primary mesh families the largest
+nesting residual was `7.70e-15`, every canonical fine-mesh comparison passed,
+and the maximum neighboring-element diameter ratio remained `sqrt(2)`. Thus
+the experiment verifies `V_H subset V_h` algebraically rather than inferring
+it from matching coordinates.
+
+### Fixed-fine-space grading scan
+
+The primary run used `k=2`, initial coarse level 3, fixed fine level 12,
+`ell=3`, six local refinement steps, and a 25% deterministic fraction of the
+finest leaves nearest `(0.25,0.25)`. `Gamma=H_max/H_min` increased from 1 to 8
+while the local resolution ratio `q_max` increased from `0.0442` to `0.3536`.
+
+| step | level range | Gamma | q_max | coarse P1 | coarse with wrong global H | trial element | trial patch1 |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 0 | 3:3 | 1.000 | 0.0442 | 8.4853 | 8.4853 | 64.2240 | 3.4018 |
+| 1 | 3:4 | 1.414 | 0.0625 | 8.4853 | 12.0000 | 99.6996 | 3.9427 |
+| 2 | 3:5 | 2.000 | 0.0884 | 8.4853 | 16.9706 | 97.5129 | 6.0012 |
+| 3 | 3:6 | 2.828 | 0.1250 | 8.4853 | 24.0000 | 101.7924 | 10.9635 |
+| 4 | 3:7 | 4.000 | 0.1768 | 8.4853 | 33.9411 | 101.6788 | 12.7162 |
+| 5 | 3:8 | 5.657 | 0.2500 | 8.4853 | 48.0000 | 101.4298 | 12.3763 |
+| 6 | 3:9 | 8.000 | 0.3536 | 8.4853 | 67.8823 | 101.4366 | 12.4135 |
+
+The `C=0` value remains exactly `8.485281` when each element uses its own
+`H_T`. The deliberately wrong global-`H_max` control grows by the full grading
+ratio. This validates the local diameter, child map, and generalized
+eigenvalue pipeline. The trial/test element maximum reaches an apparent
+fixed-`h` plateau near 101; its argmax stays on a level-3 element rather than
+inside the finest core.
+
+The final values for `fraction`, `single-chain`, and `boundary-chain` were:
+
+| family | Gamma | trial element | trial patch1 |
+|---|---:|---:|---:|
+| fraction | 8 | 101.4366 | 12.4135 |
+| single-chain | 8 | 101.4366 | 12.4135 |
+| boundary-chain | 8 | 103.3774 | 9.8501 |
+
+The fraction `theta=0.10,0.25,0.50` endpoint patch values were
+`12.4135,12.4135,12.7699`. Trial and test values agree to roundoff. Petrov,
+corrector, and constraint residuals over the primary data were at most
+`1.25e-14`, `5.91e-15`, and `1.18e-15`; the maximum local Hermitian defect and
+eigen residual were `5.16e-16` and `1.41e-13`.
+
+### Fine-space, mass-rank, oversampling, and wave-number probes
+
+Fixing the final fraction-family coarse mesh (levels 3:9) and refining only
+the master fine space gave:
+
+| fine level | q_max | trial element | trial patch1 | max nesting residual |
+|---:|---:|---:|---:|---:|
+| 11 | 0.5000 | 97.3016 | 11.9796 | 2.03e-15 |
+| 12 | 0.3536 | 101.4366 | 12.4135 | 7.37e-15 |
+| 13 | 0.2500 | 124.3089 | 12.4487 | 4.78e-15 |
+| 14 | 0.1768 | 132.5017 | 12.5692 | 3.76e-14 |
+
+The patch-denominator value is resolved to a narrow range, whereas the
+same-element value is not converged. Its local mass condition number reaches
+roughly `1e11-1e12`. Changing the positive-mass threshold from `1e-10` to
+`1e-12` to `1e-14` changes the final element value from `82.88` to `101.44`
+to `116.85`; the corresponding patch values are `10.62`, `12.41`, and
+`12.44`. The `1e-14` run is retained as a diagnostic rather than a passing
+gate because its energy-identity roundoff exceeds the registered tolerance.
+
+For `ell=2,3,4`, the final element values were `93.50,101.44,97.28` and the
+patch values were `9.85,12.41,11.21`; no systematic oversampling divergence
+was observed. Resolution-compatible wave-number endpoints were:
+
+| k | initial/final levels | k H_max | Gamma | initial/final element | initial/final patch1 |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 3:3 -> 3:9 | 0.5 | 8 | 65.18 / 101.75 | 3.39 / 12.58 |
+| 2 | 3:3 -> 3:9 | 1.0 | 8 | 64.22 / 101.44 | 3.40 / 12.41 |
+| 4 | 5:5 -> 5:9 | 1.0 | 4 | 71.81 / 76.77 | 8.91 / 12.89 |
+
+Fine level 14 completed in 1:58 with peak RSS `5,971,068 KiB`. The planned
+fine-level-15 endpoint was killed by signal 9 after reaching `11,645,504 KiB`;
+it is a server continuation, not a numerical failure.
+
+### Feedback refinement at the observed maximum
+
+The initial feedback grading experiment selected the next marked set from
+the inverse-constant maximizer rather than from a prescribed geometric chain.
+For iteration `j`, its two feedback rules were
+
+```text
+T*_j = argmax_T Q_T             (argmax-element),
+T*_j = argmax_T Q_T_patch1      (legacy argmax-patch run),
+M_j  = {T*_j} or N_1(T*_j),
+T_{j+1} = NVB-close(refine(T_j, M_j)).
+```
+
+Ties are broken by the stable element index. `N_1(T*_j)` is the one-layer
+vertex patch; the `n=0` runs mark only `T*_j`. Unlike the earlier geometric
+families, the feedback target is allowed to be at any current level. This is
+essential because the observed maximum need not lie on a finest element.
+
+All runs used `k=2`, initial level 3, fixed fine level 12, `ell=3`, and six
+feedback steps. The endpoint comparison is:
+
+| feedback quotient | neighbor layers | elements | level range | Gamma | trial element | trial patch1 |
+|---|---:|---:|---:|---:|---:|---:|
+| element | 0 | 28 | 3:5 | 2.000 | 83.8179 | 4.1160 |
+| element | 1 | 105 | 5:7 | 2.000 | 76.9891 | 12.3634 |
+| patch1 | 0 | 25 | 3:8 | 5.657 | 88.0053 | 8.6512 |
+| patch1 | 1 | 70 | 3:7 | 4.000 | 94.0259 | 12.3047 |
+
+The `argmax-patch,n=0` level ranges evolve as
+`3:3, 3:4, 3:5, 3:6, 3:6, 3:7, 3:8`; it therefore gives the strongest
+feedback-driven non-quasi-uniform grid with the fewest extra elements. Its
+patch maxima are `3.4018, 3.8849, 9.3743, 8.7185, 6.3599, 8.9497, 8.6512`:
+after the initial jump they fluctuate but do not grow monotonically with
+`Gamma`. Marking a one-layer neighborhood is substantially less local. In
+the element-feedback case it eventually raises the minimum level from 3 to 5,
+so `Gamma` falls from its intermediate value 4 back to 2. This option is useful
+as a robustness comparison, but not as the primary stress test for global
+non-quasi-uniformity.
+
+Every feedback row retained the canonical fixed fine mesh. The maximum
+nesting residual was `7.99e-15`, the maximum Petrov residual was `1.28e-14`,
+and the maximum constraint residual was `1.11e-15`. Hence feedback selection
+and NVB closure preserve the required exact discrete inclusion
+`V_H subset V_h` to roundoff.
+
+### Oversampling-matched denominator and deep fine space
+
+The one-layer denominator above does not match an `ell=3` localized
+corrector. The benchmark now reports all three diagnostics
+
+```text
+Q_T,0   = H_T sup ||grad v||_T / ||v||_T,
+Q_T,1   = H_T sup ||grad v||_T / ||v||_{omega_T^1},
+Q_T,ell = H_T sup ||grad v||_T / ||v||_{omega_T^ell}.
+```
+
+`argmax-patch` now means `argmax_T Q_T,ell`; `patch1` remains in the output
+only as a narrower-denominator diagnostic. Thus the denominator region uses
+the same coarse-element patch construction and radius as the corrector
+oversampling region.
+
+The master fine mesh is global and fixed across coarse iterations. For a
+coarse element `T`, the measured separation is
+
+```text
+q_T = max_{t subset T} h_t / H_T,    q_max = max_T q_T.
+```
+
+Under this NVB level convention a level difference of two approximately
+halves the diameter, so selecting `L_h` is based on the finest coarse level:
+`q_max` must be small for the level-`L_max` elements, not merely for the
+initial coarse mesh. To isolate the `h` effect, a single fixed level-`3:5`
+coarse mesh (21 elements) was evaluated at `L_h=11,12,13`:
+
+| fine level | q_max | trial element | trial patch1 | trial patch3 | nesting residual |
+|---:|---:|---:|---:|---:|---:|
+| 11 | 0.125000 | 94.1403 | 5.0627 | 3.5289 | 1.89e-15 |
+| 12 | 0.088388 | 94.2433 | 4.8820 | 3.5181 | 4.99e-15 |
+| 13 | 0.062500 | 184.1021 | 4.9155 | 3.5124 | 5.62e-15 |
+
+The oversampling-matched `patch3` maximum changes by only `0.47%` from
+`L_h=11` to `L_h=13` and by `0.16%` over the last refinement. It is therefore
+resolved at `h/H_T <= 1/16` on this mesh. In contrast, the same-element value
+doubles at `L_h=13`, reinforcing the earlier warning that the strict
+same-element quotient is sensitive to fine-scale near-null mass directions.
+
+An `L_h=13`, three-step `argmax-patch`, target-only feedback run also passed.
+Its final grid had levels `3:5`, `q_max=0.0625`, and trial maxima
+`184.5663`, `11.1407`, and `3.5414` for element, patch1, and patch3
+denominators. The patch3 trajectory was
+`3.1806, 3.5243, 3.1863, 3.5414`; it stayed bounded while driving the mesh.
+Every state used the canonical fixed fine mesh and the largest nesting
+residual was `3.82e-15`.
+
+The attempted `L_h=14` feedback run was terminated by signal 9 at
+`11,668,680 KiB` peak RSS after 4:18. It is retained as a documented memory
+limit. Since the successful `L_h=13` fixed-grid point already has
+`q_max=1/16` and the patch3 values have reached a tight plateau, this failure
+does not obstruct the local `h`-resolution conclusion.
+
+### Conclusion
+
+The strict same-element statement is **not numerically established** by this
+experiment. Its value depends strongly on fine-space resolution and on how
+near-null local mass directions are retained. The current data therefore do
+not justify a grading-independent same-element inverse constant.
+
+The oversampling-matched patch denominator is especially stable under the
+fixed-grid deep-`h` scan and remains near `3.5` there. The earlier one-layer
+form remains useful as a stricter diagnostic, but it should not be described
+as support-matched when `ell>1`. The correct statement is therefore: the
+matched patch form has encouraging resolved behavior, but the present local
+data are still insufficient to claim a uniform grading-independent theorem.
+
+`helmholtz_local_inverse_smoke` is registered in CTest. The full Release suite
+passes `17/17`. Raw summaries, per-element spectra, meshes, timing logs, and
+all auxiliary `h`, threshold, `ell`, and `k` scans are in
+`results/helmholtz_local_inverse/`.
+
+### EPYC server execution and performance path
+
+The local-inverse postprocessing now supports OpenMP dynamic scheduling over
+coarse elements and reduced server modes. `--basis=trial` avoids recomputing
+the conjugate test and coarse diagnostic spectra after a full calibration;
+`--denominators=matched` computes only `omega_T^ell`, while
+`element-matched` retains the strict element diagnostic as well. Defaults
+remain `all/all` for backward compatibility.
+
+On the local WSL `L_h=12` fixed-grid calibration, full analysis took
+`7.86 s` with one thread and `2.84 s` with eight threads. With eight threads,
+trial/matched mode took `2.40 s`; the inverse-analysis portion fell from
+about `154 ms` to `27 ms`, and the matched quotient was identical. A test of
+the server script itself gave `7.44,2.81,1.94 s` for 1,4,8 threads.
+
+`scripts/run_helmholtz_local_inverse_server.sh` is the reproducible entry
+point for the AMD EPYC 9554 / 377 GiB run. It performs a `8,16,32,64` thread
+pilot, fixed-coarse-grid `L_h=14,15,16` scan, and `patch3`-argmax feedback run
+at `L_h=16`. OpenMP threads are pinned to physical-core places with spread
+placement. Cases run sequentially and write success-only `.done` markers so
+long jobs can resume safely. The complete commands, acceptance criteria,
+memory escalation rule, and result-return list are in
+`HELMHOLTZ_LOCAL_INVERSE_SERVER_RUNBOOK.md`.

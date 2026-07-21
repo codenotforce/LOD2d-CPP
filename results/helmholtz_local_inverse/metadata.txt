@@ -1,0 +1,20 @@
+date_utc=2026-07-21T11:07:34Z
+git_commit=a45ee1802b57f3dc5bc1822327ceaa126d625954
+git_status_begin
+ M benchmarks/CMakeLists.txt
+?? HELMHOLTZ_ADAPTIVE_LOD_PLAN.md
+?? HELMHOLTZ_LOCAL_INVERSE_NONQUASI_PLAN.md
+?? HELMHOLTZ_LOD_PLAN.md
+?? HELMHOLTZ_PATCH_GMRES_PLAN.md
+?? benchmarks/bench_helmholtz_local_inverse.cpp
+?? results/helmholtz_local_inverse/
+?? scripts/run_helmholtz_local_inverse.sh
+git_status_end
+threads=8
+k=2
+initial_H=3
+fine_level=12
+steps=6
+ell=3
+marks=fraction single-chain boundary-chain
+mark_fraction=0.25
