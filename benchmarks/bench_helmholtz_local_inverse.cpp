@@ -920,8 +920,23 @@ int main(int argc, char **argv) {
                     }
                     if (options.check && (maximum_defect > 1e-10
                                           || maximum_eigen_residual > 1e-8
-                                          || (!patch_denominator && maximum_identity_error > 1e-8)))
-                        throw std::runtime_error("local Hermitian eigenproblem check failed");
+                                          || (!patch_denominator && maximum_identity_error > 1e-8))) {
+                        double maximum_mass_condition = 0.0;
+                        for (const LocalValue &value : values)
+                            maximum_mass_condition = std::max(
+                                maximum_mass_condition, value.mass_condition);
+                        std::ostringstream message;
+                        message << std::setprecision(17)
+                                << "local Hermitian eigenproblem check failed"
+                                << " iteration=" << iteration
+                                << " basis=" << basis_name
+                                << " denominator=" << denominator
+                                << " hermitian_defect=" << maximum_defect
+                                << " eigen_residual=" << maximum_eigen_residual
+                                << " energy_identity_error=" << maximum_identity_error
+                                << " max_mass_condition=" << maximum_mass_condition;
+                        throw std::runtime_error(message.str());
+                    }
                     SummaryRow row;
                     row.iteration = iteration;
                     row.basis = basis_name;

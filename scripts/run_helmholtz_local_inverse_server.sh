@@ -76,7 +76,7 @@ run_hscan() {
     run_case "hscan_Lh${level}" "$THREADS" \
       --k="$K" --initial-H="$INITIAL_H" --fine-level="$level" \
       --steps="$HSCAN_STEPS" --ell="$ELL" --mark=single-chain --only-final \
-      --basis=trial --denominators=element-matched
+      --basis=trial --denominators=matched
   done
 }
 
@@ -85,7 +85,7 @@ run_feedback() {
   run_case "$tag" "$THREADS" \
     --k="$K" --initial-H="$INITIAL_H" --fine-level="$FINE_LEVEL" \
     --steps="$STEPS" --ell="$ELL" --mark=argmax-patch --neighbor-layers=0 \
-    --basis=trial --denominators=element-matched \
+    --basis=trial --denominators=matched \
     --element-out="$RESULT_DIR/elements_${tag}.csv" \
     --mesh-out="$RESULT_DIR/mesh_${tag}.csv"
 }

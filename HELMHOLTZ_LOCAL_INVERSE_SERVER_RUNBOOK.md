@@ -45,6 +45,8 @@ numactl --hardware 2>/dev/null || true
 
 不要在同一节点上同时启动多个深细网格案例。脚本内部对粗单元并行，而 `h` 扫描案例之间保持串行，以控制峰值内存。
 
+深 `h` 主实验必须使用 `--denominators=matched`。同单元分母的局部质量矩阵会随 `h/H_T` 变小而出现近零方向；它已在本地实验中表现出明显的阈值敏感性，不应让这一诊断量阻断 oversampling 匹配的 `patch3` 主实验。`MODE=all` 中的低成本完整校准仍使用 `all/all` 检查同单元装配。
+
 ## 3. 编译与校准
 
 脚本会自动用 Release、`-O3 -march=native` 和 OpenMP 编译，并运行 `helmholtz_local_inverse_smoke`：
@@ -96,6 +98,8 @@ H_T\sup_{0\ne v\in V_{H,\ell}^{\mathrm{ms}}}
 - 最后两级 `patch3` 最大值相对变化不超过 `2%`；
 - `fixed_fine_mesh=1`，`nesting_residual <= 1e-10`；
 - Petrov、corrector、constraint 和局部特征值残差通过程序内置 `--check`。
+
+服务器主脚本只输出 `patch3` 行。如果还要研究同单元诊断，应另行在较浅的 `L_h` 上运行 `--denominators=element-matched`，并单独解释质量条件数，不能把它与 `patch3` 的通过/失败混在一起。
 
 如果 `L_h=16` 的峰值 RSS 小于 `120 GiB` 且最后两点尚未进入平台，可以追加：
 
@@ -164,3 +168,13 @@ results/helmholtz_local_inverse_server/
 - `*.done`：成功完成标记。
 
 回传后再把服务器结果追加到 `DEVELOPMENT.md`。不要覆盖当前本地 WSL 结果目录。
+
+## 8. 深细网格出现 local Hermitian check 失败时
+
+旧版服务器脚本曾在 `hscan` 和 `feedback` 中使用 `element-matched`。若日志命令包含
+
+```text
+--denominators=element-matched
+```
+
+请先 `git pull` 更新脚本。失败案例不会产生 `.done` 文件，直接重新执行原来的 `MODE=hscan` 或 `MODE=feedback` 命令即可；脚本会覆盖该案例的残缺 CSV。新版报错同时给出 iteration、basis、denominator、Hermitian defect、eigen residual、energy identity error 和最大质量条件数，便于区分主 `patch3` 失败与同单元诊断病态。

@@ -1797,3 +1797,13 @@ placement. Cases run sequentially and write success-only `.done` markers so
 long jobs can resume safely. The complete commands, acceptance criteria,
 memory escalation rule, and result-return list are in
 `HELMHOLTZ_LOCAL_INVERSE_SERVER_RUNBOOK.md`.
+
+The first server `L_h=16` feedback attempt exposed a configuration issue:
+the command used `--denominators=element-matched`, so the known ill-conditioned
+same-element mass problem could trip the hard eigenproblem check before the
+support-matched `patch3` experiment completed. Deep-`h` server `hscan` and
+`feedback` modes now use `--denominators=matched`; the small full calibration
+continues to test `all/all`. Failure messages now identify the iteration,
+basis, denominator, Hermitian defect, eigen residual, energy-identity error,
+and maximum retained mass condition number instead of reporting a generic
+local-eigenproblem failure.
