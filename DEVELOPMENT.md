@@ -1769,8 +1769,9 @@ as support-matched when `ell>1`. The correct statement is therefore: the
 matched patch form has encouraging resolved behavior, but the present local
 data are still insufficient to claim a uniform grading-independent theorem.
 
-`helmholtz_local_inverse_smoke` is registered in CTest. The full Release suite
-passes `17/17`. Raw summaries, per-element spectra, meshes, timing logs, and
+`helmholtz_local_inverse_smoke` and its reduced server-mode counterpart are
+registered in CTest. The full Release suite passes `18/18`. Raw summaries,
+per-element spectra, meshes, timing logs, and
 all auxiliary `h`, threshold, `ell`, and `k` scans are in
 `results/helmholtz_local_inverse/`.
 
@@ -1807,3 +1808,73 @@ continues to test `all/all`. Failure messages now identify the iteration,
 basis, denominator, Hermitian defect, eigen residual, energy-identity error,
 and maximum retained mass condition number instead of reporting a generic
 local-eigenproblem failure.
+
+### EPYC server results
+
+The complete AMD EPYC 9554 / 377 GiB run was returned on 2026-07-22 in
+`results/helmholtz_local_inverse_server/`. Every planned case has a `.done`
+marker and exit status zero. For the fixed level-`3:8` coarse grid with
+`Gamma=H_max/H_min=4 sqrt(2)`, define
+
+```text
+C_inv,3(h) = max_T H_T sup_{0 != v in V_H,3^ms}
+             ||grad v||_T / ||v||_{omega_T^3},
+q_max      = max_T max_{t subset T} h_t/H_T.
+```
+
+The deep fine-space scan is:
+
+| fine level | q_max | same-element | patch3 | nesting residual | wall time | peak RSS |
+|---:|---:|---:|---:|---:|---:|---:|
+| 14 | 0.125000 | 132.0481 | 3.2019028413 | 3.80e-14 | 28.60 s | 18.2 GiB |
+| 15 | 0.088388 | 143.3774 | 3.2017193578 | 2.96e-14 | 2:58 | 78.4 GiB |
+| 16 | 0.062500 | 162.1273 | 3.2013850546 | 1.38e-13 | 16:08 | 180.8 GiB |
+
+Thus
+
+```text
+|C_inv,3(L15)-C_inv,3(L14)| / C_inv,3(L14) = 5.73e-5,
+|C_inv,3(L16)-C_inv,3(L15)| / C_inv,3(L15) = 1.044e-4,
+```
+
+and the total `L_h=14 -> 16` change is only `1.617e-4` (`0.01617%`).
+The preregistered `2%` fine-space plateau gate is passed by more than two
+orders of magnitude. At `q_max=1/16`, the resolved numerical statement is
+
+```text
+||grad v||_{L2(T)} <= 3.202 H_T^{-1} ||v||_{L2(omega_T^3)}
+```
+
+for every tested coarse element and discrete trial LOD function. The number
+`3.202` is an experimental upper bound for this mesh family, not a proved
+uniform constant. In contrast, the same-element diagnostic increases by
+`22.78%` from level 14 to 16 and its retained mass condition reaches
+`5.57e11`; it remains unsuitable as the main inequality.
+
+The successful `L_h=16` matched-denominator feedback trajectory is
+
+```text
+C_inv,3^(j) = 3.178899, 3.522896, 3.184477, 3.539848,
+              3.184809, 3.539944, 3.189363,
+```
+
+so `3.1788 <= C_inv,3^(j) <= 3.5400` for `j=0,...,6`. The maximizer moves
+among symmetry-related physical-boundary elements. Consequently this feedback
+family ends at levels `3:5` and `Gamma=2`; it supports boundedness under the
+tested feedback rule but is not the strong global-grading stress test. The
+fixed `3:8` scan above supplies that evidence.
+
+Every server row has `fixed_fine_mesh=1`; the largest nesting, primal
+corrector, and constraint residuals are `1.38e-13`, `1.32e-13`, and
+`6.70e-15`. The neighboring diameter ratio remains `sqrt(2)`, and patch3
+Hermitian/eigen residuals remain at roundoff. The thread pilot gives
+`1.14,0.84,0.57,0.59 s` for `8,16,32,64` threads, confirming 32 threads as
+the best tested setting. The feedback run takes `1:00:22` and peaks at
+`237.1 GiB`; because level 16 is already converged and exceeds the runbook's
+`120 GiB` escalation gate, level 17 should not be attempted on this server.
+
+The final numerical conclusion is conditional but sharp: the data strongly
+support an `h`-resolved oversampling-matched patch inverse inequality with
+`C_inv,3` of order `3.2-3.54` on the tested graded NVB families. They do not
+establish a theorem uniform over all admissible graded meshes, and they do not
+support replacing `omega_T^3` by `T` in the denominator.

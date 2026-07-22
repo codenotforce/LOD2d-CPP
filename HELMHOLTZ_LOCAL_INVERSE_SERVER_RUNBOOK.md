@@ -178,3 +178,15 @@ results/helmholtz_local_inverse_server/
 ```
 
 请先 `git pull` 更新脚本。失败案例不会产生 `.done` 文件，直接重新执行原来的 `MODE=hscan` 或 `MODE=feedback` 命令即可；脚本会覆盖该案例的残缺 CSV。新版报错同时给出 iteration、basis、denominator、Hermitian defect、eigen residual、energy identity error 和最大质量条件数，便于区分主 `patch3` 失败与同单元诊断病态。
+
+## 9. 2026-07-22 已完成服务器结果
+
+EPYC 9554 实验已经完成，原始数据位于 `results/helmholtz_local_inverse_server/`。固定等级 `3:8` 粗网格的结果为：
+
+| `L_h` | `q_max` | `C_inv,3` | wall time | peak RSS |
+|---:|---:|---:|---:|---:|
+| 14 | 0.125000 | 3.2019028413 | 28.60 s | 18.2 GiB |
+| 15 | 0.088388 | 3.2017193578 | 2:58 | 78.4 GiB |
+| 16 | 0.062500 | 3.2013850546 | 16:08 | 180.8 GiB |
+
+最后两级变化仅 `0.01044%`，已经通过 `2%` 平台门槛。反馈实验的 `C_inv,3` 始终位于 `[3.1788,3.5400]`，峰值内存约 `237.1 GiB`。由于 `L_h=16` 已经收敛且内存超过升级门槛，不运行 `L_h=17`。数学解释和残差汇总见 `DEVELOPMENT.md` 第 28 节。
