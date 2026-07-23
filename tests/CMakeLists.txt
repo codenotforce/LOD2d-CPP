@@ -33,6 +33,18 @@ add_executable(test_helmholtz_interp test_helmholtz_interp.cpp)
 target_link_libraries(test_helmholtz_interp PRIVATE lod2d_core)
 add_test(NAME helmholtz_interp COMMAND test_helmholtz_interp)
 
+add_executable(test_helmholtz_hp_patch test_helmholtz_hp_patch.cpp)
+target_link_libraries(test_helmholtz_hp_patch PRIVATE lod2d_core)
+add_test(NAME helmholtz_hp_patch COMMAND test_helmholtz_hp_patch)
+
+add_executable(test_helmholtz_hp_fem test_helmholtz_hp_fem.cpp)
+target_link_libraries(test_helmholtz_hp_fem PRIVATE lod2d_core)
+add_test(NAME helmholtz_hp_fem COMMAND test_helmholtz_hp_fem)
+
+add_executable(test_helmholtz_hp_model test_helmholtz_hp_model.cpp)
+target_link_libraries(test_helmholtz_hp_model PRIVATE lod2d_core)
+add_test(NAME helmholtz_hp_model COMMAND test_helmholtz_hp_model)
+
 add_executable(test_helmholtz_corrector test_helmholtz_corrector.cpp)
 target_link_libraries(test_helmholtz_corrector PRIVATE lod2d_core)
 add_test(NAME helmholtz_corrector COMMAND test_helmholtz_corrector)

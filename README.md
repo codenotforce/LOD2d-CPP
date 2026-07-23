@@ -96,6 +96,7 @@ in [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md).
 ### Helmholtz LOD
 
 - complex P1 finite elements with homogeneous impedance Robin boundaries;
+- continuous P1/P2/P3 fine spaces for direct-saddle hp-corrector experiments;
 - globally nested NVB coarse and fine spaces;
 - primal and adjoint localized correctors;
 - two-sided Petrov-Galerkin LOD;
@@ -152,6 +153,7 @@ Each document has one role:
 |---|---|
 | [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md) | User guide for building, running, and configuring Helmholtz LOD |
 | [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md) | User guide for the implemented stage-1 adaptive experiment |
+| [HELMHOLTZ_HP_SERVER_RUNBOOK.md](HELMHOLTZ_HP_SERVER_RUNBOOK.md) | Build, validation, smoke, `h=12`, and deep `h=12,14` hp-LOD server runs |
 | [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md) | Benchmark authoring, timing, memory, validation, and output conventions |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Chronological implementation decisions, measured results, rejected experiments, and remaining engineering work |
 
@@ -165,6 +167,7 @@ User-facing command instructions belong in the corresponding guide.
 | Elliptic LOD pipeline | Implemented and regression-tested |
 | Elliptic repeated-RHS reuse | Implemented |
 | Helmholtz Petrov-Galerkin foundation | Implemented |
+| Helmholtz continuous hp fine-space experiment | P1/P2/P3 implemented; deep server matrix pending |
 | Helmholtz patch DirectSaddle/DirectSchur | Implemented; DirectSaddle remains the default |
 | Shifted-GMRES and geometric V-cycle | Correct experimental paths; not runtime defaults |
 | Fine-space two-level Schwarz | Experimental through stage S4e |

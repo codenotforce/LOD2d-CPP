@@ -1878,3 +1878,120 @@ support an `h`-resolved oversampling-matched patch inverse inequality with
 `C_inv,3` of order `3.2-3.54` on the tested graded NVB families. They do not
 establish a theorem uniform over all admissible graded meshes, and they do not
 support replacing `omega_T^3` by `T` in the denominator.
+
+## 29. Continuous hp Helmholtz Fine Space and Single-Patch Corrector
+
+The first three implementation steps of
+`HELMHOLTZ_HP_CORRECTOR_CONVERGENCE_PLAN.md` were completed on 2026-07-24.
+The implementation deliberately stops before the global hp
+Petrov-Galerkin LOD model.
+
+The new `HpTriSpace` supports continuous triangular `P1`, `P2`, and `P3`
+spaces on globally conforming NVB meshes. Global numbering contains vertex
+DOFs, consistently oriented shared-edge DOFs, and element-interior DOFs.
+A nodal Vandermonde basis is used only for these low orders. Tensor
+Gauss-Legendre quadrature under a Duffy map integrates triangle terms, and
+one-dimensional Gauss quadrature integrates physical Robin edges.
+
+`HelmholtzHpOperators` assembles
+
+```text
+A_hp = K_hp - kappa^2 M_hp - i kappa R_hp.
+```
+
+It also provides fine-hp load assembly, sparse-LU solution, and error
+integration. For the homogeneous-Robin manufactured solution
+
+```text
+u(x,y) = phi(x) phi(y) exp(i kappa x),
+phi(t) = 16 t^2 (1-t)^2,
+```
+
+the small three-grid regression observed energy rates
+`0.743, 1.972, 2.738` for `p=1,2,3`. The `p=1` sequence is still
+pre-asymptotic; these numbers are regression evidence, not the planned
+final convergence study.
+
+The hp interpolation path constructs the coarse P1 nodal injection
+`P_Hhp` and the mixed-moment quasi-interpolation
+`I_H=E_H Pi_H^dg`. It checks `I_H P_Hhp=I` during construction. At `p=1`,
+the hp stiffness, mass, Robin matrix, injection, and quasi-interpolation
+agree with the existing P1 implementation to the test tolerances.
+
+`HelmholtzHpPatchAssembler` then restricts the global hp operators to one
+patch. A DOF is retained exactly when all globally incident fine elements
+belong to the patch. This removes every high-order artificial-boundary DOF
+while retaining physical Robin-boundary DOFs. The existing
+`HelmholtzPatchSystem` and `DirectSaddle` solver are reused. Tests cover an
+interior target, a physical-boundary target, and a corner target; normalized
+primal, constraint, and adjoint residuals are below `2e-10`.
+
+Validation:
+
+```text
+cmake --build build --target test_helmholtz_hp_fem test_helmholtz_hp_patch -j 8
+./build/tests/test_helmholtz_hp_fem
+./build/tests/test_helmholtz_hp_patch
+ctest --test-dir build --output-on-failure
+```
+
+All 20 registered CTest cases passed at the HP3 boundary.
+
+## 30. hp Petrov-Galerkin LOD and H-Convergence Calibration
+
+HP4-HP6 were advanced on 2026-07-24. `HelmholtzHpLodModel` now owns the
+continuous `P1/P2/P3` fine space, hp interpolation, direct-saddle element
+correctors, two-sided trial/test bases, coarse Petrov-Galerkin factorization,
+and fine reference factorization. Repeated right-hand sides reuse all these
+objects. The `p=1` golden test compares the complete hp path with the existing
+P1 model; operator, basis, coarse-system, and solution differences are below
+`3e-9`.
+
+The fine-hp calibration at `k=4`, `L_h=4,6,8,10,12` gives:
+
+| p | final energy order | final L2 order |
+|---:|---:|---:|
+| 1 | 1.0001 | 1.9951 |
+| 2 | 1.9943 | 2.9895 |
+| 3 | 2.9988 | 4.0028 |
+
+Thus the hp basis, quadrature, Robin assembly, load, sparse solve, and exact
+error integration pass the prerequisite calibration.
+
+At `L_H=4`, `L_h=8`, the neighboring-localization differences
+`||u^ell-u^(ell-1)||_(1,k)` fall from about `0.135-0.177` at `ell=2` to
+`0.0070-0.0082` at `ell=3`, for `p=1,2,3`. At `ell=4` the patch already
+covers the full domain and the difference is zero. Primal, adjoint,
+constraint, and Petrov residuals remain between roughly `1e-16` and
+`2e-14`. The frozen local rule used below is therefore `ell=3`.
+
+The fixed `L_h=8`, `L_H=2,...,7` scan shows that P1 eventually approaches
+its fine-space floor. P2/P3 delay that floor. Last-three-point log fits are:
+
+| master fine | p | energy slope | energy R2 | L2 slope | L2 R2 |
+|---:|---:|---:|---:|---:|---:|
+| 8 | 2 | 1.9232 | 0.9980 | 3.2691 | 0.9978 |
+| 8 | 3 | 1.7904 | 0.9997 | 3.0303 | 0.9997 |
+| 10 | 2 | 1.5993 | 0.9975 | 2.7403 | 0.9981 |
+| 10 | 3 | 1.5972 | 0.9975 | 2.7374 | 0.9982 |
+
+The `L_h=10` fits use `L_H=4,5,6`. These data do not validate the
+preregistered `O(H)` energy and `O(H^2)` L2 hypothesis. They show a stable
+higher pre-asymptotic slope on the tested levels, while also showing that
+raising only the fine corrector degree from P2 to P3 does not raise the
+observed H order. No fit interval was selected after seeing the result.
+
+The coupled `L_h-L_H=4` scan reproduces the same qualitative behavior. The
+full preregistered `L_h=12`, `L_H=2,4,6,8` direct-saddle matrix is not a
+suitable local WSL job because large low-H patches and P3 sparse saddle
+factorizations dominate. It remains a server run:
+
+```text
+FULL=1 JOBS=8 ./scripts/run_helmholtz_hp_convergence_server.sh
+```
+
+Raw local CSV files and `/usr/bin/time -v` logs are in
+`results/helmholtz_hp/`. Until the server matrix passes the fine-floor,
+localization-floor, master-depth, and regression gates, the correct statement
+is that HP4 is complete and HP5-HP6 passed local correctness/calibration, not
+that the final asymptotic hypothesis has been numerically verified.

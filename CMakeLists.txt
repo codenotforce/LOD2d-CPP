@@ -42,6 +42,7 @@ add_library(lod2d_core STATIC
     src/mesh/refine.cpp
     src/mesh/edges.cpp
     src/fem/assemble_dg.cpp
+    src/fem/hp_triangle.cpp
     src/lod/quasi_interp.cpp
     src/helmholtz/manufactured.cpp
     src/lod/patches.cpp
@@ -58,6 +59,11 @@ add_library(lod2d_core STATIC
     src/helmholtz/shifted_laplacian.cpp
     src/helmholtz/patch_multigrid.cpp
     src/helmholtz/operators.cpp
+    src/helmholtz/hp_operators.cpp
+    src/helmholtz/hp_fem.cpp
+    src/helmholtz/hp_interpolation.cpp
+    src/helmholtz/hp_patch.cpp
+    src/helmholtz/hp_model.cpp
     src/helmholtz/corrector.cpp
     src/helmholtz/model.cpp
     src/helmholtz/adaptive/hierarchy.cpp

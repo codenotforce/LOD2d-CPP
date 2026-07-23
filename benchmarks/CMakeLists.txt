@@ -25,6 +25,9 @@ target_link_libraries(bench_helmholtz_k PRIVATE lod2d_core)
 add_executable(bench_helmholtz_manufactured bench_helmholtz_manufactured.cpp)
 target_link_libraries(bench_helmholtz_manufactured PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_hp_convergence bench_helmholtz_hp_convergence.cpp)
+target_link_libraries(bench_helmholtz_hp_convergence PRIVATE lod2d_core)
+
 add_executable(bench_helmholtz_local_inverse bench_helmholtz_local_inverse.cpp)
 target_link_libraries(bench_helmholtz_local_inverse PRIVATE lod2d_core)
 if(LOD2D_BUILD_TESTS)
