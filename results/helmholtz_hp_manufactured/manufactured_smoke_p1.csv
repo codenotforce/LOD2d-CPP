@@ -1,0 +1,2 @@
+study,p,H_level,h_level,ell,fine_dofs,H,h,exact_energy,exact_l2,fine_energy,fine_l2,lod_fine_energy,lod_fine_l2,delta,rate_energy,rate_l2,petrov_residual,corrector_residual,constraint_residual
+H,1,4,8,3,289,0.353553390593,0.0883883476483,0.898399093708,0.0562828997131,0.417641417258,0.0112167717964,0.784049234068,0.0497317157813,nan,nan,nan,2.11420821805e-15,7.73913697462e-16,2.3119286634e-16

@@ -171,7 +171,59 @@ Stop escalation if the previous level swaps, approaches the machine memory
 limit, or has not completed cleanly. Do not infer a completed case from a
 partial `.csv.tmp`.
 
-## 9. Result checks
+## 9. Manufactured-solution comparison
+
+The convergence benchmark already uses
+
+```text
+u(x,y) = phi(x) phi(y) exp(i k x),
+phi(t) = 16 t^2 (1-t)^2.
+```
+
+Both `u` and its normal derivative vanish on the square boundary, so it
+exactly satisfies the homogeneous impedance condition. The dedicated runner
+makes all three comparisons explicit:
+
+```text
+exact_*    = error between the LOD solution and the manufactured solution
+fine_*     = error between the fine Pp FEM solution and the manufactured solution
+lod_fine_* = error between the LOD solution and the fine Pp FEM solution
+```
+
+Start with:
+
+```bash
+chmod +x scripts/run_helmholtz_hp_manufactured_server.sh
+MODE=smoke \
+  ./scripts/run_helmholtz_hp_manufactured_server.sh
+```
+
+Then compare fixed master fine spaces `L_h=10,12,14`:
+
+```bash
+MODE=fixed \
+MASTER_FINE_LEVELS="10 12 14" \
+H_LEVELS=4,6,8 \
+DEGREES=1,2,3 \
+  ./scripts/run_helmholtz_hp_manufactured_server.sh
+```
+
+Run the coupled check separately:
+
+```bash
+MODE=coupled \
+COUPLED_H_LEVELS=2,4,6 \
+GAP=6 \
+DEGREES=1,2,3 \
+  ./scripts/run_helmholtz_hp_manufactured_server.sh
+```
+
+Use `MODE=all` to run both. Results are stored under
+`results/helmholtz_hp_manufactured/`; `manufactured_solution.txt` records
+the exact solution and the meaning of every error column. Existing `.done`
+cases are skipped, so the runner can resume safely.
+
+## 10. Result checks
 
 For each CSV:
 
@@ -192,7 +244,7 @@ The final H-order interpretation must also apply the fine-space and
 localization-floor gates in
 `HELMHOLTZ_HP_CORRECTOR_CONVERGENCE_PLAN.md`.
 
-## 10. Return results
+## 11. Return results
 
 From the workstation:
 

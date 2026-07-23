@@ -153,7 +153,7 @@ Each document has one role:
 |---|---|
 | [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md) | User guide for building, running, and configuring Helmholtz LOD |
 | [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md) | User guide for the implemented stage-1 adaptive experiment |
-| [HELMHOLTZ_HP_SERVER_RUNBOOK.md](HELMHOLTZ_HP_SERVER_RUNBOOK.md) | Build, validation, smoke, `h=12`, and deep `h=12,14` hp-LOD server runs |
+| [HELMHOLTZ_HP_SERVER_RUNBOOK.md](HELMHOLTZ_HP_SERVER_RUNBOOK.md) | Build, validation, deep-h, and manufactured-solution hp-LOD server runs |
 | [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md) | Benchmark authoring, timing, memory, validation, and output conventions |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Chronological implementation decisions, measured results, rejected experiments, and remaining engineering work |
 

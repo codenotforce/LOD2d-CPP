@@ -1,0 +1,9 @@
+u(x,y) = phi(x) phi(y) exp(i k x)
+phi(t) = 16 t^2 (1-t)^2
+k = 4
+boundary: d_n u - i k u = 0 on the complete boundary
+
+CSV errors:
+exact_energy, exact_l2       = ||u_exact - u_LOD||
+fine_energy, fine_l2         = ||u_exact - u_h^p||
+lod_fine_energy, lod_fine_l2 = ||u_h^p - u_LOD||
