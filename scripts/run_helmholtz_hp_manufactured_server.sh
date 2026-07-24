@@ -5,6 +5,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BUILD_DIR=${BUILD_DIR:-"$ROOT/build"}
 RESULT_DIR=${RESULT_DIR:-"$ROOT/results/helmholtz_hp_manufactured"}
 JOBS=${JOBS:-16}
+PATCH_THREADS=${PATCH_THREADS:-8}
+PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-8}
+export OMP_DYNAMIC=FALSE
 MODE=${MODE:-smoke}
 KAPPA=${KAPPA:-4}
 DEGREES=${DEGREES:-1,2,3}
@@ -22,7 +25,12 @@ if [[ -z "${ELL_BY_P:-}" ]]; then
     esac
 fi
 
-degree_tag=${DEGREES//,/}
+IFS=',' read -r -a degree_values <<< "$DEGREES"
+IFS=',' read -r -a ell_values <<< "$ELL_BY_P"
+if [[ ${#degree_values[@]} -ne ${#ell_values[@]} ]]; then
+    printf 'DEGREES and ELL_BY_P must have the same length\n' >&2
+    exit 2
+fi
 mkdir -p "$RESULT_DIR"
 
 cat >"$RESULT_DIR/manufactured_solution.txt" <<EOF
@@ -51,7 +59,9 @@ run_case() {
         printf 'Skipping completed case %s\n' "$name"
         return
     fi
-    /usr/bin/time -v "$BENCH" "$@" --check \
+    /usr/bin/time -v "$BENCH" "$@" \
+        --threads="$PATCH_THREADS" --progress="$PROGRESS_INTERVAL" \
+        --stream --check \
         >"$csv.tmp" 2>"$RESULT_DIR/$name.time"
     mv "$csv.tmp" "$csv"
     touch "$done_file"
@@ -59,17 +69,25 @@ run_case() {
 
 run_fixed() {
     for fine_level in $MASTER_FINE_LEVELS; do
-        run_case "manufactured_fixed_h${fine_level}_p${degree_tag}" \
-            --study=H --k="$KAPPA" --h="$fine_level" --p="$DEGREES" \
-            --H-levels="$H_LEVELS" --ell-by-p="$ELL_BY_P"
+        for index in "${!degree_values[@]}"; do
+            local degree=${degree_values[$index]}
+            local ell=${ell_values[$index]}
+            run_case "manufactured_fixed_h${fine_level}_p${degree}" \
+                --study=H --k="$KAPPA" --h="$fine_level" --p="$degree" \
+                --H-levels="$H_LEVELS" --ell-by-p="$ell"
+        done
     done
 }
 
 run_coupled() {
-    run_case "manufactured_coupled_gap${GAP}_p${degree_tag}" \
-        --study=coupled --k="$KAPPA" --p="$DEGREES" \
-        --H-levels="$COUPLED_H_LEVELS" --gap="$GAP" \
-        --ell-by-p="$ELL_BY_P"
+    for index in "${!degree_values[@]}"; do
+        local degree=${degree_values[$index]}
+        local ell=${ell_values[$index]}
+        run_case "manufactured_coupled_gap${GAP}_p${degree}" \
+            --study=coupled --k="$KAPPA" --p="$degree" \
+            --H-levels="$COUPLED_H_LEVELS" --gap="$GAP" \
+            --ell-by-p="$ell"
+    done
 }
 
 case "$MODE" in

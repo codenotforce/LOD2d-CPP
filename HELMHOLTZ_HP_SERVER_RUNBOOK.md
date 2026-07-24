@@ -10,9 +10,10 @@ The `deep` cases are intended for the AMD EPYC server with 377 GiB RAM.
 Use a local Linux filesystem, not an NFS-mounted build directory. Keep at
 least 20 GiB free for build products and result logs.
 
-The implementation currently solves patch problems sequentially. `JOBS`
-controls compilation only; increasing it does not increase corrector
-parallelism.
+`JOBS` controls compilation only. `PATCH_THREADS` controls independent
+corrector patch solves. Each worker owns a sparse saddle factorization and
+triplet buffers, so increasing `PATCH_THREADS` trades memory for wall time.
+Start with `PATCH_THREADS=8`; only increase it after checking peak RSS.
 
 ## 2. Clone or update
 
@@ -87,13 +88,13 @@ ctest --test-dir build --output-on-failure
 
 All tests must pass before starting a long scan. The hp model test checks
 `p=1` equivalence with the original P1 implementation and repeated-RHS
-corrector reuse.
+corrector reuse. It also compares serial and four-thread corrector`nassembly, coarse operators, and final LOD solutions.
 
 ## 6. Script permissions and smoke test
 
 ```bash
 chmod +x scripts/run_helmholtz_hp_convergence_server.sh
-MODE=smoke JOBS=16 \
+MODE=smoke JOBS=16 PATCH_THREADS=8 \
   ./scripts/run_helmholtz_hp_convergence_server.sh
 ```
 
@@ -105,16 +106,42 @@ results/helmholtz_hp/smoke_H4_h8.time
 results/helmholtz_hp/smoke_H4_h8.done
 ```
 
-The `.done` file is created only after a successful benchmark. The CSV is
-first written to `.tmp` and renamed after success, so interrupted runs do
-not look complete.
+The `.done` file is created only after a successful benchmark. Rows are
+flushed into `.csv.tmp` as each grid level completes, then the file is
+renamed to `.csv` after success. The `.time` file receives patch progress
+such as `correctors=16/128`. Heavy LOD scans are split by polynomial degree,
+so rerunning the same command skips every finished `p` case and resumes at
+the first missing `.done` file.
+
+Monitor a running case with:
+
+```bash
+tail -f results/helmholtz_hp/*.time
+watch -n 5 'free -h; ps -C bench_helmholtz_hp_convergence \
+  -o pid,etime,%cpu,rss,vsz,cmd --sort=-rss'
+```
+
+### Patch-thread tuning
+
+On the local WSL machine, the representative
+`p=3,L_H=4,L_h=10,ell=3` case produced:
+
+| patch threads | wall time | peak RSS | relative result |
+|---:|---:|---:|---|
+| 1 | 98.16 s | 425 MiB | baseline |
+| 8 | 34.70 s | 2.50 GiB | same errors, 2.83x faster |
+| 16 | 34.97 s | 4.68 GiB | no local speedup |
+
+The server has a different memory hierarchy, so pilot 8, 16, and 32 threads
+on one representative case before the full matrix. Keep the fastest setting
+that does not swap; more threads are not automatically faster.
 
 ## 7. Preregistered h=12 matrix
 
 Run this before deeper fine spaces:
 
 ```bash
-MODE=full JOBS=16 \
+MODE=full JOBS=16 PATCH_THREADS=8 \
   ./scripts/run_helmholtz_hp_convergence_server.sh
 ```
 
@@ -142,11 +169,12 @@ DEEP_FINE_LEVELS="12 14" \
 DEEP_H_LEVELS=6,8 \
 DEGREES=1,2,3 \
 ELL_BY_P=3,3,3 \
-JOBS=16 \
+JOBS=16 PATCH_THREADS=8 \
   ./scripts/run_helmholtz_hp_convergence_server.sh
 ```
 
-The default deep scan intentionally uses `L_H=6,8`. Combining very coarse
+The default deep scan intentionally uses L_H=6,8. Each degree is written
+to its own CSV and .done marker. Combining very coarse
 `L_H=2` with `L_h=14`, `p=3`, and a whole-domain patch creates much larger
 direct sparse factorizations and is not the first deep-h experiment.
 
@@ -194,7 +222,7 @@ Start with:
 
 ```bash
 chmod +x scripts/run_helmholtz_hp_manufactured_server.sh
-MODE=smoke \
+MODE=smoke PATCH_THREADS=8 \
   ./scripts/run_helmholtz_hp_manufactured_server.sh
 ```
 
@@ -204,7 +232,7 @@ Then compare fixed master fine spaces `L_h=10,12,14`:
 MODE=fixed \
 MASTER_FINE_LEVELS="10 12 14" \
 H_LEVELS=4,6,8 \
-DEGREES=1,2,3 \
+DEGREES=1,2,3 PATCH_THREADS=8 \
   ./scripts/run_helmholtz_hp_manufactured_server.sh
 ```
 
@@ -214,7 +242,7 @@ Run the coupled check separately:
 MODE=coupled \
 COUPLED_H_LEVELS=2,4,6 \
 GAP=6 \
-DEGREES=1,2,3 \
+DEGREES=1,2,3 PATCH_THREADS=8 \
   ./scripts/run_helmholtz_hp_manufactured_server.sh
 ```
 
@@ -228,7 +256,7 @@ cases are skipped, so the runner can resume safely.
 For each CSV:
 
 ```bash
-column -s, -t results/helmholtz_hp/H_deep_h12.csv | less -S
+column -s, -t results/helmholtz_hp/H_deep_h12_p1.csv | less -S
 tail -n 25 results/helmholtz_hp/H_deep_h12.time
 ```
 

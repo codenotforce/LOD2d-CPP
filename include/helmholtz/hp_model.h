@@ -3,6 +3,7 @@
 #include "helmholtz/hp_patch.h"
 #include "helmholtz/model.h"
 
+#include <functional>
 #include <memory>
 
 namespace lod2d::helmholtz {
@@ -15,6 +16,9 @@ struct HelmholtzHpProblemConfig {
     double wavenumber = 4.0;
     double boundary_beta = 1.0;
     HelmholtzPetrovMode mode = HelmholtzPetrovMode::TwoSided;
+    int corrector_threads = 1;
+    int progress_interval = 0;
+    std::function<void(int, int)> corrector_progress;
     TriMesh initial_mesh;
 };
 
@@ -24,6 +28,7 @@ struct HelmholtzHpCorrectorDiagnostics {
     double max_constraint_residual = 0.0;
     int patch_count = 0;
     int boundary_patch_count = 0;
+    int parallel_threads = 1;
 };
 
 class HelmholtzHpLodModel {

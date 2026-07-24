@@ -221,4 +221,14 @@ HelmholtzHpPatchAssembler::solve_direct_saddle(int target) const {
     return result;
 }
 
+std::size_t HelmholtzHpPatchAssembler::patch_cost(int target) const {
+    if (target < 0 || target >= patch_count())
+        throw std::out_of_range("hp Helmholtz patch target is out of range");
+    std::size_t cost = 0;
+    for (Eigen::SparseMatrix<double>::InnerIterator it(patches_, target);
+         it; ++it)
+        if (it.value() != 0.0)
+            cost += children_[it.row()].size();
+    return cost;
+}
 } // namespace lod2d::helmholtz

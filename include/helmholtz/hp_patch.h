@@ -25,6 +25,7 @@ public:
 
     HelmholtzPatchSystem assemble(int target) const;
     HelmholtzHpPatchSolveResult solve_direct_saddle(int target) const;
+    std::size_t patch_cost(int target) const;
     int patch_count() const {
         return static_cast<int>(coarse_.elems.size());
     }

@@ -1995,3 +1995,43 @@ Raw local CSV files and `/usr/bin/time -v` logs are in
 localization-floor, master-depth, and regression gates, the correct statement
 is that HP4 is complete and HP5-HP6 passed local correctness/calibration, not
 that the final asymptotic hypothesis has been numerically verified.
+## 31. hp Corrector Parallelism and Long-Run Recovery
+
+The initial HP6 server runner exposed only `JOBS`, which controls compilation;
+the element-corrector loop itself was serial. A representative
+`p=3,L_H=4,L_h=10,ell=3` direct-saddle case took 98.16 s at about one CPU
+core, so a multi-level P1/P2/P3 matrix could run for many hours.
+
+`HelmholtzHpLodModel` now accepts an explicit `corrector_threads` count.
+Targets are ordered by estimated patch size and dispatched with dynamic
+OpenMP scheduling. Each worker owns its sparse saddle solves, diagnostics,
+and corrector triplet buffers; only completed buffers are merged. This keeps
+Eigen sparse objects thread-local and avoids serialized insertion into the
+global corrector matrix. The global fine-reference LU is also lazy and is
+skipped when the benchmark supplies its reusable `FineReference`.
+
+Final local measurements for the representative case are:
+
+| patch threads | wall time | CPU | peak RSS |
+|---:|---:|---:|---:|
+| 1 | 98.16 s | 101% | 425 MiB |
+| 8 | 34.70 s | 755% | 2.50 GiB |
+| 16 | 34.97 s | lower scaling benefit | 4.68 GiB |
+
+Eight threads give a 2.83x wall-time speedup locally. Sixteen threads do not
+improve this machine and nearly double memory again, so the server default is
+8 rather than the hardware thread count. The server should pilot 8/16/32 on
+one case before selecting a larger value.
+
+The convergence benchmark now supports `--threads`, `--progress`, and
+`--stream`. Server runners flush one CSV row after every completed grid level,
+write patch progress to `.time`, split heavy LOD scans into one recoverable
+case per degree, and skip cases with an existing `.done` marker. Fine Pp
+reference solutions are reused across every fixed-h H scan.
+
+Correctness checks include serial-versus-four-thread correctors, adjoint
+correctors, coarse operators, and final LOD solutions. Differences are below
+`2e-11`. The final representative row retained the previous errors and gave
+Petrov, corrector, and constraint residuals of `2.17e-14`, `1.75e-14`, and
+`1.16e-15`. All 21 CTest cases pass, and both server scripts pass `bash -n`
+and an end-to-end manufactured-solution smoke run.

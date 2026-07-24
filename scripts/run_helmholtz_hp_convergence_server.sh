@@ -5,6 +5,9 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 BUILD_DIR=${BUILD_DIR:-"$ROOT/build"}
 RESULT_DIR=${RESULT_DIR:-"$ROOT/results/helmholtz_hp"}
 JOBS=${JOBS:-8}
+PATCH_THREADS=${PATCH_THREADS:-8}
+PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-8}
+export OMP_DYNAMIC=FALSE
 KAPPA=${KAPPA:-4}
 MODE=${MODE:-}
 DEEP_FINE_LEVELS=${DEEP_FINE_LEVELS:-"12 14"}
@@ -18,6 +21,12 @@ if [[ -z "${ELL_BY_P:-}" ]]; then
     esac
 fi
 BENCH="$BUILD_DIR/benchmarks/bench_helmholtz_hp_convergence"
+IFS=',' read -r -a degree_values <<< "$DEGREES"
+IFS=',' read -r -a ell_values <<< "$ELL_BY_P"
+if [[ ${#degree_values[@]} -ne ${#ell_values[@]} ]]; then
+    printf 'DEGREES and ELL_BY_P must have the same length\n' >&2
+    exit 2
+fi
 
 if [[ -z "$MODE" ]]; then
     if [[ "${FULL:-0}" == "1" ]]; then
@@ -37,7 +46,13 @@ run_case() {
     local name=$1
     shift
     local tmp="$RESULT_DIR/$name.csv.tmp"
-    /usr/bin/time -v "$BENCH" "$@" --check \
+    if [[ -f "$RESULT_DIR/$name.done" ]]; then
+        printf 'Skipping completed case %s\n' "$name"
+        return
+    fi
+    /usr/bin/time -v "$BENCH" "$@" \
+        --threads="$PATCH_THREADS" --progress="$PROGRESS_INTERVAL" \
+        --stream --check \
         >"$tmp" 2>"$RESULT_DIR/$name.time"
     mv "$tmp" "$RESULT_DIR/$name.csv"
     touch "$RESULT_DIR/$name.done"
@@ -53,21 +68,29 @@ full)
     run_case fine_hp \
         --study=fem --k="$KAPPA" --p="$DEGREES" \
         --h-levels=4,6,8,10,12
-    run_case ell_calibration \
-        --study=ell --k="$KAPPA" --H=4 --h=10 --p="$DEGREES" \
-        --ell-levels=1,2,3,4,5
-    run_case H_master_h12 \
-        --study=H --k="$KAPPA" --h=12 --p="$DEGREES" \
-        --H-levels=2,4,6,8 --ell-by-p="$ELL_BY_P"
-    run_case coupled_gap6 \
-        --study=coupled --k="$KAPPA" --p="$DEGREES" \
-        --H-levels=2,4,6 --gap=6 --ell-by-p="$ELL_BY_P"
+    for index in "${!degree_values[@]}"; do
+        degree=${degree_values[$index]}
+        ell=${ell_values[$index]}
+        run_case "ell_calibration_p${degree}" \
+            --study=ell --k="$KAPPA" --H=4 --h=10 --p="$degree" \
+            --ell-levels=1,2,3,4,5
+        run_case "H_master_h12_p${degree}" \
+            --study=H --k="$KAPPA" --h=12 --p="$degree" \
+            --H-levels=2,4,6,8 --ell-by-p="$ell"
+        run_case "coupled_gap6_p${degree}" \
+            --study=coupled --k="$KAPPA" --p="$degree" \
+            --H-levels=2,4,6 --gap=6 --ell-by-p="$ell"
+    done
     ;;
 deep)
     for fine_level in $DEEP_FINE_LEVELS; do
-        run_case "H_deep_h${fine_level}" \
-            --study=H --k="$KAPPA" --h="$fine_level" --p="$DEGREES" \
-            --H-levels="$DEEP_H_LEVELS" --ell-by-p="$ELL_BY_P"
+        for index in "${!degree_values[@]}"; do
+            degree=${degree_values[$index]}
+            ell=${ell_values[$index]}
+            run_case "H_deep_h${fine_level}_p${degree}" \
+                --study=H --k="$KAPPA" --h="$fine_level" --p="$degree" \
+                --H-levels="$DEEP_H_LEVELS" --ell-by-p="$ell"
+        done
     done
     ;;
 *)

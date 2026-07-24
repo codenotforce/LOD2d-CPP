@@ -29,12 +29,20 @@ struct Options {
     int coarse_level = 4;
     int fine_level = 8;
     int gap = 4;
+    int threads = 1;
+    int progress_interval = 0;
+    bool stream = false;
     bool check = false;
 };
 
 struct ErrorPair {
     double energy = 0.0;
     double l2 = 0.0;
+};
+
+struct FineReference {
+    ComplexVector solution;
+    ErrorPair exact;
 };
 
 struct Row {
@@ -55,7 +63,11 @@ struct Row {
     double petrov_residual = 0.0;
     double corrector_residual = 0.0;
     double constraint_residual = 0.0;
+    int corrector_threads = 1;
 };
+
+void print_header();
+void print_row(const Row &row);
 
 int parse_int(const std::string &text, const char *name) {
     std::size_t consumed = 0;
@@ -115,6 +127,13 @@ Options parse_options(int argc, char **argv) {
             options.fine_level = parse_int(after("--h="), "h");
         else if (argument.rfind("--gap=", 0) == 0)
             options.gap = parse_int(after("--gap="), "gap");
+        else if (argument.rfind("--threads=", 0) == 0)
+            options.threads = parse_int(after("--threads="), "threads");
+        else if (argument.rfind("--progress=", 0) == 0)
+            options.progress_interval =
+                parse_int(after("--progress="), "progress");
+        else if (argument == "--stream")
+            options.stream = true;
         else if (argument == "--check")
             options.check = true;
         else if (argument == "--help") {
@@ -123,7 +142,8 @@ Options parse_options(int argc, char **argv) {
                    "--study=fem|ell|H|coupled [--k=4] [--p=1,2,3] "
                    "[--h-levels=4,6,8] [--H-levels=2,4,6] "
                    "[--ell-levels=1,2,3] [--ell-by-p=2,2,2] "
-                   "[--H=4] [--h=8] [--gap=4] [--check]\n";
+                   "[--H=4] [--h=8] [--gap=4] [--threads=1] "
+                   "[--progress=0] [--stream] [--check]\n";
             std::exit(0);
         } else {
             throw std::invalid_argument("unknown option: " + argument);
@@ -138,6 +158,10 @@ Options parse_options(int argc, char **argv) {
     for (int degree : options.degrees)
         if (degree < 1 || degree > 3)
             throw std::invalid_argument("p must be 1, 2, or 3");
+    if (options.threads < 1)
+        throw std::invalid_argument("threads must be positive");
+    if (options.progress_interval < 0)
+        throw std::invalid_argument("progress must be nonnegative");
     return options;
 }
 
@@ -162,6 +186,26 @@ ErrorPair discrete_error(
     return result;
 }
 
+FineReference build_fine_reference(
+    const Options &options,
+    const HelmholtzManufacturedSolution &manufactured,
+    int degree,
+    int h_level) {
+    TriMesh mesh = refine_mesh_nvb(
+        make_helmholtz_unit_square_mesh(), h_level).mesh;
+    HpTriSpace space(mesh, degree);
+    const HelmholtzHpOperators operators =
+        assemble_helmholtz_hp_operators(space, options.wavenumber);
+    const ComplexVector load =
+        assemble_helmholtz_hp_load(space, manufactured.source);
+    FineReference reference;
+    reference.solution = solve_helmholtz_hp_fem(operators, load);
+    const HelmholtzError exact = compute_helmholtz_hp_error(
+        space, reference.solution, options.wavenumber,
+        manufactured.value, manufactured.gradient);
+    reference.exact = {exact.energy, exact.l2};
+    return reference;
+}
 double rate(double previous, double current, double previous_h, double h) {
     if (!(previous > 0.0 && current > 0.0 && previous_h > h))
         return std::numeric_limits<double>::quiet_NaN();
@@ -183,6 +227,7 @@ Row run_lod_case(
     int h_level,
     int ell,
     const std::string &study,
+    const FineReference *fine_reference = nullptr,
     const ComplexVector *previous_solution = nullptr,
     ComplexVector *solution_output = nullptr) {
     HelmholtzHpProblemConfig config;
@@ -191,10 +236,33 @@ Row run_lod_case(
     config.ell = ell;
     config.degree = degree;
     config.wavenumber = options.wavenumber;
+    config.corrector_threads = options.threads;
+    config.progress_interval = options.progress_interval;
+    if (options.progress_interval > 0) {
+        config.corrector_progress =
+            [degree, H_level, h_level, ell](int done, int total) {
+                std::cerr << "[hp] p=" << degree
+                          << " H=" << H_level
+                          << " h=" << h_level
+                          << " ell=" << ell
+                          << " correctors=" << done << '/' << total
+                          << '\n' << std::flush;
+            };
+    }
+    std::cerr << "[hp] start p=" << degree
+              << " H=" << H_level << " h=" << h_level
+              << " ell=" << ell << " threads=" << options.threads
+              << '\n' << std::flush;
     HelmholtzHpLodModel model = HelmholtzHpLodModel::build(config);
     const ComplexVector load =
         assemble_helmholtz_hp_load(model.fine_space(), manufactured.source);
-    const ComplexVector fine = model.solve_fine_reference(load);
+    ComplexVector owned_fine;
+    if (!fine_reference)
+        owned_fine = model.solve_fine_reference(load);
+    const ComplexVector &fine = fine_reference
+        ? fine_reference->solution : owned_fine;
+    if (fine.size() != model.fine_space().dof_count())
+        throw std::runtime_error("fine reference size mismatch");
     const HelmholtzLodSolution lod = model.solve_load(load);
     if (solution_output)
         *solution_output = lod.fine_values;
@@ -212,10 +280,14 @@ Row run_lod_case(
         model.fine_space(), lod.fine_values, options.wavenumber,
         manufactured.value, manufactured.gradient);
     row.exact = {exact.energy, exact.l2};
-    const HelmholtzError fine_exact = compute_helmholtz_hp_error(
-        model.fine_space(), fine, options.wavenumber,
-        manufactured.value, manufactured.gradient);
-    row.fine_exact = {fine_exact.energy, fine_exact.l2};
+    if (fine_reference) {
+        row.fine_exact = fine_reference->exact;
+    } else {
+        const HelmholtzError fine_exact = compute_helmholtz_hp_error(
+            model.fine_space(), fine, options.wavenumber,
+            manufactured.value, manufactured.gradient);
+        row.fine_exact = {fine_exact.energy, fine_exact.l2};
+    }
     row.lod_fine = discrete_error(model.operators(), lod.fine_values, fine);
     if (previous_solution)
         row.delta = discrete_error(
@@ -226,6 +298,11 @@ Row run_lod_case(
         model.corrector_diagnostics().max_adjoint_residual);
     row.constraint_residual =
         model.corrector_diagnostics().max_constraint_residual;
+    row.corrector_threads =
+        model.corrector_diagnostics().parallel_threads;
+    std::cerr << "[hp] complete p=" << degree
+              << " H=" << H_level << " h=" << h_level
+              << " ell=" << ell << '\n' << std::flush;
     return row;
 }
 
@@ -269,6 +346,7 @@ std::vector<Row> run_fem(
                     previous.h, row.h);
             }
             rows.push_back(row);
+            if (options.stream) print_row(row);
             previous = row;
             have_previous = true;
         }
@@ -281,18 +359,21 @@ std::vector<Row> run_ell(
     const HelmholtzManufacturedSolution &manufactured) {
     std::vector<Row> rows;
     for (int degree : options.degrees) {
+        const FineReference fine_reference = build_fine_reference(
+            options, manufactured, degree, options.fine_level);
         ComplexVector previous_solution;
         bool have_previous = false;
         for (int ell : options.ell_levels) {
             ComplexVector current_solution;
             Row row = run_lod_case(
                 options, manufactured, degree, options.coarse_level,
-                options.fine_level, ell, "ell",
+                options.fine_level, ell, "ell", &fine_reference,
                 have_previous ? &previous_solution : nullptr,
                 &current_solution);
             previous_solution = std::move(current_solution);
             have_previous = true;
             rows.push_back(row);
+            if (options.stream) print_row(row);
         }
     }
     return rows;
@@ -304,14 +385,26 @@ std::vector<Row> run_H_like(
     bool coupled) {
     std::vector<Row> rows;
     for (int degree : options.degrees) {
+        FineReference fixed_reference;
+        if (!coupled)
+            fixed_reference = build_fine_reference(
+                options, manufactured, degree, options.fine_level);
         Row previous;
         bool have_previous = false;
         for (int H_level : options.coarse_levels) {
             const int h_level =
                 coupled ? H_level + options.gap : options.fine_level;
+            FineReference coupled_reference;
+            const FineReference *fine_reference = &fixed_reference;
+            if (coupled) {
+                coupled_reference = build_fine_reference(
+                    options, manufactured, degree, h_level);
+                fine_reference = &coupled_reference;
+            }
             Row row = run_lod_case(
                 options, manufactured, degree, H_level, h_level,
-                ell_for(options, degree), coupled ? "coupled" : "H");
+                ell_for(options, degree), coupled ? "coupled" : "H",
+                fine_reference);
             if (have_previous) {
                 row.energy_rate = rate(
                     previous.exact.energy, row.exact.energy,
@@ -321,6 +414,7 @@ std::vector<Row> run_H_like(
                     previous.H, row.H);
             }
             rows.push_back(row);
+            if (options.stream) print_row(row);
             previous = row;
             have_previous = true;
         }
@@ -328,28 +422,36 @@ std::vector<Row> run_H_like(
     return rows;
 }
 
-void print_rows(const std::vector<Row> &rows) {
+void print_header() {
     std::cout
         << "study,p,H_level,h_level,ell,fine_dofs,H,h,"
            "exact_energy,exact_l2,fine_energy,fine_l2,"
            "lod_fine_energy,lod_fine_l2,delta,rate_energy,rate_l2,"
-           "petrov_residual,corrector_residual,constraint_residual\n";
-    std::cout << std::setprecision(12);
-    for (const Row &row : rows) {
-        std::cout
-            << row.study << ',' << row.degree << ','
-            << row.H_level << ',' << row.h_level << ',' << row.ell << ','
-            << row.fine_dofs << ',' << row.H << ',' << row.h << ','
-            << row.exact.energy << ',' << row.exact.l2 << ','
-            << row.fine_exact.energy << ',' << row.fine_exact.l2 << ','
-            << row.lod_fine.energy << ',' << row.lod_fine.l2 << ','
-            << row.delta << ',' << row.energy_rate << ',' << row.l2_rate
-            << ',' << row.petrov_residual << ','
-            << row.corrector_residual << ','
-            << row.constraint_residual << '\n';
-    }
+           "petrov_residual,corrector_residual,constraint_residual,"
+           "corrector_threads\n"
+        << std::flush;
 }
 
+void print_row(const Row &row) {
+    std::cout << std::setprecision(12)
+              << row.study << ',' << row.degree << ','
+              << row.H_level << ',' << row.h_level << ',' << row.ell << ','
+              << row.fine_dofs << ',' << row.H << ',' << row.h << ','
+              << row.exact.energy << ',' << row.exact.l2 << ','
+              << row.fine_exact.energy << ',' << row.fine_exact.l2 << ','
+              << row.lod_fine.energy << ',' << row.lod_fine.l2 << ','
+              << row.delta << ',' << row.energy_rate << ',' << row.l2_rate
+              << ',' << row.petrov_residual << ','
+              << row.corrector_residual << ','
+              << row.constraint_residual << ','
+              << row.corrector_threads << '\n'
+              << std::flush;
+}
+
+void print_rows(const std::vector<Row> &rows) {
+    print_header();
+    for (const Row &row : rows) print_row(row);
+}
 void check_rows(const Options &options, const std::vector<Row> &rows) {
     for (const Row &row : rows) {
         if (!(std::isfinite(row.exact.energy)
@@ -381,6 +483,7 @@ int main(int argc, char **argv) {
         const auto manufactured =
             make_polynomial_plane_wave_solution(options.wavenumber);
         std::vector<Row> rows;
+        if (options.stream) print_header();
         if (options.study == "fem")
             rows = run_fem(options, manufactured);
         else if (options.study == "ell")
@@ -389,7 +492,7 @@ int main(int argc, char **argv) {
             rows = run_H_like(
                 options, manufactured, options.study == "coupled");
         if (options.check) check_rows(options, rows);
-        print_rows(rows);
+        if (!options.stream) print_rows(rows);
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "bench_helmholtz_hp_convergence failed: "

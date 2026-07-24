@@ -68,6 +68,26 @@ int main() {
                     old_model.coarse_operator()) < 2e-9,
                 "hp model p=1 coarse operator differs from the P1 model");
 
+        HelmholtzHpProblemConfig parallel_config = hp_config;
+        parallel_config.corrector_threads = 4;
+        HelmholtzHpLodModel parallel_model =
+            HelmholtzHpLodModel::build(parallel_config);
+        require(relative_difference(
+                    parallel_model.corrector_matrix(),
+                    hp_model.corrector_matrix()) < 2e-11,
+                "parallel hp corrector differs from serial assembly");
+        require(relative_difference(
+                    parallel_model.adjoint_corrector_matrix(),
+                    hp_model.adjoint_corrector_matrix()) < 2e-11,
+                "parallel hp adjoint corrector differs from serial assembly");
+        require(relative_difference(
+                    parallel_model.coarse_operator(),
+                    hp_model.coarse_operator()) < 2e-11,
+                "parallel hp coarse operator differs from serial assembly");
+        require(parallel_model.corrector_diagnostics().patch_count
+                    == hp_model.corrector_diagnostics().patch_count,
+                "parallel hp assembly lost a patch");
+
         ComplexVector load(old_model.problem().fine.nodes.size());
         for (int i = 0; i < load.size(); ++i)
             load(i) = Complex(
@@ -87,6 +107,16 @@ int main() {
                 "hp model p=1 fine solution differs from the P1 model");
         require(hp_solution.petrov_residual < 1e-10,
                 "hp model Petrov residual is too large");
+        const HelmholtzLodSolution parallel_solution =
+            parallel_model.solve_load(load);
+        require(relative_difference(
+                    parallel_solution.coarse_coefficients,
+                    hp_solution.coarse_coefficients) < 2e-11,
+                "parallel hp coarse solution differs from serial solve");
+        require(relative_difference(
+                    parallel_solution.fine_values,
+                    hp_solution.fine_values) < 2e-11,
+                "parallel hp fine solution differs from serial solve");
 
         const ComplexSparseMatrix corrector_before =
             hp_model.corrector_matrix();
