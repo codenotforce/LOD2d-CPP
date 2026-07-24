@@ -94,7 +94,7 @@ corrector reuse. It also compares serial and four-thread corrector`nassembly, co
 
 ```bash
 chmod +x scripts/run_helmholtz_hp_convergence_server.sh
-MODE=smoke JOBS=16 PATCH_THREADS=8 \
+MODE=smoke JOBS=16 PATCH_THREADS=8 HP_SOLVER=schur \
   ./scripts/run_helmholtz_hp_convergence_server.sh
 ```
 
@@ -121,16 +121,30 @@ watch -n 5 'free -h; ps -C bench_helmholtz_hp_convergence \
   -o pid,etime,%cpu,rss,vsz,cmd --sort=-rss'
 ```
 
-### Patch-thread tuning
+### Patch solver and thread tuning
+
+The runners default to `HP_SOLVER=schur`. `DirectSchur` factors the sparse
+patch Helmholtz block, applies it to all constraint and corrector right-hand
+sides, then solves the small dense Schur complement. Use
+`HP_SOLVER=saddle` only for a reference comparison or if a Schur case fails
+the explicit residual/conditioning checks.
 
 On the local WSL machine, the representative
 `p=3,L_H=4,L_h=10,ell=3` case produced:
 
-| patch threads | wall time | peak RSS | relative result |
-|---:|---:|---:|---|
-| 1 | 98.16 s | 425 MiB | baseline |
-| 8 | 34.70 s | 2.50 GiB | same errors, 2.83x faster |
-| 16 | 34.97 s | 4.68 GiB | no local speedup |
+| solver | patch threads | wall time | peak RSS |
+|---|---:|---:|---:|
+| DirectSaddle | 1 | 98.16 s | 425 MiB |
+| DirectSaddle | 8 | 34.70 s | 2.50 GiB |
+| DirectSchur | 1 | 7.41 s | 168 MiB |
+| DirectSchur | 8 | 1.97 s | 628 MiB |
+| DirectSchur | 16 | 2.09 s | 1.07 GiB |
+
+Eight-thread DirectSchur is 17.6x faster than eight-thread DirectSaddle and
+49.8x faster than the original serial path for this case. Its exact, fine,
+and LOD errors agree with DirectSaddle at printed precision. The CSV also
+records `schur_residual`, `schur_rcond`, and `direct_fallbacks`; accepted runs
+require small residuals and zero fallbacks.
 
 The server has a different memory hierarchy, so pilot 8, 16, and 32 threads
 on one representative case before the full matrix. Keep the fastest setting
@@ -141,7 +155,7 @@ that does not swap; more threads are not automatically faster.
 Run this before deeper fine spaces:
 
 ```bash
-MODE=full JOBS=16 PATCH_THREADS=8 \
+MODE=full JOBS=16 PATCH_THREADS=8 HP_SOLVER=schur \
   ./scripts/run_helmholtz_hp_convergence_server.sh
 ```
 
@@ -262,8 +276,10 @@ tail -n 25 results/helmholtz_hp/H_deep_h12.time
 
 Accept a row only when:
 
-- `petrov_residual`, `corrector_residual`, and `constraint_residual` are
-  below `1e-9`;
+- `petrov_residual`, `corrector_residual`, `constraint_residual`, and
+  `schur_residual` are below `1e-9`;
+- `schur_rcond` is positive and not anomalously small compared with nearby
+  cases, and `direct_fallbacks` is zero;
 - errors are finite;
 - the command exit status is zero and the matching `.done` exists;
 - `/usr/bin/time -v` reports no swapping or termination.

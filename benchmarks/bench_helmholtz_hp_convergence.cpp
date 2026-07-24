@@ -20,6 +20,7 @@ namespace {
 
 struct Options {
     std::string study = "fem";
+    std::string solver = "saddle";
     double wavenumber = 4.0;
     std::vector<int> degrees{1, 2, 3};
     std::vector<int> fine_levels{4, 6, 8};
@@ -47,6 +48,7 @@ struct FineReference {
 
 struct Row {
     std::string study;
+    std::string solver;
     int degree = 0;
     int H_level = -1;
     int h_level = -1;
@@ -63,6 +65,9 @@ struct Row {
     double petrov_residual = 0.0;
     double corrector_residual = 0.0;
     double constraint_residual = 0.0;
+    double schur_residual = 0.0;
+    double schur_rcond = 1.0;
+    int direct_fallbacks = 0;
     int corrector_threads = 1;
 };
 
@@ -105,6 +110,8 @@ Options parse_options(int argc, char **argv) {
         };
         if (argument.rfind("--study=", 0) == 0)
             options.study = after("--study=");
+        else if (argument.rfind("--solver=", 0) == 0)
+            options.solver = after("--solver=");
         else if (argument.rfind("--k=", 0) == 0)
             options.wavenumber = parse_double(after("--k="), "k");
         else if (argument.rfind("--p=", 0) == 0)
@@ -139,7 +146,8 @@ Options parse_options(int argc, char **argv) {
         else if (argument == "--help") {
             std::cout
                 << "Usage: bench_helmholtz_hp_convergence "
-                   "--study=fem|ell|H|coupled [--k=4] [--p=1,2,3] "
+                   "--study=fem|ell|H|coupled "
+                   "[--solver=saddle|schur] [--k=4] [--p=1,2,3] "
                    "[--h-levels=4,6,8] [--H-levels=2,4,6] "
                    "[--ell-levels=1,2,3] [--ell-by-p=2,2,2] "
                    "[--H=4] [--h=8] [--gap=4] [--threads=1] "
@@ -152,6 +160,8 @@ Options parse_options(int argc, char **argv) {
     if (options.study != "fem" && options.study != "ell"
         && options.study != "H" && options.study != "coupled")
         throw std::invalid_argument("study must be fem, ell, H, or coupled");
+    if (options.solver != "saddle" && options.solver != "schur")
+        throw std::invalid_argument("solver must be saddle or schur");
     if (options.ell_by_degree.size() != options.degrees.size())
         throw std::invalid_argument(
             "ell-by-p must have one entry for each requested p");
@@ -236,22 +246,29 @@ Row run_lod_case(
     config.ell = ell;
     config.degree = degree;
     config.wavenumber = options.wavenumber;
+    config.patch_solver.kind = options.solver == "schur"
+        ? HelmholtzPatchSolverKind::DirectSchur
+        : HelmholtzPatchSolverKind::DirectSaddle;
+    config.patch_solver.fallback_to_direct = false;
     config.corrector_threads = options.threads;
     config.progress_interval = options.progress_interval;
     if (options.progress_interval > 0) {
         config.corrector_progress =
-            [degree, H_level, h_level, ell](int done, int total) {
+            [degree, H_level, h_level, ell, solver = options.solver]
+            (int done, int total) {
                 std::cerr << "[hp] p=" << degree
                           << " H=" << H_level
                           << " h=" << h_level
                           << " ell=" << ell
+                          << " solver=" << solver
                           << " correctors=" << done << '/' << total
                           << '\n' << std::flush;
             };
     }
     std::cerr << "[hp] start p=" << degree
               << " H=" << H_level << " h=" << h_level
-              << " ell=" << ell << " threads=" << options.threads
+              << " ell=" << ell << " solver=" << options.solver
+              << " threads=" << options.threads
               << '\n' << std::flush;
     HelmholtzHpLodModel model = HelmholtzHpLodModel::build(config);
     const ComplexVector load =
@@ -269,6 +286,7 @@ Row run_lod_case(
 
     Row row;
     row.study = study;
+    row.solver = options.solver;
     row.degree = degree;
     row.H_level = H_level;
     row.h_level = h_level;
@@ -298,6 +316,12 @@ Row run_lod_case(
         model.corrector_diagnostics().max_adjoint_residual);
     row.constraint_residual =
         model.corrector_diagnostics().max_constraint_residual;
+    row.schur_residual =
+        model.corrector_diagnostics().max_schur_residual;
+    row.schur_rcond =
+        model.corrector_diagnostics().min_schur_rcond;
+    row.direct_fallbacks =
+        model.corrector_diagnostics().direct_fallback_count;
     row.corrector_threads =
         model.corrector_diagnostics().parallel_threads;
     std::cerr << "[hp] complete p=" << degree
@@ -328,6 +352,7 @@ std::vector<Row> run_fem(
                 manufactured.value, manufactured.gradient);
             Row row;
             row.study = "fem";
+            row.solver = "none";
             row.degree = degree;
             row.h_level = level;
             row.fine_dofs = space.dof_count();
@@ -428,7 +453,8 @@ void print_header() {
            "exact_energy,exact_l2,fine_energy,fine_l2,"
            "lod_fine_energy,lod_fine_l2,delta,rate_energy,rate_l2,"
            "petrov_residual,corrector_residual,constraint_residual,"
-           "corrector_threads\n"
+           "corrector_threads,solver,schur_residual,schur_rcond,"
+           "direct_fallbacks\n"
         << std::flush;
 }
 
@@ -444,7 +470,9 @@ void print_row(const Row &row) {
               << ',' << row.petrov_residual << ','
               << row.corrector_residual << ','
               << row.constraint_residual << ','
-              << row.corrector_threads << '\n'
+              << row.corrector_threads << ',' << row.solver << ','
+              << row.schur_residual << ',' << row.schur_rcond << ','
+              << row.direct_fallbacks << '\n'
               << std::flush;
 }
 
@@ -459,7 +487,9 @@ void check_rows(const Options &options, const std::vector<Row> &rows) {
             throw std::runtime_error("nonfinite hp convergence error");
         if (row.petrov_residual > 1e-8
             || row.corrector_residual > 1e-8
-            || row.constraint_residual > 1e-8)
+            || row.constraint_residual > 1e-8
+            || row.schur_residual > 1e-8
+            || row.direct_fallbacks != 0)
             throw std::runtime_error("hp convergence residual check failed");
     }
     if (options.study == "fem") {

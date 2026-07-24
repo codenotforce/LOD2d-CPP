@@ -401,7 +401,8 @@ Observed behavior:
 | H=3,h=9,ell=2,numerator=corrector | hit | 2.74 s | 13292 |
 | H=4,h=9,ell=2,numerator=corrector | hit after prior write | 3.18 s | 13350.6 |
 
-The `numerator=corrector` quotient is much larger than the original LOD-basis
+The
+umerator=corrector` quotient is much larger than the original LOD-basis
 inverse quotient. The benchmark computes the generalized quotient on the
 positive local mass subspace of `(1-C)V_H`; exact zero-denominator directions
 are projected out, matching the earlier inverse-inequality experiments.
@@ -856,7 +857,8 @@ f(x,y) = exp(-40 * ((x - 0.35)^2 + (y - 0.55)^2)).
 
 The reported energy norm is `sqrt(v^* (K + k^2 M) v)`. The optional inf-sup
 value uses exact trial/test energy Gram matrices and a dense SVD, so it is only
-computed below `--stability-max-dofs`; larger cases report `nan` instead of an
+computed below `--stability-max-dofs`; larger cases report
+an` instead of an
 unscaled or misleading surrogate.
 
 ### WSL validation scan on 2026-06-29
@@ -1669,7 +1671,8 @@ T_{j+1} = NVB-close(refine(T_j, M_j)).
 ```
 
 Ties are broken by the stable element index. `N_1(T*_j)` is the one-layer
-vertex patch; the `n=0` runs mark only `T*_j`. Unlike the earlier geometric
+vertex patch; the
+=0` runs mark only `T*_j`. Unlike the earlier geometric
 families, the feedback target is allowed to be at any current level. This is
 essential because the observed maximum need not lie on a finest element.
 
@@ -2035,3 +2038,46 @@ correctors, coarse operators, and final LOD solutions. Differences are below
 Petrov, corrector, and constraint residuals of `2.17e-14`, `1.75e-14`, and
 `1.16e-15`. All 21 CTest cases pass, and both server scripts pass `bash -n`
 and an end-to-end manufactured-solution smoke run.
+## 32. hp DirectSchur Default
+
+The existing `DirectSchur` patch solver was exposed through
+`HelmholtzHpProblemConfig`, `HelmholtzHpPatchAssembler`, and
+`bench_helmholtz_hp_convergence --solver=saddle|schur`. The server runners
+also accept `HP_SOLVER`; their default is now `schur`, while the public model
+configuration retains `DirectSaddle` as its compatibility default.
+
+For one patch system, DirectSchur computes
+
+```text
+Z = A_patch^{-1} B^*,  Y = A_patch^{-1} F,
+S = B Z,               S Lambda = B Y,
+Q = Y - Z Lambda.
+```
+
+This is mathematically the same constrained corrector as the direct saddle
+solve. In this hp experiment it is much cheaper because the constraints
+cause substantial fill in the monolithic saddle LU, whereas the Helmholtz
+A block remains sparse and the Schur complement is small.
+
+Representative `p=3,L_H=4,L_h=10,ell=3` results:
+
+| solver | threads | wall time | peak RSS |
+|---|---:|---:|---:|
+| DirectSaddle | 1 | 98.16 s | 425 MiB |
+| DirectSaddle | 8 | 34.70 s | 2.50 GiB |
+| DirectSchur | 1 | 7.41 s | 168 MiB |
+| DirectSchur | 8 | 1.97 s | 628 MiB |
+| DirectSchur | 16 | 2.09 s | 1.07 GiB |
+
+Thus eight-thread DirectSchur is 17.6x faster than the parallel saddle path
+and 49.8x faster than the original serial baseline. P1/P2/P3 tests at
+`L_H=4,L_h=10,ell=3` retained the same manufactured, fine-reference, and LOD
+errors. Maximum Schur residuals were below `4.6e-16`, minimum reciprocal
+condition estimates were about `6.6e-2`, no fallback occurred, and final
+corrector/Petrov residuals remained below `3e-14`.
+
+The model now aggregates `max_schur_residual`, `min_schur_rcond`, and
+`direct_fallback_count`. Streaming CSV output records these values and
+`--check` rejects a large Schur residual or any fallback. This keeps the
+faster route subject to the same correctness gate rather than treating a
+successful factorization as sufficient evidence.

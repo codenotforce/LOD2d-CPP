@@ -98,7 +98,7 @@ HelmholtzHpLodModel HelmholtzHpLodModel::build(
         if (failed.load(std::memory_order_relaxed)) return;
         try {
             const HelmholtzHpPatchSolveResult patch =
-                assembler.solve_direct_saddle(target);
+                assembler.solve(target, data.config.patch_solver);
             const Triangle &coarse_triangle =
                 data.problem.coarse.elems[target];
             for (int row = 0;
@@ -127,6 +127,14 @@ HelmholtzHpLodModel HelmholtzHpLodModel::build(
             local_diagnostics.max_constraint_residual = std::max(
                 local_diagnostics.max_constraint_residual,
                 patch.primal.diagnostics.constraint_residual);
+            local_diagnostics.max_schur_residual = std::max(
+                local_diagnostics.max_schur_residual,
+                patch.primal.diagnostics.schur_residual);
+            local_diagnostics.min_schur_rcond = std::min(
+                local_diagnostics.min_schur_rcond,
+                patch.primal.diagnostics.schur_rcond);
+            local_diagnostics.direct_fallback_count +=
+                patch.primal.diagnostics.direct_fallback ? 1 : 0;
             ++local_diagnostics.patch_count;
             local_diagnostics.boundary_patch_count +=
                 patch.system.touches_physical_boundary ? 1 : 0;
@@ -169,6 +177,14 @@ HelmholtzHpLodModel HelmholtzHpLodModel::build(
         data.diagnostics.max_constraint_residual = std::max(
             data.diagnostics.max_constraint_residual,
             local_diagnostics.max_constraint_residual);
+        data.diagnostics.max_schur_residual = std::max(
+            data.diagnostics.max_schur_residual,
+            local_diagnostics.max_schur_residual);
+        data.diagnostics.min_schur_rcond = std::min(
+            data.diagnostics.min_schur_rcond,
+            local_diagnostics.min_schur_rcond);
+        data.diagnostics.direct_fallback_count +=
+            local_diagnostics.direct_fallback_count;
         data.diagnostics.patch_count += local_diagnostics.patch_count;
         data.diagnostics.boundary_patch_count +=
             local_diagnostics.boundary_patch_count;
@@ -205,7 +221,8 @@ HelmholtzHpLodModel HelmholtzHpLodModel::build(
     if (first_exception) std::rethrow_exception(first_exception);
     if (data.diagnostics.max_primal_residual > 1e-8
         || data.diagnostics.max_adjoint_residual > 1e-8
-        || data.diagnostics.max_constraint_residual > 1e-8)
+        || data.diagnostics.max_constraint_residual > 1e-8
+        || data.diagnostics.max_schur_residual > 1e-8)
         throw std::runtime_error(
             "hp LOD corrector residual exceeded the correctness threshold");
 

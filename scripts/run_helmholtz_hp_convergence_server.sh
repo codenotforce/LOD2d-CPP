@@ -6,6 +6,7 @@ BUILD_DIR=${BUILD_DIR:-"$ROOT/build"}
 RESULT_DIR=${RESULT_DIR:-"$ROOT/results/helmholtz_hp"}
 JOBS=${JOBS:-8}
 PATCH_THREADS=${PATCH_THREADS:-8}
+HP_SOLVER=${HP_SOLVER:-schur}
 PROGRESS_INTERVAL=${PROGRESS_INTERVAL:-8}
 export OMP_DYNAMIC=FALSE
 KAPPA=${KAPPA:-4}
@@ -51,7 +52,8 @@ run_case() {
         return
     fi
     /usr/bin/time -v "$BENCH" "$@" \
-        --threads="$PATCH_THREADS" --progress="$PROGRESS_INTERVAL" \
+        --solver="$HP_SOLVER" --threads="$PATCH_THREADS" \
+        --progress="$PROGRESS_INTERVAL" \
         --stream --check \
         >"$tmp" 2>"$RESULT_DIR/$name.time"
     mv "$tmp" "$RESULT_DIR/$name.csv"

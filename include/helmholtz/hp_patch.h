@@ -24,6 +24,8 @@ public:
         const HelmholtzHpOperators &operators);
 
     HelmholtzPatchSystem assemble(int target) const;
+    HelmholtzHpPatchSolveResult solve(
+        int target, const HelmholtzPatchSolverConfig &config) const;
     HelmholtzHpPatchSolveResult solve_direct_saddle(int target) const;
     std::size_t patch_cost(int target) const;
     int patch_count() const {

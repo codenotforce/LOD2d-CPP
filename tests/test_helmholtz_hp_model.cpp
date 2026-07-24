@@ -88,6 +88,27 @@ int main() {
                     == hp_model.corrector_diagnostics().patch_count,
                 "parallel hp assembly lost a patch");
 
+        HelmholtzHpProblemConfig schur_config = hp_config;
+        schur_config.patch_solver.kind =
+            HelmholtzPatchSolverKind::DirectSchur;
+        schur_config.patch_solver.fallback_to_direct = false;
+        HelmholtzHpLodModel schur_model =
+            HelmholtzHpLodModel::build(schur_config);
+        require(relative_difference(
+                    schur_model.corrector_matrix(),
+                    hp_model.corrector_matrix()) < 2e-9,
+                "DirectSchur hp corrector differs from DirectSaddle");
+        require(relative_difference(
+                    schur_model.coarse_operator(),
+                    hp_model.coarse_operator()) < 2e-9,
+                "DirectSchur hp coarse operator differs from DirectSaddle");
+        require(schur_model.corrector_diagnostics().max_schur_residual < 1e-10,
+                "DirectSchur hp Schur residual is too large");
+        require(schur_model.corrector_diagnostics().min_schur_rcond > 1e-14,
+                "DirectSchur hp Schur complement is numerically singular");
+        require(schur_model.corrector_diagnostics().direct_fallback_count == 0,
+                "DirectSchur hp model unexpectedly used direct fallback");
+
         ComplexVector load(old_model.problem().fine.nodes.size());
         for (int i = 0; i < load.size(); ++i)
             load(i) = Complex(
@@ -117,6 +138,14 @@ int main() {
                     parallel_solution.fine_values,
                     hp_solution.fine_values) < 2e-11,
                 "parallel hp fine solution differs from serial solve");
+        const HelmholtzLodSolution schur_solution =
+            schur_model.solve_load(load);
+        require(relative_difference(
+                    schur_solution.fine_values,
+                    hp_solution.fine_values) < 3e-9,
+                "DirectSchur hp solution differs from DirectSaddle");
+        require(schur_solution.petrov_residual < 1e-10,
+                "DirectSchur hp Petrov residual is too large");
 
         const ComplexSparseMatrix corrector_before =
             hp_model.corrector_matrix();

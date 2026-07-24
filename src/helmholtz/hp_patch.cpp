@@ -208,17 +208,23 @@ HelmholtzPatchSystem HelmholtzHpPatchAssembler::assemble(int target) const {
     return system;
 }
 
-HelmholtzHpPatchSolveResult
-HelmholtzHpPatchAssembler::solve_direct_saddle(int target) const {
+HelmholtzHpPatchSolveResult HelmholtzHpPatchAssembler::solve(
+    int target,
+    const HelmholtzPatchSolverConfig &config) const {
     HelmholtzHpPatchSolveResult result;
     result.system = assemble(target);
-    HelmholtzPatchSolverConfig config;
-    config.kind = HelmholtzPatchSolverKind::DirectSaddle;
-    config.fallback_to_direct = false;
     result.primal = solve_helmholtz_patch(result.system, config);
     result.adjoint_corrector = result.primal.corrector.conjugate();
     result.adjoint_multipliers = result.primal.multipliers.conjugate();
     return result;
+}
+
+HelmholtzHpPatchSolveResult
+HelmholtzHpPatchAssembler::solve_direct_saddle(int target) const {
+    HelmholtzPatchSolverConfig config;
+    config.kind = HelmholtzPatchSolverKind::DirectSaddle;
+    config.fallback_to_direct = false;
+    return solve(target, config);
 }
 
 std::size_t HelmholtzHpPatchAssembler::patch_cost(int target) const {

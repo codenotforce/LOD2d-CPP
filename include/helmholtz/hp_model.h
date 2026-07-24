@@ -16,6 +16,7 @@ struct HelmholtzHpProblemConfig {
     double wavenumber = 4.0;
     double boundary_beta = 1.0;
     HelmholtzPetrovMode mode = HelmholtzPetrovMode::TwoSided;
+    HelmholtzPatchSolverConfig patch_solver;
     int corrector_threads = 1;
     int progress_interval = 0;
     std::function<void(int, int)> corrector_progress;
@@ -26,6 +27,9 @@ struct HelmholtzHpCorrectorDiagnostics {
     double max_primal_residual = 0.0;
     double max_adjoint_residual = 0.0;
     double max_constraint_residual = 0.0;
+    double max_schur_residual = 0.0;
+    double min_schur_rcond = 1.0;
+    int direct_fallback_count = 0;
     int patch_count = 0;
     int boundary_patch_count = 0;
     int parallel_threads = 1;
