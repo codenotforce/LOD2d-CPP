@@ -1,18 +1,18 @@
-	Command being timed: "./build/benchmarks/bench_helmholtz_hp_convergence --study=fem --k=4 --p=1,2,3 --h-levels=4,6,8,10,12 --check"
-	User time (seconds): 1.97
-	System time (seconds): 0.20
-	Percent of CPU this job got: 96%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.26
+	Command being timed: "/home/sutai/code/LOD2d-CPP/build/benchmarks/bench_helmholtz_hp_convergence --study=fem --k=4 --p=1,2,3 --h-levels=4,6,8,10,12 --check"
+	User time (seconds): 2.00
+	System time (seconds): 0.21
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:02.22
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 270052
+	Maximum resident set size (kbytes): 269788
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 110373
+	Minor (reclaiming a frame) page faults: 106016
 	Voluntary context switches: 1
-	Involuntary context switches: 5
+	Involuntary context switches: 3
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 8
