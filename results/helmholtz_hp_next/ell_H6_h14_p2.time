@@ -1,0 +1,95 @@
+[hp] start p=2 H=6 h=14 ell=2 solver=schur threads=8
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=8/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=16/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=24/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=32/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=40/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=48/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=56/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=64/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=72/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=80/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=88/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=96/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=104/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=112/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=120/128
+[hp] p=2 H=6 h=14 ell=2 solver=schur correctors=128/128
+[hp] complete p=2 H=6 h=14 ell=2
+[hp] start p=2 H=6 h=14 ell=3 solver=schur threads=8
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=8/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=16/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=24/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=32/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=40/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=48/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=56/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=64/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=72/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=80/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=88/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=96/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=104/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=112/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=120/128
+[hp] p=2 H=6 h=14 ell=3 solver=schur correctors=128/128
+[hp] complete p=2 H=6 h=14 ell=3
+[hp] start p=2 H=6 h=14 ell=4 solver=schur threads=8
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=8/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=16/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=24/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=32/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=40/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=48/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=56/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=64/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=72/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=80/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=88/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=96/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=104/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=112/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=120/128
+[hp] p=2 H=6 h=14 ell=4 solver=schur correctors=128/128
+[hp] complete p=2 H=6 h=14 ell=4
+[hp] start p=2 H=6 h=14 ell=5 solver=schur threads=8
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=8/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=16/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=24/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=32/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=40/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=48/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=56/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=64/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=72/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=80/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=88/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=96/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=104/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=112/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=120/128
+[hp] p=2 H=6 h=14 ell=5 solver=schur correctors=128/128
+[hp] complete p=2 H=6 h=14 ell=5
+	Command being timed: "./build/benchmarks/bench_helmholtz_hp_convergence --study=ell --k=4 --H=6 --h=14 --p=2 --ell-levels=2,3,4,5 --ell-by-p=3 --solver=schur --threads=8 --progress=8 --stream --check"
+	User time (seconds): 905.10
+	System time (seconds): 67.76
+	Percent of CPU this job got: 712%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 2:16.50
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 6357708
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 37401488
+	Voluntary context switches: 3898
+	Involuntary context switches: 2420
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 208
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
