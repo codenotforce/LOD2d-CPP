@@ -42,6 +42,7 @@ struct Options {
     bool csv = false;
     bool csv_header = false;
     bool check = false;
+    bool progress = false;
 };
 
 struct ErrorMetrics {
@@ -165,6 +166,8 @@ Options parse_options(int argc, char **argv) {
             options.csv_header = true;
         } else if (argument == "--check") {
             options.check = true;
+        } else if (argument == "--progress") {
+            options.progress = true;
         } else if (argument == "--help") {
             std::cout
                 << "Usage: bench_helmholtz_k [--k=4] [--H=auto] [--h=auto] "
@@ -174,7 +177,7 @@ Options parse_options(int argc, char **argv) {
                    "[--symbolic-cache-slots=1] "
                    "[--factorization-reuse=none|identical] "
                    "[--mode=two-sided|test-only] [--stability-max-dofs=512] "
-                   "[--format=csv|--csv-header] [--check]\n";
+                   "[--format=csv|--csv-header] [--check] [--progress]\n";
             std::exit(0);
         } else {
             throw std::invalid_argument("unknown option: " + argument);
@@ -409,6 +412,7 @@ int main(int argc, char **argv) {
         config.ell = result.ell;
         config.wavenumber = options.wavenumber;
         config.mode = options.mode;
+        config.progress = options.progress;
         config.patch_solver.kind = options.solver == "schur"
             ? HelmholtzPatchSolverKind::DirectSchur
             : HelmholtzPatchSolverKind::DirectSaddle;

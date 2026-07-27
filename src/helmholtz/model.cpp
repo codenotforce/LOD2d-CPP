@@ -4,6 +4,9 @@
 #include <Eigen/SparseLU>
 #include <algorithm>
 #include <chrono>
+#include <iostream>
+#include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -27,6 +30,13 @@ Eigen::SparseMatrix<double> build_cg_to_dg(const TriMesh &mesh) {
 double elapsed_ms(const std::chrono::steady_clock::time_point &start) {
     return std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - start).count();
+}
+
+void report_progress(
+    const HelmholtzProblemConfig &config,
+    const std::string &message) {
+    if (config.progress)
+        std::cerr << "[helmholtz-model] " << message << '\n';
 }
 
 void validate_pure_robin_mesh(const TriMesh &mesh) {
@@ -233,8 +243,18 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     model.config_ = std::move(config);
     model.problem_ = std::move(problem);
     model.build_timings_.mesh_and_interpolation_ms = mesh_and_interpolation_ms;
+    {
+        std::ostringstream message;
+        message << "mesh ready: coarse_nodes=" << model.problem_.coarse.nodes.size()
+                << " coarse_elements=" << model.problem_.coarse.elems.size()
+                << " fine_nodes=" << model.problem_.fine.nodes.size()
+                << " fine_elements=" << model.problem_.fine.elems.size()
+                << " elapsed_ms=" << mesh_and_interpolation_ms;
+        report_progress(model.config_, message.str());
+    }
 
     auto stage_start = std::chrono::steady_clock::now();
+    report_progress(model.config_, "operators begin");
     model.operators_ = assemble_helmholtz_operators(
         model.problem_.fine,
         model.config_.wavenumber,
@@ -242,8 +262,13 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.config_.refractive_index,
         model.config_.boundary_beta);
     model.build_timings_.operators_ms = elapsed_ms(stage_start);
+    report_progress(
+        model.config_,
+        "operators end: elapsed_ms="
+            + std::to_string(model.build_timings_.operators_ms));
 
     stage_start = std::chrono::steady_clock::now();
+    report_progress(model.config_, "correctors begin");
     model.correctors_ = build_helmholtz_correctors(
         model.problem_.coarse,
         model.problem_.fine,
@@ -257,6 +282,19 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.operators_,
         model.config_.patch_solver);
     model.build_timings_.correctors_ms = elapsed_ms(stage_start);
+    std::size_t raw_corrector_entries = 0;
+    for (const auto &element : model.correctors_.primal) {
+        if (element.size()
+            > std::numeric_limits<std::size_t>::max() - raw_corrector_entries)
+            throw std::overflow_error("Helmholtz raw corrector entry count overflowed");
+        raw_corrector_entries += element.size();
+    }
+    {
+        std::ostringstream message;
+        message << "correctors end: raw_entries=" << raw_corrector_entries
+                << " elapsed_ms=" << model.build_timings_.correctors_ms;
+        report_progress(model.config_, message.str());
+    }
 
     const auto &diagnostics = model.correctors_.diagnostics;
     if (diagnostics.max_primal_residual > 1e-8
@@ -266,12 +304,17 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     }
 
     stage_start = std::chrono::steady_clock::now();
+    report_progress(model.config_, "corrected basis assembly begin");
     const int fine_node_count = static_cast<int>(model.problem_.fine.nodes.size());
     model.corrected_trial_basis_ = build_helmholtz_corrected_basis(
         model.problem_.coarse_to_fine,
         model.problem_.coarse,
         fine_node_count,
         model.correctors_.primal);
+    report_progress(
+        model.config_,
+        "corrected trial basis ready: nonzeros="
+            + std::to_string(model.corrected_trial_basis_.nonZeros()));
     // All current coefficients and interpolation weights are real, hence the
     // adjoint corrector is the coefficient-wise conjugate of the primal one.
     // Conjugating the assembled basis avoids retaining and assembling a second
@@ -284,18 +327,28 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     else
         model.trial_basis_ = model.problem_.coarse_to_fine.cast<Complex>();
 
+    report_progress(model.config_, "coarse operator assembly begin");
     model.coarse_operator_ = model.test_basis_.adjoint()
                            * model.operators_.system
                            * model.trial_basis_;
     model.coarse_operator_.prune(Complex(0.0, 0.0), 1e-14);
     model.coarse_operator_.makeCompressed();
+    report_progress(
+        model.config_,
+        "coarse operator ready: nonzeros="
+            + std::to_string(model.coarse_operator_.nonZeros()));
 
+    report_progress(model.config_, "coarse factorization begin");
     model.factorization_ = std::make_unique<Factorization>();
     model.factorization_->solver.analyzePattern(model.coarse_operator_);
     model.factorization_->solver.factorize(model.coarse_operator_);
     if (model.factorization_->solver.info() != Eigen::Success)
         throw std::runtime_error("Helmholtz Petrov-Galerkin coarse factorization failed");
     model.build_timings_.basis_and_factorization_ms = elapsed_ms(stage_start);
+    report_progress(
+        model.config_,
+        "coarse factorization end: basis_and_factorization_ms="
+            + std::to_string(model.build_timings_.basis_and_factorization_ms));
     model.build_timings_.total_ms = mesh_and_interpolation_ms + elapsed_ms(total_start);
     return model;
 }

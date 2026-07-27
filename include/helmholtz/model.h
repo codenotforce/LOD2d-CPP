@@ -21,6 +21,7 @@ struct HelmholtzProblemConfig {
     double wavenumber = 2.0;
     double boundary_beta = 1.0;
     HelmholtzPetrovMode mode = HelmholtzPetrovMode::TwoSided;
+    bool progress = false;
     TriMesh initial_mesh;
     HelmholtzPatchSolverConfig patch_solver;
     std::vector<double> diffusion;

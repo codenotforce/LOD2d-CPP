@@ -1,10 +1,15 @@
 #include "helmholtz/model.h"
+#include "helmholtz/corrector.h"
 
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace lod2d;
 using namespace lod2d::helmholtz;
@@ -25,6 +30,33 @@ bool on_boundary(const Point2 &point) {
 
 int main() {
     try {
+        TriMesh assembly_mesh;
+        assembly_mesh.nodes = {
+            Point2(0.0, 0.0), Point2(1.0, 0.0),
+            Point2(0.0, 1.0), Point2(1.0, 1.0)};
+        assembly_mesh.elems = {{0, 1, 2}, {3, 2, 1}};
+        std::vector<HelmholtzElementCorrector> assembly_correctors(2);
+        assembly_correctors[0] = {
+            {0, 0, Complex(1.0, 2.0)},
+            {0, 0, Complex(3.0, -1.0)},
+            {1, 1, Complex(2.0, 0.0)}};
+        assembly_correctors[1] = {
+            {0, 2, Complex(-1.0, 0.5)},
+            {0, 2, Complex(0.25, -0.5)},
+            {2, 1, Complex(4.0, 0.0)}};
+        const ComplexSparseMatrix assembled = build_helmholtz_corrector_matrix(
+            assembly_mesh, 3, assembly_correctors);
+        require(std::abs(assembled.coeff(0, 0) - Complex(4.0, 1.0)) < 1e-14,
+                "column-wise corrector assembly did not sum duplicate entries");
+        require(std::abs(assembled.coeff(0, 1) - Complex(-0.75, 0.0)) < 1e-14,
+                "column-wise corrector assembly mapped a local vertex incorrectly");
+        require(std::abs(assembled.coeff(1, 1) - Complex(2.0, 0.0)) < 1e-14,
+                "column-wise corrector assembly lost an element contribution");
+        require(std::abs(assembled.coeff(2, 2) - Complex(4.0, 0.0)) < 1e-14,
+                "column-wise corrector assembly mapped a shared vertex incorrectly");
+        require(assembled.nonZeros() == 4,
+                "column-wise corrector assembly retained unexpected entries");
+
         HelmholtzProblemConfig config;
         config.H = 1;
         config.h = 4;
@@ -92,7 +124,17 @@ int main() {
         HelmholtzProblemConfig reuse_config = config;
         reuse_config.patch_solver.symbolic_cache_slots = 8;
         reuse_config.patch_solver.reuse_identical_factorization = true;
+#ifdef _OPENMP
+        const int original_thread_count = omp_get_max_threads();
+        // The factorization cache is thread-local.  A parallel dynamic
+        // schedule is not required to send two identical patch patterns to
+        // the same worker, so use one worker for this cache-behavior test.
+        omp_set_num_threads(1);
+#endif
         HelmholtzLodModel reuse_model = HelmholtzLodModel::build(reuse_config);
+#ifdef _OPENMP
+        omp_set_num_threads(original_thread_count);
+#endif
         const ComplexMatrix reuse_basis(reuse_model.corrected_trial_basis());
         require((reuse_basis - primal_dense).norm() < 1e-11,
                 "identical patch factorization reuse changed the corrector basis");

@@ -1106,13 +1106,51 @@ Default NUMA placement (`35.35 s`) and interleave-all (`35.62 s`) were
 indistinguishable on this pilot; interleave remains a defensible large-memory
 policy, not a measured speed optimization.
 
-The attempted `k=128,kh=1/8` case is not a result. It received signal 2
-after `38.09 s`, at `19.50 GiB` RSS, before writing a numerical row; only
-the CSV header remains in `summary_main_k128_gap6_t32.csv.tmp`, and there is
-no `.done` file. This was an external interruption, not an OOM event or
-solver/check failure. Since completed `k=64` used only `37.5 GiB`, the
-preregistered memory gate permits resuming `k=128`, but no conclusion beyond
-`k=64` is currently justified.
+The original `k=128,kh=1/8` attempt received signal 2 after `38.09 s` and was
+not a result. Two subsequent 32-thread attempts exposed a deterministic
+large-case assembly defect instead of producing a numerical row. The last
+attempt ran for `38:41.52`, reached `181,241,324 KiB` peak RSS without swap,
+and terminated with `SIGSEGV`. Kernel records from two attempts had the same
+PIE-relative instruction offset. Correcting for the executable LOAD segment
+mapped the failing write to Eigen's
+`set_from_triplets<complex<double>,int>`.
+
+The failure was in `build_helmholtz_corrector_matrix`. The old implementation
+retained every element corrector and copied every entry into one global
+triplet vector. At `k=128,L_H=15,L_h=21,ell=7`, identical
+fine-row/coarse-column pairs occur in all coarse elements incident to that
+coarse vertex. The raw entry count exceeded the signed 32-bit
+`StorageIndex` capacity used by `ComplexSparseMatrix`. Eigen's triplet prefix
+sum overflowed and the subsequent inner-index write left the allocated array.
+This explains the repeatable instruction address, the very high RSS, the
+header-only temporary CSV, and the absence of both an OOM-killer record and a
+`.done` file.
+
+Corrector assembly now builds the coarse-node incidence once, gathers one
+coarse column at a time, stably sums duplicate fine rows, and inserts the
+unique sorted entries directly into CSC storage. No global raw-triplet copy is
+created. The final unique nonzero count is checked against the sparse
+`StorageIndex` limit before allocation; exceeding it now raises an explicit
+`overflow_error` instead of entering Eigen with wrapped offsets. The server
+benchmark also has `--progress`, and the runner records mesh sizes, operator
+completion, raw corrector entry count, unique corrected-basis nonzeros,
+coarse-operator completion, and factorization completion in `run_*.log`.
+
+The regression case `k=8,L_H=7,L_h=13,ell=3` had `1,640,088` raw corrector
+entries but only `372,277` corrected-basis nonzeros. All exact/reference
+errors agreed with the archived row to roundoff. With the same eight-thread
+Release/LTO command, peak RSS decreased from `391,004 KiB` to `300,868 KiB`
+(`23.1%`) and wall time from `2.45 s` to `2.27 s`. The dedicated assembly test
+also checks duplicate summation and local-to-global coarse-column mapping.
+On the larger archived `k=16,L_H=9,L_h=15,ell=4` case, the new log reported
+`12,462,288` raw entries and `2,616,205` corrected-basis nonzeros. Exact and
+reference errors again matched the archive, while the eight-thread run used
+`18.23 s / 1,223,932 KiB`, versus the previous
+`18.95 s / 1,396,544 KiB`.
+
+There is still no valid `k=128` result. It must be rerun with the fixed
+executable and must produce a numerical row plus `.done` before extending any
+pollution conclusion beyond `k=64`.
 
 Raw rows, commands, timings, and metadata are in
 `results/helmholtz_pollution_server/`; the default-NUMA comparison is in

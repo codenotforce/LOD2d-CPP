@@ -337,16 +337,46 @@ tar -czf helmholtz_pollution_server_results.tar.gz \
 THREADS=32 SYMBOLIC_CACHE_SLOTS=1 FACTORIZATION_REUSE=none
 ```
 
-已上传的 `k=128` 文件不是数值结果。该进程在 `38.09 s` 时收到
-`SIGINT`，没有写出数据行或 `.done`；当时 RSS 为 `19.50 GiB`，没有
-swap，也不是 OOM。可用原命令断点续跑：
+已上传的 `k=128` 文件不是数值结果。最初一次运行在 `38.09 s` 时收到
+`SIGINT`；随后两次正式重跑均在相同的可执行文件相对地址触发
+`SIGSEGV`。最后一次运行耗时 `38:41.52`，峰值 RSS 为
+`181,241,324 KiB`，没有 swap 或 OOM-killer 记录，只留下单行 CSV 表头，
+没有 `.done`。
+
+故障地址已定位到 Eigen 的复数 `set_from_triplets`。旧实现把所有单元
+corrector 条目复制到一个全局 triplet 数组；`k=128,L_H=15,L_h=21,ell=7`
+时 raw 条目数超过复数稀疏矩阵的 32 位 `StorageIndex`，列偏移溢出后发生
+越界写。修复版改为按粗节点逐列合并重复 fine row，再直接写入 CSC，并在
+最终唯一非零元仍超过容量时给出明确错误。
+
+不要再使用旧二进制续跑。先更新和确认版本：
 
 ```bash
+cd ~/code/LOD2d-CPP
+git pull --ff-only
+git rev-parse HEAD
+```
+
+建议使用新结果目录保留旧故障现场：
+
+```bash
+RESULT_DIR=results/helmholtz_pollution_server_k128_csc \
 MODE=main K_VALUES="128" \
 THREADS=32 SYMBOLIC_CACHE_SLOTS=1 FACTORIZATION_REUSE=none \
-NUMA_POLICY=interleave MIN_AVAILABLE_GIB=300 \
+NUMA_POLICY=interleave MIN_AVAILABLE_GIB=256 \
 bash scripts/run_helmholtz_pollution_server.sh
 ```
 
-脚本会保留已完成的 `k=32,64`，只重新运行 `k=128`。完成后必须确认生成
-`main_k128_gap6_t32.done`，且对应 `summary_*.csv` 恰好包含表头和一行数据。
+新版脚本自动传入 `--progress`。另开终端观察：
+
+```bash
+tail -f \
+  results/helmholtz_pollution_server_k128_csc/run_main_k128_gap6_t32.log
+```
+
+日志应依次出现 `mesh ready`、`operators end`、`correctors end`、
+`corrected trial basis ready`、`coarse operator ready` 和
+`coarse factorization end`。其中 `correctors end` 会报告 raw 条目数，
+`corrected trial basis ready` 会报告合并后的唯一非零元数。完成后必须确认
+生成 `main_k128_gap6_t32.done`，且对应 `summary_*.csv` 恰好包含表头和
+一行数据；否则仍不是数值结果。

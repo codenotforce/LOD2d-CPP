@@ -108,6 +108,7 @@ run_case() {
     --stability-max-dofs=0
     --format=csv
     --check
+    --progress
   )
   : > "$log"
   if [[ ${#numa_prefix[@]} -gt 0 ]]; then
