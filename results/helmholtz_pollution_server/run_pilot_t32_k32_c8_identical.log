@@ -1,0 +1,1 @@
+numactl --interleave=all /home/sutai/code/LOD2d-CPP/build-pollution-server/benchmarks/bench_helmholtz_k --k=32 --H=auto --h=auto --fine-gap=6 --ell=auto --kH-target=1.0 --source=manufactured --mode=two-sided --solver=saddle --threads=32 --symbolic-cache-slots=8 --factorization-reuse=identical --stability-max-dofs=0 --format=csv --check
