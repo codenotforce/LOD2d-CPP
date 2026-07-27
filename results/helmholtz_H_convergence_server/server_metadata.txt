@@ -1,18 +1,18 @@
-date_utc=2026-07-27T15:30:52Z
-git_commit=22a1cc4807db2a847334941507890df74d6467c8
+date_utc=2026-07-27T16:31:35Z
+git_commit=03da386d2a6701da6f101fda363578d688811209
 mode=main
-k=32
-fine_level=19
-H_levels=8 9 10 11 12 13
+k=16
+fine_level=18
+H_levels=9 10 11 12 13
 ell=4
-threads=64
-solver=schur
+threads=32
+solver=saddle
 pilot_threads=16 32 64
 pilot_solvers=saddle schur
 symbolic_cache_slots=1
 factorization_reuse=none
 export_fields=0
-fine_reference_level=15
+fine_reference_level=13
 numa_policy_requested=auto
 numa_policy_resolved=interleave
 minimum_available_GiB=200
@@ -64,20 +64,45 @@ numa_begin
 available: 1 nodes (0)
 node 0 cpus: 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48 49 50 51 52 53 54 55 56 57 58 59 60 61 62 63 64 65 66 67 68 69 70 71 72 73 74 75 76 77 78 79 80 81 82 83 84 85 86 87 88 89 90 91 92 93 94 95 96 97 98 99 100 101 102 103 104 105 106 107 108 109 110 111 112 113 114 115 116 117 118 119 120 121 122 123 124 125 126 127
 node 0 size: 386478 MB
-node 0 free: 377620 MB
+node 0 free: 377152 MB
 node distances:
 node   0 
   0:  10 
 numa_end
 memory_begin
                total        used        free      shared  buff/cache   available
-内存：      377Gi       7.9Gi       368Gi        64Mi       770Mi       366Gi
-交换：      2.0Gi       1.6Gi       382Mi
+内存：      377Gi       8.1Gi       368Gi        64Mi       996Mi       366Gi
+交换：      2.0Gi       1.6Gi       391Mi
 memory_end
 git_status_begin
- M results/helmholtz_pollution_server/time_main_k128_gap6_t32.txt
+ M results/helmholtz_H_convergence_server/all_results.csv
+ M results/helmholtz_H_convergence_server/server_metadata.txt
+ M results/helmholtz_H_convergence_server/snapshots/H_L09_coarse_nodes.csv
+ M results/helmholtz_H_convergence_server/snapshots/H_L10_coarse_nodes.csv
+ M results/helmholtz_H_convergence_server/snapshots/H_L11_coarse_nodes.csv
+ M results/helmholtz_H_convergence_server/snapshots/H_L12_coarse_nodes.csv
+ M results/helmholtz_H_convergence_server/snapshots/H_L13_coarse_nodes.csv
 ?? build-H-convergence-server/
 ?? build-pollution-server/
 ?? build-server/
-?? results/helmholtz_H_convergence_server/
+?? results/helmholtz_H_convergence_server/main_saddle_t32_k16_H10_h18.done
+?? results/helmholtz_H_convergence_server/main_saddle_t32_k16_H11_h18.done
+?? results/helmholtz_H_convergence_server/main_saddle_t32_k16_H12_h18.done
+?? results/helmholtz_H_convergence_server/main_saddle_t32_k16_H13_h18.done
+?? results/helmholtz_H_convergence_server/main_saddle_t32_k16_H9_h18.done
+?? results/helmholtz_H_convergence_server/run_main_saddle_t32_k16_H10_h18.log
+?? results/helmholtz_H_convergence_server/run_main_saddle_t32_k16_H11_h18.log
+?? results/helmholtz_H_convergence_server/run_main_saddle_t32_k16_H12_h18.log
+?? results/helmholtz_H_convergence_server/run_main_saddle_t32_k16_H13_h18.log
+?? results/helmholtz_H_convergence_server/run_main_saddle_t32_k16_H9_h18.log
+?? results/helmholtz_H_convergence_server/summary_main_saddle_t32_k16_H10_h18.csv
+?? results/helmholtz_H_convergence_server/summary_main_saddle_t32_k16_H11_h18.csv
+?? results/helmholtz_H_convergence_server/summary_main_saddle_t32_k16_H12_h18.csv
+?? results/helmholtz_H_convergence_server/summary_main_saddle_t32_k16_H13_h18.csv
+?? results/helmholtz_H_convergence_server/summary_main_saddle_t32_k16_H9_h18.csv
+?? results/helmholtz_H_convergence_server/time_main_saddle_t32_k16_H10_h18.txt
+?? results/helmholtz_H_convergence_server/time_main_saddle_t32_k16_H11_h18.txt
+?? results/helmholtz_H_convergence_server/time_main_saddle_t32_k16_H12_h18.txt
+?? results/helmholtz_H_convergence_server/time_main_saddle_t32_k16_H13_h18.txt
+?? results/helmholtz_H_convergence_server/time_main_saddle_t32_k16_H9_h18.txt
 git_status_end
