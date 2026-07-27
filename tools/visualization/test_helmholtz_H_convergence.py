@@ -28,14 +28,23 @@ class HelmholtzHConvergenceTest(unittest.TestCase):
 
     def test_server_rows_and_negative_dof_slopes(self) -> None:
         rows = convergence.load_and_validate(self.input_csv)
-        self.assertEqual(len(rows), 6)
+        self.assertEqual(len(rows), 5)
+        self.assertTrue(all(convergence.integer(row, "k") == 16 for row in rows))
+        self.assertTrue(all(convergence.integer(row, "h_level") == 18 for row in rows))
+        self.assertEqual(
+            [convergence.integer(row, "H_level") for row in rows],
+            [9, 10, 11, 12, 13],
+        )
         dofs = [convergence.integer(row, "coarse_nodes") for row in rows]
         p1 = [convergence.number(row, "p1_energy_abs") for row in rows]
         lod = [convergence.number(row, "lod_energy_abs") for row in rows]
         self.assertLess(convergence.power_slope(dofs, p1), 0.0)
         self.assertLess(convergence.power_slope(dofs, lod), 0.0)
         self.assertTrue(all(lod_value < p1_value for p1_value, lod_value in zip(p1, lod)))
-        self.assertGreater(p1[-1] / lod[-1], 10.0)
+        self.assertGreater(p1[-1] / lod[-1], 6.0)
+        fine_floor = convergence.optional_number(rows[-1], "fine_energy_abs")
+        self.assertIsNotNone(fine_floor)
+        self.assertLess(lod[-1] / fine_floor, 1.05)
 
     def test_headless_render(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

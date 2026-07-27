@@ -43,6 +43,14 @@ def number(row: Mapping[str, str], field: str) -> float:
     return value
 
 
+def optional_number(row: Mapping[str, str], field: str) -> float | None:
+    try:
+        value = float(row[field])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"invalid optional numeric field {field!r}") from error
+    return value if math.isfinite(value) else None
+
+
 def integer(row: Mapping[str, str], field: str) -> int:
     value = number(row, field)
     rounded = round(value)
@@ -85,20 +93,25 @@ def adjacent_order(
 
 def load_and_validate(path: Path) -> List[Row]:
     rows = sorted(read_rows(path), key=lambda row: integer(row, "coarse_nodes"))
-    expected_levels = list(range(8, 14))
-    if [integer(row, "H_level") for row in rows] != expected_levels:
-        raise ValueError(
-            "expected completed H levels 8,9,10,11,12,13 for the h=19 run"
-        )
+    levels = [integer(row, "H_level") for row in rows]
+    if levels != list(range(levels[0], levels[-1] + 1)):
+        raise ValueError("completed H levels are not consecutive")
+    expected = {
+        "k": integer(rows[0], "k"),
+        "h_level": integer(rows[0], "h_level"),
+        "ell": integer(rows[0], "ell"),
+        "solver": rows[0].get("solver"),
+        "mode": rows[0].get("mode"),
+    }
     for row in rows:
-        if integer(row, "k") != 32:
-            raise ValueError("server convergence row is not k=32")
-        if integer(row, "h_level") != 19:
-            raise ValueError("server convergence row is not h=19")
-        if integer(row, "ell") != 4:
-            raise ValueError("server convergence row is not ell=4")
-        if row.get("solver") != "schur" or row.get("mode") != "two-sided":
-            raise ValueError("unexpected solver or Petrov mode")
+        if integer(row, "k") != expected["k"]:
+            raise ValueError("mixed wave numbers in one convergence CSV")
+        if integer(row, "h_level") != expected["h_level"]:
+            raise ValueError("mixed fine levels in one convergence CSV")
+        if integer(row, "ell") != expected["ell"]:
+            raise ValueError("mixed oversampling levels in one convergence CSV")
+        if row.get("solver") != expected["solver"] or row.get("mode") != expected["mode"]:
+            raise ValueError("mixed solver or Petrov modes")
         for field in ("p1_energy_abs", "lod_energy_abs", "H_max"):
             if not number(row, field) > 0.0:
                 raise ValueError(f"{field} must be positive")
@@ -113,7 +126,7 @@ def load_and_validate(path: Path) -> List[Row]:
         ):
             if number(row, field) >= 1.0e-8:
                 raise ValueError(f"{field} exceeds the runbook tolerance")
-        if number(row, "schur_rcond") <= 1.0e-14:
+        if expected["solver"] == "schur" and number(row, "schur_rcond") <= 1.0e-14:
             raise ValueError("Schur reciprocal condition estimate is too small")
 
     for field in ("p1_energy_abs", "lod_energy_abs"):
@@ -161,6 +174,17 @@ def plot_convergence(
     p1_orders = [number(row, "p1_energy_rate") for row in rows[1:]]
     lod_orders = [number(row, "lod_energy_rate") for row in rows[1:]]
     finer_dofs = dofs[1:]
+    k = integer(rows[0], "k")
+    fine_level = integer(rows[0], "h_level")
+    ell = integer(rows[0], "ell")
+    first_level = integer(rows[0], "H_level")
+    last_level = integer(rows[-1], "H_level")
+    fine_floor_values = [
+        value
+        for row in rows
+        if (value := optional_number(row, "fine_energy_abs")) is not None
+    ]
+    fine_floor = fine_floor_values[-1] if fine_floor_values else None
 
     fig, axes = plt.subplots(
         1, 2, figsize=(7.25, 3.25), gridspec_kw={"width_ratios": (1.45, 1.0)}
@@ -208,6 +232,15 @@ def plot_convergence(
         label=r"$O(N_H^{-1/2})$",
         zorder=1,
     )
+    if fine_floor is not None:
+        ax.axhline(
+            fine_floor,
+            color=COLORS["fine"],
+            linestyle="-.",
+            linewidth=1.0,
+            label=rf"Fine P1 exact-error floor ({fine_floor:.3g})",
+            zorder=2,
+        )
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
     ax.grid(True, which="major")
@@ -256,24 +289,25 @@ def plot_convergence(
 
     fig.suptitle(
         r"Helmholtz global-NVB convergence "
-        r"($k=32$, $h$-level 19, $\ell=4$)",
+        rf"($k={k}$, $h$-level {fine_level}, $\ell={ell}$)",
         y=1.01,
     )
     fig.tight_layout()
 
     output_dir.mkdir(parents=True, exist_ok=True)
     outputs: List[Path] = []
+    figure_stem = f"helmholtz_H_convergence_k{k}_server_energy"
     for extension in formats:
-        path = output_dir / f"helmholtz_H_convergence_server_energy.{extension}"
+        path = output_dir / f"{figure_stem}.{extension}"
         fig.savefig(path)
         outputs.append(path)
     plt.close(fig)
 
     metrics = [
-        ("p1_dof_fitted_slope_all_6", p1_slope),
-        ("lod_dof_fitted_slope_all_6", lod_slope),
-        ("p1_over_lod_at_H8", ratio_first),
-        ("p1_over_lod_at_H13", ratio_last),
+        (f"p1_dof_fitted_slope_all_{len(rows)}", p1_slope),
+        (f"lod_dof_fitted_slope_all_{len(rows)}", lod_slope),
+        (f"p1_over_lod_at_H{first_level}", ratio_first),
+        (f"p1_over_lod_at_H{last_level}", ratio_last),
         (
             "max_petrov_residual",
             max(number(row, "petrov_residual") for row in rows),
@@ -283,7 +317,14 @@ def plot_convergence(
             max(number(row, "corrector_residual") for row in rows),
         ),
     ]
-    metrics_path = output_dir / "helmholtz_H_convergence_server_metrics.csv"
+    if fine_floor is not None:
+        metrics.extend(
+            [
+                ("fine_exact_energy_floor", fine_floor),
+                ("lod_over_fine_floor_at_last", lod_error[-1] / fine_floor),
+            ]
+        )
+    metrics_path = output_dir / f"helmholtz_H_convergence_k{k}_server_metrics.csv"
     with metrics_path.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(("metric", "value", "source"))
