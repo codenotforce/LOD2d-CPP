@@ -1,0 +1,4 @@
+numactl --interleave=all /home/sutai/code/LOD2d-CPP/build-H-convergence-server/benchmarks/bench_helmholtz_H_convergence --k=32 --h=19 --H-levels=8 --ell=4 --mode=two-sided --solver=schur --threads=64 --symbolic-cache-slots=1 --factorization-reuse=none --export-dir=/home/sutai/code/LOD2d-CPP/results/helmholtz_H_convergence_server/snapshots --summary-out=/home/sutai/code/LOD2d-CPP/results/helmholtz_H_convergence_server/summary_main_schur_t64_k32_H8_h19.csv.tmp --check
+Absolute manufactured-solution errors in ||v||_{1,k}=(||grad v||^2+k^2||v||^2)^(1/2)
+Hlev H h kH h/H Nc Nf P1_E rate LOD_E rate P1_L2 LOD_L2 build_ms
+8 8.83883476e-02 1.95312500e-03 2.82842712e+00 2.20970869e-02 289 525313 2.29318328e+01 nan 1.84495555e+00 nan 5.01873895e-01 2.87886739e-02 1.74923919e+05
