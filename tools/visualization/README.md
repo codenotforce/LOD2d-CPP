@@ -31,6 +31,13 @@ series runs from upper left to lower right. The metrics CSV names these values
 - real part, imaginary part, magnitude, and phase of the complex LOD field;
 - a fixed centerline comparison that preserves the oscillatory detail.
 
+`plot_helmholtz_H_convergence.py` validates and plots the completed EPYC-server
+experiment in `results/helmholtz_H_convergence_server/all_results.csv`. The
+current archived run uses `k=32`, fine level 19, coarse levels 8--13, and
+`ell=4`. It produces the absolute `k`-weighted energy error versus coarse DOFs,
+the successive measured `H`-orders, and a CSV containing fitted DOF slopes and
+residual maxima.
+
 The pollution figure uses fixed `kH=1`. Its primary panel uses `kh=1/8`; its
 strict-reference panel uses `kh=1/16`. The coarse P1 FEM exact error is
 independent of the auxiliary fine space. The fine-P1 exact error is included
@@ -56,9 +63,11 @@ cmake --build build --target bench_helmholtz_visualization -j
   --output-dir=results/visualization/helmholtz_manufactured_k4_H4_h8_ell3
 python3 tools/visualization/plot_helmholtz_results.py
 python3 tools/visualization/plot_helmholtz_snapshot.py
+python3 tools/visualization/plot_helmholtz_H_convergence.py
 python3 -m unittest \
   tools/visualization/test_plot_helmholtz_results.py \
-  tools/visualization/test_helmholtz_snapshot.py
+  tools/visualization/test_helmholtz_snapshot.py \
+  tools/visualization/test_helmholtz_H_convergence.py
 ```
 
 To generate SVG in addition to PNG/PDF:

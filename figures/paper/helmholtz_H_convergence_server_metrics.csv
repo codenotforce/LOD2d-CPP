@@ -1,0 +1,7 @@
+metric,value,source
+p1_dof_fitted_slope_all_6,-0.69974004359839792,results/helmholtz_H_convergence_server/all_results.csv
+lod_dof_fitted_slope_all_6,-0.62908966563716096,results/helmholtz_H_convergence_server/all_results.csv
+p1_over_lod_at_H8,12.429477128921565,results/helmholtz_H_convergence_server/all_results.csv
+p1_over_lod_at_H13,12.792235880843831,results/helmholtz_H_convergence_server/all_results.csv
+max_petrov_residual,1.2429587611392268e-12,results/helmholtz_H_convergence_server/all_results.csv
+max_corrector_residual,9.0667451958600424e-13,results/helmholtz_H_convergence_server/all_results.csv
