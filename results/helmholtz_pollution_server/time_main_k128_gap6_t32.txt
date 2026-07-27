@@ -1,19 +1,19 @@
-Command terminated by signal 2
+Command terminated by signal 11
 	Command being timed: "numactl --interleave=all /home/sutai/code/LOD2d-CPP/build-pollution-server/benchmarks/bench_helmholtz_k --k=128 --H=auto --h=auto --fine-gap=6 --ell=auto --kH-target=1.0 --source=manufactured --mode=two-sided --solver=saddle --threads=32 --symbolic-cache-slots=1 --factorization-reuse=none --stability-max-dofs=0 --format=csv --check"
-	User time (seconds): 21.74
-	System time (seconds): 16.34
-	Percent of CPU this job got: 99%
-	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:38.09
+	User time (seconds): 66057.43
+	System time (seconds): 2461.38
+	Percent of CPU this job got: 2951%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 38:41.52
 	Average shared text size (kbytes): 0
 	Average unshared data size (kbytes): 0
 	Average stack size (kbytes): 0
 	Average total size (kbytes): 0
-	Maximum resident set size (kbytes): 20452160
+	Maximum resident set size (kbytes): 181241324
 	Average resident set size (kbytes): 0
 	Major (requiring I/O) page faults: 0
-	Minor (reclaiming a frame) page faults: 9408621
-	Voluntary context switches: 1
-	Involuntary context switches: 229
+	Minor (reclaiming a frame) page faults: 1241645898
+	Voluntary context switches: 6984816
+	Involuntary context switches: 112318
 	Swaps: 0
 	File system inputs: 0
 	File system outputs: 0
