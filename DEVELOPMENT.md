@@ -1118,6 +1118,146 @@ Raw rows, commands, timings, and metadata are in
 `results/helmholtz_pollution_server/`; the default-NUMA comparison is in
 `results/helmholtz_pollution_server_numa_default/`.
 
+### Absolute energy-norm convergence on a fixed fine hierarchy
+
+`bench_helmholtz_H_convergence` is the dedicated paper-data experiment for
+global-NVB convergence in `H`. It differs from the older manufactured
+benchmark in three important ways:
+
+1. the reported primary quantities are the **absolute**, not relative,
+   exact-solution errors;
+2. the comparison P1 solution is solved in the same `V_H` used by LOD and is
+   then prolonged to the common integration mesh `V_h`;
+3. every coarse level can export its actual nodes, elements, degrees of
+   freedom, measured mesh diameters, solution coefficients, and optional fine
+   nodal fields.
+
+For the manufactured homogeneous-Robin solution already defined above, the
+two paper curves are
+
+```math
+E_{\mathrm{LOD}}(H)
+=\left(
+  \|\nabla(u-u_{H,h,\ell})\|_{L^2(\Omega)}^2
+  k^2\|u-u_{H,h,\ell}\|_{L^2(\Omega)}^2
+\right)^{1/2},
+```
+
+```math
+E_{\mathrm{P1}}(H)
+=\left(
+  \|\nabla(u-u_H)\|_{L^2(\Omega)}^2
+  k^2\|u-u_H\|_{L^2(\Omega)}^2
+\right)^{1/2}.
+```
+
+Neither value is divided by `||u||_{1,k}`. Both integrals use the same fixed
+fine triangulation and quadrature path, so the ordinate difference is not an
+integration-grid artifact. The pairwise rates stored in the CSV are
+
+```math
+p_j
+=\frac{\log(E(H_{j-1})/E(H_j))}
+       {\log(H_{j-1}/H_j)}.
+```
+
+The hierarchy is produced by compatible global NVB. The benchmark additionally
+checks the coordinate reproduction identities
+
+```math
+P_{hH}x_H=x_h,\qquad P_{hH}y_H=y_h,
+```
+
+to machine precision. Together with the prolongation construction and the
+existing quasi-interpolation reproduction check, this is an explicit runtime
+gate for `V_H subset V_h`.
+
+The primary EPYC 9554 registration is:
+
+| parameter | value | reason |
+|---|---:|---|
+| `k` | 32 | large enough to expose the P1 pollution range already observed, while leaving room for six `H` points |
+| global fine level `L_h` | 21 | `h_max=2^-10`, `kh=1/32`, about 4.2 million fine triangles |
+| global coarse levels `L_H` | 10, 11, 12, 13, 14, 15 | six points with `kH` from `sqrt(2)` to `1/4` |
+| finest ratio | `h/H=1/8` at `L_H=15` | the fixed fine grid remains strictly finer at the last point and much finer at earlier points |
+| oversampling `ell` | 5 | `ceil(log2(32))`, matching the wave-number scan |
+| formulation | two-sided Petrov-Galerkin | the validated Helmholtz LOD path |
+
+For this initial mesh,
+
+```math
+h_{\max}(L)=2^{(1-L)/2}.
+```
+
+Thus the level numbers must not be plotted as literal `2^-L`. The summary CSV
+contains the measured `H_max`, `H_min`, `h_max`, and `h_min`; plots must use
+the measured `H_max` or the actual `coarse_nodes`, not the level counter.
+
+The local WSL pipeline validation on 2026-07-27 used
+`k=8`, `L_h=11`, `L_H=4,...,8`, `ell=3`, DirectSchur, and eight threads.
+It is deliberately too small to support a paper conclusion, but it exercised
+five global refinements, all CSV writers, the optional fine reference, and all
+checks:
+
+| `L_H` | `H_max` | coarse DOFs | P1 absolute energy | P1 rate | LOD absolute energy | LOD rate |
+|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 0.353553 | 25 | 3.654269 | - | 2.103421 | - |
+| 5 | 0.250000 | 41 | 2.864567 | 0.7025 | 1.058639 | 1.9811 |
+| 6 | 0.176777 | 81 | 1.850010 | 1.2616 | 0.606007 | 1.6096 |
+| 7 | 0.125000 | 145 | 1.342238 | 0.9258 | 0.394973 | 1.2352 |
+| 8 | 0.088388 | 289 | 0.838289 | 1.3582 | 0.325394 | 0.5591 |
+
+The maximum nesting-coordinate residual was exactly zero in the printed
+precision. All algebraic checks passed. The fine-P1 absolute energy error was
+`3.047998e-1`; it is a local regression diagnostic, not a reference floor for
+the planned server run. On the deepest local separation point
+`k=8,L_H=4,L_h=11,ell=3`, DirectSchur used `0.17 s / 79,644 KiB` versus
+DirectSaddle's `0.24 s / 129,276 KiB`. This motivates keeping DirectSchur as
+the server-script starting default, while the mandatory EPYC pilot still
+compares both solvers before the formal run.
+
+With `--export-dir`, the benchmark writes:
+
+- `summary.csv`: absolute errors, pairwise rates, actual DOFs and diameters,
+  algebraic diagnostics, timings, solver settings, and snapshot filenames;
+- `H_L##_coarse_nodes.csv`: coordinates, same-mesh P1 values, and LOD coarse
+  coefficients;
+- `H_L##_coarse_elements.csv`: connectivity, centroid, area, and diameter;
+- one fixed `fine_L##_nodes.csv` and `fine_L##_elements.csv`;
+- with `--export-fields`, `H_L##_fields.csv` containing the LOD reconstruction,
+  coarse-scale part, fine correction, prolonged P1 solution, exact solution,
+  pointwise errors, and optional fine reference.
+
+Large files are written through `.tmp` names and published only after the
+writer closes successfully. Export time is reported separately as
+`export_ms`. Fine fields are opt-in because six copies at level 21 are large
+and are not needed for an error-versus-DOF plot.
+
+The performance path intentionally does not solve the fine reference at every
+`H`: manufactured exact errors need no discrete reference. The server runner
+requests it only at the last level as a fine-grid calibration. Each `H` runs
+in a separate process, releases all sparse factors before the next level,
+uses Release/LTO and pinned OpenMP workers, enforces a free-memory gate, and
+supports `.done` resume. DirectSaddle and DirectSchur are both retained because
+the faster choice depends on patch size; the pilot measures both instead of
+assuming that the solver preferred by a smaller gap remains optimal.
+Multi-slot symbolic caching and exact numeric reuse remain disabled by
+default because the existing EPYC measurements showed higher memory without a
+reliable speed gain.
+
+The global mesh is not externally renumbered in this experiment. Its node IDs
+are part of the nested prolongation, quasi-interpolation, and exported topology;
+permuting only one object would invalidate `V_H subset V_h`. Eigen's sparse
+direct solvers already apply fill-reducing matrix orderings internally. A
+Morton/RCM mesh permutation should only be introduced later as a separately
+verified, simultaneous permutation of every mesh, vector, and transfer
+operator. The present optimization therefore keeps stable visualization IDs
+and targets the measured corrector bottleneck without taking that correctness
+risk.
+
+The complete operating procedure, including a staged `k=64` escalation, is in
+`HELMHOLTZ_H_CONVERGENCE_SERVER_RUNBOOK.md`.
+
 ## 15. Helmholtz Corrector Performance
 
 Milestone 6 keeps the complex SparseLU gold-standard solve but reduces its

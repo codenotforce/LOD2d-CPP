@@ -73,6 +73,13 @@ Helmholtz manufactured-solution and wave-number examples:
   --k=4 --h=10 --H-levels=5 --ell-levels=3 \
   --fem-levels=10 --check
 
+./build/benchmarks/bench_helmholtz_H_convergence \
+  --k=8 --h=11 --H-levels=4,5,6,7,8 --ell=3 \
+  --solver=schur --threads=8 \
+  --export-dir=results/helmholtz_H_convergence/snapshots \
+  --summary-out=results/helmholtz_H_convergence/summary.csv \
+  --check
+
 ./build/benchmarks/bench_helmholtz_k \
   --k=16 --H=auto --h=auto --kH-target=1 \
   --fine-gap=8 --ell=auto --source=manufactured \

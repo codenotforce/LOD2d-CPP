@@ -8,6 +8,39 @@
 
 > 可视化默认关闭时，不增加额外参考求解、校正子保留、矩阵复制、逐迭代快照、文件 I/O 或与迭代次数成正比的常驻内存。
 
+### 1.1 当前实施状态（2026-07-27）
+
+已执行到不需要修改 C++ 求解器的 CSV 论文制图阶段：
+
+- 新增 `tools/visualization/` 轻量后处理脚本、固定 WSL 依赖和数据测试；
+- 从现有 manufactured wave-number scan 生成固定 `kH=1` 的 FEM/LOD 污染对比图；
+- 从 `results/helmholtz_manufactured/validation.csv` 生成 global-NVB FEM/LOD 收敛图并拟合收敛率；
+- 图片和派生指标输出到 `figures/paper/`；
+- 绘图只读取已归档 CSV，不调用 C++、不重新求解、不改变模型对象或原 benchmark 性能。
+
+网格快照、场数据 VTU、最终复值解和自适应动画仍属于后续阶段，尚未为了本次两张误差图引入。
+
+### 1.2 Helmholtz `H` 收敛数据接口（2026-07-27）
+
+`bench_helmholtz_H_convergence` 已为固定细网格、global-NVB 粗网格序列实现
+专用 CSV 接口。该接口服务于绝对 \(k\)-加权能量误差论文图，不改变通用
+VTU/自适应可视化路线：
+
+- `all_results.csv`/`summary.csv` 使用实测 `H_max`、实际 `coarse_nodes`
+  以及 `p1_energy_abs`、`lod_energy_abs` 作收敛图；
+- `H_L##_coarse_nodes.csv` 和 `H_L##_coarse_elements.csv` 保存每个粗层的
+  坐标、拓扑、面积、直径、P1 值和 LOD 粗系数；
+- 固定细网格 `fine_L##_nodes.csv`、`fine_L##_elements.csv` 只保存一次；
+- 显式 `--export-fields` 后，`H_L##_fields.csv` 保存 fine-node 上的 LOD
+  重构、粗尺度分量、校正分量、P1 延拓、精确解和点误差；
+- C++ 写出的实部/虚部是权威数据，模、相位和论文配色仍由可视化项目处理；
+- 收敛图必须标为 absolute energy error，不能复用污染实验的 relative
+  error 图注。
+
+默认服务器注册参数和字段解释见
+`HELMHOLTZ_H_CONVERGENCE_SERVER_RUNBOOK.md`。level 21 的逐层 fine fields
+体量很大，单纯绘制误差-自由度曲线时保持 `EXPORT_FIELDS=0`。
+
 计划需要满足以下三项核心需求：
 
 1. 绘制粗、细网格，标出误差指示子较大的单元、Dörfler 标记单元和 NVB 闭包单元，并能生成动态加细过程；

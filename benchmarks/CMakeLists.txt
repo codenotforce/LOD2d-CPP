@@ -32,6 +32,15 @@ endif()
 add_executable(bench_helmholtz_manufactured bench_helmholtz_manufactured.cpp)
 target_link_libraries(bench_helmholtz_manufactured PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_H_convergence bench_helmholtz_H_convergence.cpp)
+target_link_libraries(bench_helmholtz_H_convergence PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_H_convergence_smoke
+        COMMAND bench_helmholtz_H_convergence
+            --k=2 --h=6 --H-levels=2,3 --ell=1
+            --solver=schur --threads=2 --check --format=csv)
+endif()
+
 add_executable(bench_helmholtz_hp_convergence bench_helmholtz_hp_convergence.cpp)
 target_link_libraries(bench_helmholtz_hp_convergence PRIVATE lod2d_core)
 
