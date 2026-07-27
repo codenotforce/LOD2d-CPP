@@ -89,6 +89,16 @@ int main() {
         require((adjoint_dense - primal_dense.conjugate()).norm() < 1e-11,
                 "adjoint corrected basis is not the conjugate primal basis");
 
+        HelmholtzProblemConfig reuse_config = config;
+        reuse_config.patch_solver.symbolic_cache_slots = 8;
+        reuse_config.patch_solver.reuse_identical_factorization = true;
+        HelmholtzLodModel reuse_model = HelmholtzLodModel::build(reuse_config);
+        const ComplexMatrix reuse_basis(reuse_model.corrected_trial_basis());
+        require((reuse_basis - primal_dense).norm() < 1e-11,
+                "identical patch factorization reuse changed the corrector basis");
+        require(reuse_model.correctors().diagnostics.factorization_reuses > 0,
+                "identical patch factorization reuse was not exercised");
+
         double boundary_corrector_max = 0.0;
         for (int col = 0; col < primal_corrector.outerSize(); ++col) {
             for (ComplexSparseMatrix::InnerIterator it(primal_corrector, col); it; ++it) {

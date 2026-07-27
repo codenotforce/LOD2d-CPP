@@ -10,6 +10,7 @@
 #include <stdexcept>
 #include <memory>
 #include <string>
+#include <cstdint>
 #include <vector>
 
 namespace lod2d::helmholtz {
@@ -23,6 +24,8 @@ struct SparseLuPatternCache {
     std::vector<int> inner_indices;
     int rows = -1;
     int cols = -1;
+    std::vector<Complex> values;
+    std::uint64_t last_use = 0;
 
     bool matches(const ComplexSparseMatrix &matrix) const {
         if (rows != matrix.rows() || cols != matrix.cols()) return false;
@@ -35,12 +38,21 @@ struct SparseLuPatternCache {
                    inner_indices.begin(), inner_indices.end(), matrix.innerIndexPtr());
     }
 
+    bool values_match(const ComplexSparseMatrix &matrix) const {
+        return matches(matrix)
+            && values.size() == static_cast<std::size_t>(matrix.nonZeros())
+            && std::equal(values.begin(), values.end(), matrix.valuePtr());
+    }
+
     ComplexSparseLu &factorize(
         const ComplexSparseMatrix &matrix,
-        bool &reused,
+        bool reuse_identical,
+        bool &symbolic_reused,
+        bool &factorization_reused,
         const char *description) {
-        reused = matches(matrix);
-        if (!reused) {
+        symbolic_reused = matches(matrix);
+        factorization_reused = reuse_identical && values_match(matrix);
+        if (!symbolic_reused) {
             solver.analyzePattern(matrix);
             rows = matrix.rows();
             cols = matrix.cols();
@@ -49,16 +61,68 @@ struct SparseLuPatternCache {
             inner_indices.assign(
                 matrix.innerIndexPtr(), matrix.innerIndexPtr() + matrix.nonZeros());
         }
+        if (factorization_reused) return solver;
         solver.factorize(matrix);
         if (solver.info() != Eigen::Success)
             throw std::runtime_error(std::string(description) + " factorization failed");
+        values.assign(matrix.valuePtr(), matrix.valuePtr() + matrix.nonZeros());
         return solver;
     }
 };
 
-thread_local SparseLuPatternCache saddle_cache;
-thread_local SparseLuPatternCache helmholtz_cache;
-thread_local SparseLuPatternCache shifted_cache;
+struct SparseLuCachePool {
+    std::vector<std::unique_ptr<SparseLuPatternCache>> entries;
+    std::uint64_t clock = 0;
+
+    ComplexSparseLu &factorize(
+        const ComplexSparseMatrix &matrix,
+        int requested_slots,
+        bool reuse_identical,
+        bool &symbolic_reused,
+        bool &factorization_reused,
+        const char *description) {
+        const int slots = std::max(1, requested_slots);
+        if (static_cast<int>(entries.size()) > slots)
+            entries.resize(slots);
+
+        SparseLuPatternCache *selected = nullptr;
+        if (reuse_identical) {
+            for (const auto &entry : entries) {
+                if (entry->values_match(matrix)) {
+                    selected = entry.get();
+                    break;
+                }
+            }
+        }
+        if (!selected && !reuse_identical) {
+            for (const auto &entry : entries) {
+                if (entry->matches(matrix)) {
+                    selected = entry.get();
+                    break;
+                }
+            }
+        }
+        if (!selected && static_cast<int>(entries.size()) < slots) {
+            entries.push_back(std::make_unique<SparseLuPatternCache>());
+            selected = entries.back().get();
+        }
+        if (!selected) {
+            selected = entries.front().get();
+            for (const auto &entry : entries) {
+                if (entry->last_use < selected->last_use)
+                    selected = entry.get();
+            }
+        }
+        selected->last_use = ++clock;
+        return selected->factorize(
+            matrix, reuse_identical, symbolic_reused,
+            factorization_reused, description);
+    }
+};
+
+thread_local SparseLuCachePool saddle_cache;
+thread_local SparseLuCachePool helmholtz_cache;
+thread_local SparseLuCachePool shifted_cache;
 
 ComplexSparseMatrix build_saddle(const HelmholtzPatchSystem &system) {
     const int n = system.helmholtz.rows();
@@ -85,16 +149,21 @@ ComplexSparseMatrix build_saddle(const HelmholtzPatchSystem &system) {
 }
 
 HelmholtzPatchSolveResult solve_direct_saddle(
-    const HelmholtzPatchSystem &system) {
+    const HelmholtzPatchSystem &system,
+    const HelmholtzPatchSolverConfig &config) {
     const int n = system.helmholtz.rows();
     const int m = static_cast<int>(system.constraints.rows());
     const ComplexSparseMatrix saddle = build_saddle(system);
     ComplexMatrix saddle_rhs = ComplexMatrix::Zero(n + m, system.rhs.cols());
     saddle_rhs.topRows(n) = system.rhs;
 
-    bool reused = false;
+    bool symbolic_reused = false;
+    bool factorization_reused = false;
     ComplexSparseLu &solver = saddle_cache.factorize(
-        saddle, reused, "Helmholtz corrector saddle");
+        saddle, config.symbolic_cache_slots,
+        config.reuse_identical_factorization,
+        symbolic_reused, factorization_reused,
+        "Helmholtz corrector saddle");
     const ComplexMatrix solution = solver.solve(saddle_rhs);
     if (solver.info() != Eigen::Success || !solution.allFinite())
         throw std::runtime_error("Helmholtz corrector saddle solve failed");
@@ -102,7 +171,8 @@ HelmholtzPatchSolveResult solve_direct_saddle(
     HelmholtzPatchSolveResult result;
     result.corrector = solution.topRows(n);
     result.multipliers = solution.bottomRows(m);
-    result.diagnostics.symbolic_reused = reused;
+    result.diagnostics.symbolic_reused = symbolic_reused;
+    result.diagnostics.factorization_reused = factorization_reused;
     return result;
 }
 
@@ -112,7 +182,9 @@ struct SchurInputs {
     HelmholtzPatchSolveDiagnostics diagnostics;
 };
 
-SchurInputs solve_direct_helmholtz_blocks(const HelmholtzPatchSystem &system) {
+SchurInputs solve_direct_helmholtz_blocks(
+    const HelmholtzPatchSystem &system,
+    const HelmholtzPatchSolverConfig &config) {
     const int n = system.helmholtz.rows();
     const int m = static_cast<int>(system.constraints.rows());
     ComplexMatrix combined(n, m + system.rhs.cols());
@@ -120,9 +192,13 @@ SchurInputs solve_direct_helmholtz_blocks(const HelmholtzPatchSystem &system) {
         combined.leftCols(m) = system.constraints.transpose().cast<Complex>();
     combined.rightCols(system.rhs.cols()) = system.rhs;
 
-    bool reused = false;
+    bool symbolic_reused = false;
+    bool factorization_reused = false;
     ComplexSparseLu &solver = helmholtz_cache.factorize(
-        system.helmholtz, reused, "Helmholtz patch A block");
+        system.helmholtz, config.symbolic_cache_slots,
+        config.reuse_identical_factorization,
+        symbolic_reused, factorization_reused,
+        "Helmholtz patch A block");
     const ComplexMatrix solved = solver.solve(combined);
     if (solver.info() != Eigen::Success || !solved.allFinite())
         throw std::runtime_error("Helmholtz patch A-block solve failed");
@@ -130,7 +206,8 @@ SchurInputs solve_direct_helmholtz_blocks(const HelmholtzPatchSystem &system) {
     SchurInputs result;
     result.z = solved.leftCols(m);
     result.y = solved.rightCols(system.rhs.cols());
-    result.diagnostics.symbolic_reused = reused;
+    result.diagnostics.symbolic_reused = symbolic_reused;
+    result.diagnostics.factorization_reused = factorization_reused;
     return result;
 }
 
@@ -153,10 +230,15 @@ SchurInputs solve_shifted_gmres_blocks(
     if (config.shifted.inverse == HelmholtzShiftedInverseKind::SparseLu) {
         const ComplexSparseMatrix shifted =
             build_shifted_helmholtz_operator(system, epsilon);
-        bool reused = false;
+        bool symbolic_reused = false;
+        bool factorization_reused = false;
         sparse_preconditioner = &shifted_cache.factorize(
-            shifted, reused, "shifted Helmholtz patch");
-        result.diagnostics.symbolic_reused = reused;
+            shifted, config.symbolic_cache_slots,
+            config.reuse_identical_factorization,
+            symbolic_reused, factorization_reused,
+            "shifted Helmholtz patch");
+        result.diagnostics.symbolic_reused = symbolic_reused;
+        result.diagnostics.factorization_reused = factorization_reused;
     } else if (config.shifted.inverse
                == HelmholtzShiftedInverseKind::GeometricVcycle) {
         if (system.geometric_prolongations.empty())
@@ -301,16 +383,19 @@ HelmholtzPatchSolveResult solve_helmholtz_patch(
         throw std::invalid_argument("Helmholtz patch right-hand side has the wrong size");
     if (system.constraints.cols() != system.helmholtz.cols())
         throw std::invalid_argument("Helmholtz patch constraints have the wrong size");
+    if (config.symbolic_cache_slots <= 0)
+        throw std::invalid_argument(
+            "Helmholtz symbolic cache slots must be positive");
 
     try {
         HelmholtzPatchSolveResult result;
         switch (config.kind) {
         case HelmholtzPatchSolverKind::DirectSaddle:
-            result = solve_direct_saddle(system);
+            result = solve_direct_saddle(system, config);
             break;
         case HelmholtzPatchSolverKind::DirectSchur:
             result = recover_schur_solution(
-                system, solve_direct_helmholtz_blocks(system));
+                system, solve_direct_helmholtz_blocks(system, config));
             break;
         case HelmholtzPatchSolverKind::ShiftedGmres:
             result = recover_schur_solution(
@@ -323,7 +408,7 @@ HelmholtzPatchSolveResult solve_helmholtz_patch(
         if (!config.fallback_to_direct
             || config.kind == HelmholtzPatchSolverKind::DirectSaddle)
             throw;
-        HelmholtzPatchSolveResult result = solve_direct_saddle(system);
+        HelmholtzPatchSolveResult result = solve_direct_saddle(system, config);
         result.diagnostics.direct_fallback = true;
         compute_final_residuals(system, result);
         return result;

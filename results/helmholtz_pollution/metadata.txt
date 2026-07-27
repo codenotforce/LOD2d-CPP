@@ -1,0 +1,16 @@
+date_utc=2026-07-27T07:33:48Z
+git_commit=11dba2f8caa9481d566bb744f143c280511186ba
+k_values=4 8 16
+kH_targets=1.0
+fine_gap=8
+mode=two-sided
+threads=8
+omp_proc_bind=spread
+omp_places=cores
+git_status_begin
+ M benchmarks/CMakeLists.txt
+ M benchmarks/bench_helmholtz_k.cpp
+ M scripts/run_helmholtz_k_scan.sh
+?? results/helmholtz_pollution/
+?? scripts/run_helmholtz_pollution.sh
+git_status_end

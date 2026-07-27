@@ -272,11 +272,12 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.problem_.coarse,
         fine_node_count,
         model.correctors_.primal);
-    model.corrected_test_basis_ = build_helmholtz_corrected_basis(
-        model.problem_.coarse_to_fine,
-        model.problem_.coarse,
-        fine_node_count,
-        model.correctors_.adjoint);
+    // All current coefficients and interpolation weights are real, hence the
+    // adjoint corrector is the coefficient-wise conjugate of the primal one.
+    // Conjugating the assembled basis avoids retaining and assembling a second
+    // identical sparsity structure.
+    model.corrected_test_basis_ = model.corrected_trial_basis_.conjugate();
+    model.corrected_test_basis_.makeCompressed();
     model.test_basis_ = model.corrected_test_basis_;
     if (model.config_.mode == HelmholtzPetrovMode::TwoSided)
         model.trial_basis_ = model.corrected_trial_basis_;

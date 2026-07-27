@@ -8,6 +8,7 @@ K_VALUES=${K_VALUES:-"4 8 16 32 64"}
 FINE_GAP=${FINE_GAP:-8}
 KH_TARGET=${KH_TARGET:-1.0}
 MODE=${MODE:-two-sided}
+SOURCE=${SOURCE:-gaussian}
 STABILITY_MAX_DOFS=${STABILITY_MAX_DOFS:-512}
 JOBS=${JOBS:-8}
 THREADS=${THREADS:-8}
@@ -46,6 +47,7 @@ fi
     echo "fine_gap=$FINE_GAP"
     echo "kH_target=$KH_TARGET"
     echo "mode=$MODE"
+    echo "source=$SOURCE"
     echo "stability_max_dofs=$STABILITY_MAX_DOFS"
     echo "omp_proc_bind=$OMP_PROC_BIND"
     echo "omp_places=$OMP_PLACES"
@@ -77,8 +79,10 @@ for k in $K_VALUES; do
         --ell=auto
         --kH-target="$KH_TARGET"
         --mode="$MODE"
+        --source="$SOURCE"
         --stability-max-dofs="$STABILITY_MAX_DOFS"
         --format=csv
+        --check
     )
     printf 'command:' >> "$log"
     printf ' %q' "${command[@]}" >> "$log"

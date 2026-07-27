@@ -20,7 +20,6 @@ namespace {
 
 struct PatchResult {
     HelmholtzElementCorrector primal;
-    HelmholtzElementCorrector adjoint;
     HelmholtzPatchSolveDiagnostics diagnostics;
     bool touches_physical_boundary = false;
 };
@@ -38,14 +37,11 @@ PatchResult solve_and_pack_patch(
     result.touches_physical_boundary = system.touches_physical_boundary;
     const int local_size = static_cast<int>(system.local_vertices.size());
     result.primal.reserve(static_cast<std::size_t>(local_size) * solved.corrector.cols());
-    result.adjoint.reserve(static_cast<std::size_t>(local_size) * solved.corrector.cols());
     for (int row = 0; row < local_size; ++row) {
         for (int column = 0; column < solved.corrector.cols(); ++column) {
             const Complex value = solved.corrector(row, column);
             if (std::abs(value) <= 1e-14) continue;
             result.primal.push_back({system.local_vertices[row], column, value});
-            result.adjoint.push_back({
-                system.local_vertices[row], column, std::conj(value)});
         }
     }
     return result;
@@ -86,6 +82,8 @@ void accumulate_diagnostics(
         ++diagnostics.symbolic_reuses;
     else
         ++diagnostics.symbolic_analyses;
+    if (local.factorization_reused)
+        ++diagnostics.factorization_reuses;
     if (patch.touches_physical_boundary)
         ++diagnostics.patches_touching_physical_boundary;
 }
@@ -152,12 +150,10 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
 
     HelmholtzCorrectorResult result;
     result.primal.resize(patch_count);
-    result.adjoint.resize(patch_count);
     result.diagnostics.patch_count = patch_count;
     result.diagnostics.parallel_threads = used_threads;
     for (int target = 0; target < patch_count; ++target) {
         result.primal[target] = std::move(patch_results[target].primal);
-        result.adjoint[target] = std::move(patch_results[target].adjoint);
         accumulate_diagnostics(patch_results[target], result.diagnostics);
     }
     return result;

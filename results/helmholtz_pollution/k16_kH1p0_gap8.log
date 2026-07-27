@@ -1,0 +1,1 @@
+/home/qcxubuntu/learning/LOD2d-C++/build/benchmarks/bench_helmholtz_k --k=16 --H=auto --h=auto --fine-gap=8 --ell=auto --kH-target=1.0 --source=manufactured --mode=two-sided --stability-max-dofs=512 --format=csv --check

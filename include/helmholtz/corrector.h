@@ -24,6 +24,7 @@ struct HelmholtzCorrectorDiagnostics {
     int parallel_threads = 1;
     int symbolic_analyses = 0;
     int symbolic_reuses = 0;
+    int factorization_reuses = 0;
     int direct_fallbacks = 0;
     int gmres_right_hand_sides = 0;
     int gmres_iterations = 0;
@@ -40,7 +41,6 @@ struct HelmholtzCorrectorDiagnostics {
 
 struct HelmholtzCorrectorResult {
     std::vector<HelmholtzElementCorrector> primal;
-    std::vector<HelmholtzElementCorrector> adjoint;
     HelmholtzCorrectorDiagnostics diagnostics;
 };
 

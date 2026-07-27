@@ -21,6 +21,13 @@ target_link_libraries(bench_saddle_h3h10 PRIVATE lod2d_core OpenMP::OpenMP_CXX)
 
 add_executable(bench_helmholtz_k bench_helmholtz_k.cpp)
 target_link_libraries(bench_helmholtz_k PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_pollution_manufactured_smoke
+        COMMAND bench_helmholtz_k
+            --k=2 --H=2 --h=6 --ell=1 --source=manufactured
+            --mode=two-sided --solver=schur --threads=2
+            --check --format=csv)
+endif()
 
 add_executable(bench_helmholtz_manufactured bench_helmholtz_manufactured.cpp)
 target_link_libraries(bench_helmholtz_manufactured PRIVATE lod2d_core)

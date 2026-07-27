@@ -75,7 +75,11 @@ Helmholtz manufactured-solution and wave-number examples:
 
 ./build/benchmarks/bench_helmholtz_k \
   --k=16 --H=auto --h=auto --kH-target=1 \
-  --fine-gap=8 --ell=auto --mode=two-sided
+  --fine-gap=8 --ell=auto --source=manufactured \
+  --mode=two-sided --check
+
+K_VALUES="4 8 16 32" FINE_GAP=6 \
+  bash scripts/run_helmholtz_pollution.sh
 ```
 
 Benchmark parameter conventions and reproducibility requirements are defined
@@ -154,6 +158,7 @@ Each document has one role:
 | [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md) | User guide for building, running, and configuring Helmholtz LOD |
 | [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md) | User guide for the implemented stage-1 adaptive experiment |
 | [HELMHOLTZ_HP_SERVER_RUNBOOK.md](HELMHOLTZ_HP_SERVER_RUNBOOK.md) | Build, validation, deep-h, and manufactured-solution hp-LOD server runs |
+| [HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md](HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md) | EPYC thread pilot, staged large-wave-number pollution scan, memory gates, and recovery |
 | [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md) | Benchmark authoring, timing, memory, validation, and output conventions |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Chronological implementation decisions, measured results, rejected experiments, and remaining engineering work |
 

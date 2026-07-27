@@ -38,6 +38,8 @@ struct HelmholtzShiftedLaplacianConfig {
 struct HelmholtzPatchSolverConfig {
     HelmholtzPatchSolverKind kind =
         HelmholtzPatchSolverKind::DirectSaddle;
+    int symbolic_cache_slots = 1;
+    bool reuse_identical_factorization = false;
     solver::RightGmresConfig gmres;
     HelmholtzShiftedLaplacianConfig shifted;
     bool fallback_to_direct = false;
@@ -59,6 +61,7 @@ struct HelmholtzPatchSolveDiagnostics {
     int gmres_max_iterations = 0;
     int gmres_restarts = 0;
     bool symbolic_reused = false;
+    bool factorization_reused = false;
     bool direct_fallback = false;
 };
 
