@@ -1,0 +1,24 @@
+Command terminated by signal 9
+	Command being timed: "numactl --interleave=all /home/sutai/code/LOD2d-CPP/build-H-convergence-server/benchmarks/bench_helmholtz_H_convergence --k=8 --h=18 --H-levels=6 --ell=4 --mode=two-sided --solver=saddle --threads=32 --symbolic-cache-slots=1 --factorization-reuse=none --export-dir=/home/sutai/code/LOD2d-CPP/results/helmholtz_H_convergence_server/snapshots --summary-out=/home/sutai/code/LOD2d-CPP/results/helmholtz_H_convergence_server/summary_main_saddle_t32_k8_H6_h18.csv.tmp --check"
+	User time (seconds): 19416.61
+	System time (seconds): 942.38
+	Percent of CPU this job got: 2983%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 11:22.32
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 385917868
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 7
+	Minor (reclaiming a frame) page faults: 490383551
+	Voluntary context switches: 173359
+	Involuntary context switches: 35090
+	Swaps: 0
+	File system inputs: 656
+	File system outputs: 0
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
