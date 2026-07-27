@@ -301,3 +301,52 @@ tar -czf helmholtz_pollution_server_results.tar.gz \
 
 回传后再把最终大波数数据和结论写入 `DEVELOPMENT.md`。在服务器结果回来前，
 不能把 `k<=32` 的本地结论外推成任意大波数下无污染。
+
+## 10. 2026-07-27 已返回结果与后续运行
+
+服务器已经完成：
+
+- `k=32,64`、`kH=1`、`kh=1/8` 主扫描；
+- `k=32,64`、`kH=1`、`kh=1/16` 严格参考扫描；
+- `8,16,32,64` 线程 pilot；
+- 单槽/多槽、数值分解复用和默认/interleave NUMA pilot。
+
+严格参考扫描的核心误差为：
+
+| `k` | FEM `E_exact` | FEM `E_ref` | LOD `E_exact` | LOD `E_ref` | fine `E_h` |
+|---:|---:|---:|---:|---:|---:|
+| 32 | 0.437167 | 0.435591 | 0.013908 | 0.008559 | 0.010905 |
+| 64 | 0.793002 | 0.790268 | 0.011887 | 0.004073 | 0.011115 |
+
+标准 P1 FEM 的精确和参考解相对误差同时增长约 `81.4%`，而严格细参考误差
+稳定在约 `1.1%`。LOD 精确误差下降，参考解相对误差下降约 `52.4%`。
+因此服务器结果支持“标准 FEM 在固定 `kH=1` 时存在强污染，而两侧 LOD
+在已测 `k<=64` 范围内没有能量污染增长”。
+
+性能选择已经校准：
+
+- 64 线程在 `k=32` pilot 上最快：`28.38 s / 11.09 GiB`；
+- 32 线程为 `35.62 s / 8.29 GiB`，适合深网格保守运行；
+- 多槽/完全相同分解复用没有实质提速，却把 RSS 提高到
+  `14.1-21.8 GiB`；
+- 默认和 interleave NUMA 在 `k=32` 上只相差约 `0.3 s`。
+
+继续使用：
+
+```bash
+THREADS=32 SYMBOLIC_CACHE_SLOTS=1 FACTORIZATION_REUSE=none
+```
+
+已上传的 `k=128` 文件不是数值结果。该进程在 `38.09 s` 时收到
+`SIGINT`，没有写出数据行或 `.done`；当时 RSS 为 `19.50 GiB`，没有
+swap，也不是 OOM。可用原命令断点续跑：
+
+```bash
+MODE=main K_VALUES="128" \
+THREADS=32 SYMBOLIC_CACHE_SLOTS=1 FACTORIZATION_REUSE=none \
+NUMA_POLICY=interleave MIN_AVAILABLE_GIB=300 \
+bash scripts/run_helmholtz_pollution_server.sh
+```
+
+脚本会保留已完成的 `k=32,64`，只重新运行 `k=128`。完成后必须确认生成
+`main_k128_gap6_t32.done`，且对应 `summary_*.csv` 恰好包含表头和一行数据。

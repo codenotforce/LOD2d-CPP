@@ -1038,6 +1038,86 @@ and `strict` stages. The staged default is `k=32,64,128`, `kH=1`,
 `kh=1/8`; the `kh=1/16` overlap stops at `k=64`. Full operating and
 escalation instructions are in `HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md`.
 
+### EPYC large-wave-number pollution results on 2026-07-27
+
+The AMD EPYC 9554 / 377 GiB results were returned in commit `cba5608`.
+Every successful row used the manufactured solution, global compatible NVB,
+two-sided Petrov-Galerkin LOD, `kH=1`, DirectSaddle, and
+`ell=ceil(log2(k))`. The primary `kh=1/8` results are:
+
+| `k` | `L_H/L_h` | `ell` | FEM `E_exact` | FEM `E_ref` | LOD `E_exact` | LOD `E_ref` | fine `E_h` |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 11 / 17 | 5 | 0.437167 | 0.430860 | 0.024315 | 0.008386 | 0.022716 |
+| 64 | 13 / 19 | 6 | 0.793002 | 0.782021 | 0.025946 | 0.003990 | 0.025551 |
+
+The stricter `kh=1/16` reference scan gives:
+
+| `k` | `L_H/L_h` | `ell` | FEM `E_exact` | FEM `E_ref` | LOD `E_exact` | LOD `E_ref` | fine `E_h` |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 32 | 11 / 19 | 5 | 0.437167 | 0.435591 | 0.013908 | 0.008559 | 0.010905 |
+| 64 | 13 / 21 | 6 | 0.793002 | 0.790268 | 0.011887 | 0.004073 | 0.011115 |
+
+This is a substantially stronger pollution observation than the local
+`k<=32` scan. From `k=32` to `k=64`, the exact coarse-FEM weighted error
+increases by `81.4%`, and its fine-reference error increases by the same
+factor. The exact FEM values agree between `kh=1/8` and `kh=1/16` to about
+`1e-12`, while the strict fine-reference error stays near `1.1%`. The FEM
+growth is therefore neither quadrature drift nor a deteriorating fine
+reference. Its exact relative `L2` error also rises from `0.4118` to
+`0.7821`.
+
+The LOD interpretation must separate the corrector-space floor from
+pollution. On `kh=1/8`, exact LOD energy changes from `2.4315%` to `2.5946%`,
+a small `6.7%` increase, while its error relative to `u_h` drops by `52.4%`.
+After deepening to `kh=1/16`, exact LOD energy instead decreases from
+`1.3908%` to `1.1887%`; its reference-relative error again drops by about
+`52.4%`. At `k=64`, the strict LOD error is close to the `1.1115%` fine-P1
+floor. Thus the small primary-grid increase is a fine-space floor effect,
+not evidence of LOD pollution. The supported numerical conclusion is:
+standard P1 FEM shows strong energy pollution through `k=64`, whereas the
+tested two-sided LOD does not.
+
+All four completed main/strict rows passed `--check`. The largest Petrov,
+corrector, and constraint residuals are `1.01e-12`, `8.24e-15`, and
+`1.73e-15`, respectively. Performance and memory were:
+
+| case | wall time | peak RSS | correctors | basis/factor | fine reference |
+|---|---:|---:|---:|---:|---:|
+| `k=32`, `kh=1/8`, 32 threads | 35.64 s | 8.34 GiB | 20.70 s | 9.11 s | 3.69 s |
+| `k=64`, `kh=1/8`, 32 threads | 5:07.76 | 37.50 GiB | 177.99 s | 75.99 s | 42.71 s |
+| `k=32`, `kh=1/16`, 32 threads | 7:29.38 | 30.25 GiB | 360.97 s | 36.50 s | 41.86 s |
+| `k=64`, `kh=1/16`, 32 threads | 1:09:56 | 147.79 GiB | 3470.11 s | 273.08 s | 403.79 s |
+
+The thread pilot favored 64 threads for the `k=32,kh=1/8` case:
+
+| threads | wall time | peak RSS |
+|---:|---:|---:|
+| 8 | 1:29.27 | 6.25 GiB |
+| 16 | 0:53.54 | 6.90 GiB |
+| 32 | 0:35.62 | 8.29 GiB |
+| 64 | 0:28.38 | 11.09 GiB |
+
+Moving from 32 to 64 threads saves `20.3%` wall time but raises RSS by
+`33.8%`; 32 remains the conservative deep-grid choice. Four/eight cache
+slots and exact numeric-factorization reuse changed the 32-thread wall time
+by less than `1.3%`, while raising RSS from `8.29 GiB` to
+`14.1-21.8 GiB`. The one-slot/no-reuse default is therefore confirmed.
+Default NUMA placement (`35.35 s`) and interleave-all (`35.62 s`) were
+indistinguishable on this pilot; interleave remains a defensible large-memory
+policy, not a measured speed optimization.
+
+The attempted `k=128,kh=1/8` case is not a result. It received signal 2
+after `38.09 s`, at `19.50 GiB` RSS, before writing a numerical row; only
+the CSV header remains in `summary_main_k128_gap6_t32.csv.tmp`, and there is
+no `.done` file. This was an external interruption, not an OOM event or
+solver/check failure. Since completed `k=64` used only `37.5 GiB`, the
+preregistered memory gate permits resuming `k=128`, but no conclusion beyond
+`k=64` is currently justified.
+
+Raw rows, commands, timings, and metadata are in
+`results/helmholtz_pollution_server/`; the default-NUMA comparison is in
+`results/helmholtz_pollution_server_numa_default/`.
+
 ## 15. Helmholtz Corrector Performance
 
 Milestone 6 keeps the complex SparseLU gold-standard solve but reduces its
