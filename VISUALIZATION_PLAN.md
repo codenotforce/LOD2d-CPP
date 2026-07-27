@@ -10,15 +10,24 @@
 
 ### 1.1 当前实施状态（2026-07-27）
 
-已执行到不需要修改 C++ 求解器的 CSV 论文制图阶段：
+阶段 1–3 已完成并在 WSL Release 环境通过测试：
 
-- 新增 `tools/visualization/` 轻量后处理脚本、固定 WSL 依赖和数据测试；
-- 从现有 manufactured wave-number scan 生成固定 `kH=1` 的 FEM/LOD 污染对比图；
-- 从 `results/helmholtz_manufactured/validation.csv` 生成 global-NVB FEM/LOD 收敛图并拟合收敛率；
-- 图片和派生指标输出到 `figures/paper/`；
-- 绘图只读取已归档 CSV，不调用 C++、不重新求解、不改变模型对象或原 benchmark 性能。
+- 新增独立的 `lod2d_visualization_io` 流式 VTU 导出库，字段使用非拥有式只读
+  `std::span`；该库不链接到 `lod2d_core`；
+- 新增显式运行的 `bench_helmholtz_visualization`。只有运行此程序时才计算
+  fine FEM reference、构造临时粗尺度延拓/细尺度修正并写出 VTU/JSON；
+- 写出粗/细网格、精确解、fine FEM、完整 LOD 解、粗尺度延拓、细尺度修正、
+  LOD-reference 误差、介质系数和可追溯 `run.json`；
+- 生成 Helmholtz 实部、虚部、模、相位、解分解、误差、网格与固定截线论文图；
+- 从 manufactured wave-number scan 生成固定 `kH=1` 的 FEM/LOD 污染对比图；
+- 从 `results/helmholtz_manufactured/validation.csv` 生成误差–DOF 双对数图。
+  横轴按 DOF 递增，拟合斜率为负，曲线从左上向右下；
+- C++ 测试覆盖字段长度、连接关系和复数拆分；Python 测试覆盖 manifest/VTU
+  一致性、`u_lod = u_coarse + u_fine_scale`、误差字段、负斜率和 headless 制图。
 
-网格快照、场数据 VTU、最终复值解和自适应动画仍属于后续阶段，尚未为了本次两张误差图引入。
+现有求解器、实值 `LodModel` 的临时校正子释放策略和原 benchmark 均未加入
+可视化状态、额外参考求解或默认 I/O。阶段 4 的自适应逐轮快照与动态加细动画
+尚未实施。
 
 ### 1.2 Helmholtz `H` 收敛数据接口（2026-07-27）
 

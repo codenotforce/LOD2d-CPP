@@ -278,7 +278,7 @@ def load_manufactured_data(results_root: Path) -> Tuple[List[Row], Dict[int, Lis
     rows = read_csv(results_root / "helmholtz_manufactured" / "validation.csv")
     fem = sorted(
         (row for row in rows if row.get("study") == "fem"),
-        key=lambda row: number(row, "h"),
+        key=lambda row: integer(row, "fine_nodes"),
     )
     lod: Dict[int, List[Row]] = {}
     for ell in (2, 3):
@@ -288,7 +288,7 @@ def load_manufactured_data(results_root: Path) -> Tuple[List[Row], Dict[int, Lis
                 for row in rows
                 if row.get("study") == "lod" and integer(row, "ell") == ell
             ),
-            key=lambda row: number(row, "H"),
+            key=lambda row: integer(row, "coarse_nodes"),
         )
     if len(fem) != 3 or any(len(lod[ell]) != 4 for ell in lod):
         raise ValueError(
@@ -317,7 +317,7 @@ def add_reference_power(
     )
 
 
-def configure_meshwidth_axis(ax: plt.Axes, label: str) -> None:
+def configure_dof_axis(ax: plt.Axes, label: str) -> None:
     ax.set_xscale("log", base=2)
     ax.set_yscale("log")
     ax.grid(True, which="major")
@@ -336,14 +336,14 @@ def plot_manufactured_convergence(
     fig, axes = plt.subplots(1, 2, figsize=(7.25, 3.2))
     metrics: List[Metric] = []
 
-    fine_h = [number(row, "h") for row in fem_rows]
+    fine_dofs = [integer(row, "fine_nodes") for row in fem_rows]
     fine_energy = [number(row, "fem_exact_energy") for row in fem_rows]
     fine_l2 = [number(row, "fem_exact_l2") for row in fem_rows]
-    fine_energy_rate = power_rate(fine_h, fine_energy)
-    fine_l2_rate = power_rate(fine_h, fine_l2)
+    fine_energy_rate = power_rate(fine_dofs, fine_energy)
+    fine_l2_rate = power_rate(fine_dofs, fine_l2)
 
     axes[0].plot(
-        fine_h,
+        fine_dofs,
         fine_energy,
         color=COLORS["energy"],
         marker="o",
@@ -351,7 +351,7 @@ def plot_manufactured_convergence(
         zorder=3,
     )
     axes[0].plot(
-        fine_h,
+        fine_dofs,
         fine_l2,
         color=COLORS["l2"],
         marker="s",
@@ -359,25 +359,36 @@ def plot_manufactured_convergence(
         label=rf"$L^2$ ($p={fine_l2_rate:.2f}$)",
         zorder=3,
     )
-    add_reference_power(axes[0], fine_h, fine_energy[0], 1.0, r"$O(h)$")
-    add_reference_power(axes[0], fine_h, fine_l2[0], 2.0, r"$O(h^2)$")
-    configure_meshwidth_axis(axes[0], r"Actual fine meshwidth $h_{\max}$")
+    add_reference_power(
+        axes[0], fine_dofs, fine_energy[0], -0.5, r"$O(N_h^{-1/2})$"
+    )
+    add_reference_power(
+        axes[0], fine_dofs, fine_l2[0], -1.0, r"$O(N_h^{-1})$"
+    )
+    configure_dof_axis(axes[0], r"Fine-space degrees of freedom $N_h$")
     axes[0].set_title("(a) Global-NVB fine P1 FEM", loc="left")
-    axes[0].legend(frameon=False, ncol=2)
+    axes[0].legend(
+        frameon=False,
+        ncol=2,
+        fontsize=6.3,
+        handlelength=1.5,
+        columnspacing=0.8,
+        handletextpad=0.4,
+    )
 
     metrics.extend(
         [
             (
                 "manufactured_convergence",
                 "fine_fem",
-                "energy_fitted_rate",
+                "energy_dof_fitted_slope",
                 fine_energy_rate,
                 "results/helmholtz_manufactured/validation.csv",
             ),
             (
                 "manufactured_convergence",
                 "fine_fem",
-                "l2_fitted_rate",
+                "l2_dof_fitted_slope",
                 fine_l2_rate,
                 "results/helmholtz_manufactured/validation.csv",
             ),
@@ -386,23 +397,23 @@ def plot_manufactured_convergence(
 
     markers = {2: "o", 3: "^"}
     line_styles = {2: "--", 3: "-"}
-    all_h: List[float] = []
+    all_dofs: List[float] = []
     ell3_energy: List[float] = []
     ell3_l2: List[float] = []
     for ell in (2, 3):
         rows = list(lod_rows[ell])
-        coarse_h = [number(row, "H") for row in rows]
+        coarse_dofs = [integer(row, "coarse_nodes") for row in rows]
         energy = [number(row, "lod_exact_energy") for row in rows]
         l2_error = [number(row, "lod_exact_l2") for row in rows]
-        energy_rate = power_rate(coarse_h, energy)
-        l2_rate = power_rate(coarse_h, l2_error)
-        all_h = coarse_h
+        energy_rate = power_rate(coarse_dofs, energy)
+        l2_rate = power_rate(coarse_dofs, l2_error)
+        all_dofs = coarse_dofs
         if ell == 3:
             ell3_energy = energy
             ell3_l2 = l2_error
 
         axes[1].plot(
-            coarse_h,
+            coarse_dofs,
             energy,
             color=COLORS["energy"],
             marker=markers[ell],
@@ -411,7 +422,7 @@ def plot_manufactured_convergence(
             zorder=3,
         )
         axes[1].plot(
-            coarse_h,
+            coarse_dofs,
             l2_error,
             color=COLORS["l2"],
             marker=markers[ell],
@@ -424,25 +435,37 @@ def plot_manufactured_convergence(
                 (
                     "manufactured_convergence",
                     f"lod_ell_{ell}",
-                    "energy_fitted_rate",
+                    "energy_dof_fitted_slope",
                     energy_rate,
                     "results/helmholtz_manufactured/validation.csv",
                 ),
                 (
                     "manufactured_convergence",
                     f"lod_ell_{ell}",
-                    "l2_fitted_rate",
+                    "l2_dof_fitted_slope",
                     l2_rate,
                     "results/helmholtz_manufactured/validation.csv",
                 ),
             ]
         )
 
-    add_reference_power(axes[1], all_h, ell3_energy[0], 1.0, r"$O(H)$")
-    add_reference_power(axes[1], all_h, ell3_l2[0], 2.0, r"$O(H^2)$")
-    configure_meshwidth_axis(axes[1], r"Actual coarse meshwidth $H_{\max}$")
+    add_reference_power(
+        axes[1], all_dofs, ell3_energy[0], -0.5, r"$O(N_H^{-1/2})$"
+    )
+    add_reference_power(
+        axes[1], all_dofs, ell3_l2[0], -1.0, r"$O(N_H^{-1})$"
+    )
+    configure_dof_axis(axes[1], r"Coarse LOD degrees of freedom $N_H$")
     axes[1].set_title(r"(b) Two-sided LOD, fixed fine level $h=10$", loc="left")
-    axes[1].legend(frameon=False, ncol=2)
+    axes[1].legend(
+        frameon=False,
+        ncol=2,
+        fontsize=5.7,
+        handlelength=1.35,
+        columnspacing=0.65,
+        handletextpad=0.35,
+        labelspacing=0.3,
+    )
 
     fig.suptitle(r"Manufactured global-NVB convergence ($k=4$)", y=1.01)
     fig.tight_layout()

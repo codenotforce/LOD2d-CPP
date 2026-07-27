@@ -1,8 +1,9 @@
 # Helmholtz paper plots
 
-This directory implements the first CSV-only visualization stage from
-`VISUALIZATION_PLAN.md`. It is a post-processing layer: it does not invoke the
-C++ solver, add model state, retain correctors, or alter benchmark timings.
+This directory implements stages 1--3 from `VISUALIZATION_PLAN.md`. The normal
+solver and existing benchmarks remain export-free. The separate
+`bench_helmholtz_visualization` executable explicitly performs the additional
+reference solve and streams non-owning mesh/field views to VTU.
 
 ## Figures
 
@@ -17,6 +18,18 @@ C++ solver, add model state, retain correctors, or alter benchmark timings.
   `results/helmholtz_manufactured/validation.csv`;
 - `helmholtz_plot_metrics.csv`, containing fitted rates and the numerical
   changes annotated in the figures.
+
+The convergence plot uses increasing degrees of freedom on the horizontal
+axis. Consequently the fitted exponents are negative and every convergent
+series runs from upper left to lower right. The metrics CSV names these values
+`*_dof_fitted_slope`.
+
+`plot_helmholtz_snapshot.py` reads the explicit VTU/JSON case and creates:
+
+- coarse/fine mesh comparison;
+- exact, fine FEM, LOD, coarse prolongation, fine-scale correction, and error;
+- real part, imaginary part, magnitude, and phase of the complex LOD field;
+- a fixed centerline comparison that preserves the oscillatory detail.
 
 The pollution figure uses fixed `kH=1`. Its primary panel uses `kh=1/8`; its
 strict-reference panel uses `kh=1/16`. The coarse P1 FEM exact error is
@@ -36,8 +49,16 @@ already present.
 
 ```bash
 cd /home/qcxubuntu/learning/LOD2d-C++
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --target bench_helmholtz_visualization -j
+./build/benchmarks/bench_helmholtz_visualization \
+  --k=4 --H=4 --h=8 --ell=3 \
+  --output-dir=results/visualization/helmholtz_manufactured_k4_H4_h8_ell3
 python3 tools/visualization/plot_helmholtz_results.py
-python3 -m unittest tools/visualization/test_plot_helmholtz_results.py
+python3 tools/visualization/plot_helmholtz_snapshot.py
+python3 -m unittest \
+  tools/visualization/test_plot_helmholtz_results.py \
+  tools/visualization/test_helmholtz_snapshot.py
 ```
 
 To generate SVG in addition to PNG/PDF:

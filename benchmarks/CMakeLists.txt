@@ -32,6 +32,16 @@ endif()
 add_executable(bench_helmholtz_manufactured bench_helmholtz_manufactured.cpp)
 target_link_libraries(bench_helmholtz_manufactured PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_visualization bench_helmholtz_visualization.cpp)
+target_link_libraries(
+    bench_helmholtz_visualization PRIVATE lod2d_core lod2d_visualization_io)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_visualization_export_smoke
+        COMMAND bench_helmholtz_visualization
+            --k=2 --H=1 --h=3 --ell=1
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/visualization-smoke)
+endif()
+
 add_executable(bench_helmholtz_H_convergence bench_helmholtz_H_convergence.cpp)
 target_link_libraries(bench_helmholtz_H_convergence PRIVATE lod2d_core)
 if(LOD2D_BUILD_TESTS)

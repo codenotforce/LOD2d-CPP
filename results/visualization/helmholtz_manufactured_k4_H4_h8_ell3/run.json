@@ -1,0 +1,11 @@
+{
+  "schema": "lod2d.helmholtz.visualization.v1",
+  "problem": "manufactured_polynomial_plane_wave",
+  "norm": "absolute weighted energy norm: sqrt(|e|_H1_seminorm^2 + k^2 ||e||_L2^2)",
+  "parameters": {"k": 4, "H_level": 4, "h_level": 8, "ell": 3},
+  "mesh": {"H_max": 0.35355339059327379, "h_max": 0.088388347648318447, "coarse_nodes": 25, "coarse_elements": 32, "fine_nodes": 289, "fine_elements": 512},
+  "errors": {"reference_energy_abs": 0.41764122425708172, "reference_l2_abs": 0.01121713216117172, "lod_energy_abs": 0.89839902315481579, "lod_l2_abs": 0.056282965945385566},
+  "residuals": {"petrov": 2.493983135664494e-15, "corrector": 7.1524589993917733e-16, "constraint": 2.4028527859042923e-16},
+  "fields": {"complex_encoding": "paired_real_imag", "point": ["u_exact", "u_reference", "u_lod", "u_coarse", "u_fine_scale", "error_lod"], "cell": ["diffusion", "refractive_index"]},
+  "files": {"coarse_mesh": "coarse_mesh.vtu", "fine_solution": "fine_solution.vtu"}
+}

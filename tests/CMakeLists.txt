@@ -1,4 +1,8 @@
 add_executable(test_mesh test_mesh.cpp)
+add_executable(test_vtk_export test_vtk_export.cpp)
+target_link_libraries(test_vtk_export PRIVATE lod2d_visualization_io)
+add_test(NAME vtk_streaming_export COMMAND test_vtk_export)
+
 add_executable(test_right_gmres test_right_gmres.cpp)
 target_link_libraries(test_right_gmres PRIVATE lod2d_core)
 add_test(NAME right_preconditioned_gmres COMMAND test_right_gmres)

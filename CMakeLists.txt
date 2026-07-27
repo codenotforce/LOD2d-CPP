@@ -89,6 +89,13 @@ if(TBB_FOUND)
     target_link_libraries(lod2d_core PUBLIC TBB::tbb)
 endif()
 
+# ---- Optional-use visualization I/O (not linked into lod2d_core) ----
+add_library(lod2d_visualization_io STATIC
+    src/io/vtk_writer.cpp
+)
+target_include_directories(lod2d_visualization_io PUBLIC include)
+target_link_libraries(lod2d_visualization_io PUBLIC Eigen3::Eigen)
+
 # ---- Main executable ----
 add_executable(lod2d src/main.cpp)
 target_link_libraries(lod2d PRIVATE lod2d_core)
