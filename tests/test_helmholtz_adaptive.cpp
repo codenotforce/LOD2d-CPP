@@ -1,5 +1,6 @@
 #include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/adaptive/hierarchy.h"
+#include "helmholtz/boundary.h"
 #include "helmholtz/model.h"
 
 #include <algorithm>
@@ -51,6 +52,44 @@ std::vector<TriangleSignature> canonical_triangles(const TriMesh &mesh) {
     return result;
 }
 
+Eigen::MatrixXd node_coordinates(const TriMesh &mesh) {
+    Eigen::MatrixXd result(mesh.nodes.size(), 2);
+    for (int node = 0; node < static_cast<int>(mesh.nodes.size()); ++node)
+        result.row(node) = mesh.nodes[node].transpose();
+    return result;
+}
+
+void verify_three_level_prolongations(const AdaptiveMeshHierarchy &hierarchy) {
+    const Eigen::SparseMatrix<double> composed =
+        hierarchy.fine_to_cert_audit() * hierarchy.coarse_to_fine();
+    require((composed - hierarchy.coarse_to_cert_audit()).norm() < 1e-12,
+            "P_H_audit is inconsistent with P_h_audit P_H_h");
+    require((hierarchy.coarse_to_fine() * node_coordinates(hierarchy.coarse_mesh())
+             - node_coordinates(hierarchy.fine_mesh())).norm() < 1e-11,
+            "P_H_h does not reproduce fine node coordinates");
+    require((hierarchy.fine_to_cert_audit() * node_coordinates(hierarchy.fine_mesh())
+             - node_coordinates(hierarchy.cert_audit_mesh())).norm() < 1e-11,
+            "P_h_audit does not reproduce audit node coordinates");
+    require((hierarchy.coarse_to_cert_audit()
+                 * node_coordinates(hierarchy.coarse_mesh())
+             - node_coordinates(hierarchy.cert_audit_mesh())).norm() < 1e-11,
+            "P_H_audit does not reproduce audit node coordinates");
+
+    Eigen::MatrixXd expected = Eigen::MatrixXd::Identity(
+        hierarchy.coarse_mesh().nodes.size(), hierarchy.coarse_mesh().nodes.size());
+    for (int node : dirichlet_nodes(hierarchy.coarse_mesh()))
+        expected.row(node).setZero();
+    const Eigen::MatrixXd fine_right_inverse =
+        hierarchy.fine_quasi_interpolation() * hierarchy.coarse_to_fine();
+    const Eigen::MatrixXd audit_right_inverse =
+        hierarchy.cert_audit_quasi_interpolation()
+        * hierarchy.coarse_to_cert_audit();
+    require((fine_right_inverse - expected).norm() < 1e-9,
+            "fine I_H is not a right inverse of P_H_h");
+    require((audit_right_inverse - expected).norm() < 1e-9,
+            "cert-audit I_H is not a right inverse of P_H_audit");
+}
+
 void verify_hierarchy_and_estimator() {
     AdaptiveMeshHierarchy hierarchy(make_helmholtz_unit_square_mesh(), 1, 4);
     const NestedFineMesh initial_fine = hierarchy.build_nested_fine_mesh();
@@ -65,6 +104,27 @@ void verify_hierarchy_and_estimator() {
             "initial fixed fine completion differs from the uniform master mesh");
     require(initial_fine.refinement.mesh.nodes.size() == uniform_fine.nodes.size(),
             "initial fixed fine completion contains duplicate node coordinates");
+    verify_three_level_prolongations(hierarchy);
+
+    const std::size_t initial_audit_elements = hierarchy.cert_audit_mesh().elems.size();
+    hierarchy.refine_cert_audit_from_fine_elements({0});
+    validate_boundary_tags(hierarchy.cert_audit_mesh());
+    require(hierarchy.cert_audit_mesh().elems.size() > initial_audit_elements,
+            "cert-audit refinement did not refine the selected fine element");
+    require(*std::min_element(
+                hierarchy.cert_audit_element_levels().begin(),
+                hierarchy.cert_audit_element_levels().end()) == hierarchy.fine_level(),
+            "local cert-audit refinement unexpectedly refined the entire fine mesh");
+    require(*std::max_element(
+                hierarchy.cert_audit_element_levels().begin(),
+                hierarchy.cert_audit_element_levels().end()) > hierarchy.fine_level(),
+            "cert-audit mesh is not a strict refinement of the fine mesh");
+    require(std::abs(boundary_measure(
+                hierarchy.cert_audit_mesh(), BoundaryTag::Robin) - 4.0) < 2e-12,
+            "cert-audit refinement changed the physical boundary measure");
+    verify_three_level_prolongations(hierarchy);
+    const std::vector<TriangleSignature> audit_before_coarse_refinement =
+        canonical_triangles(hierarchy.cert_audit_mesh());
 
     hierarchy.refine({0});
     require(*std::min_element(hierarchy.coarse_levels().begin(), hierarchy.coarse_levels().end()) == 1,
@@ -81,6 +141,10 @@ void verify_hierarchy_and_estimator() {
     config.H = 1;
     require(adaptive_fine.refinement.mesh.nodes.size() == uniform_fine.nodes.size(),
             "adaptive completion contains duplicate node coordinates");
+    require(canonical_triangles(hierarchy.cert_audit_mesh())
+                == audit_before_coarse_refinement,
+            "coarse refinement changed the independent cert-audit mesh");
+    verify_three_level_prolongations(hierarchy);
     for (int step = 0; step < 3; ++step) {
         std::vector<int> marked;
         for (int t = 0; t < static_cast<int>(hierarchy.coarse_levels().size()); ++t) {

@@ -548,7 +548,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 
 ### WP2：三层网格、audit space 和统一误差模块
 
-**状态：当前只有 \(V_H\subset V_h\)。**
+**状态：进行中（2026-08-08）；已显式维护 \(T_H,T_h,T_{\widehat h}\)、父子映射、三组节点 prolongation、fine/audit 两套 \(I_H\) 及按 fine-element 集合驱动的 cert-audit 共形局部加细；统一误差角色接口、局部误差服务和分离计时缓存待完成。**
 
 任务：
 
