@@ -53,4 +53,10 @@ void write_vtu(
     const TriMesh &mesh,
     const VtuDataView &data = {});
 
+/// Write explicit physical boundary edges as VTK line cells with an Int32
+/// `boundary_tag` cell field (Dirichlet=1, Robin=2).
+void write_boundary_vtu(
+    const std::filesystem::path &path,
+    const TriMesh &mesh);
+
 } // namespace lod2d::io

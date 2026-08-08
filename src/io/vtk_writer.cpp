@@ -209,4 +209,54 @@ void write_vtu(
     if (!output) throw std::runtime_error("failed while writing VTU output: " + path.string());
 }
 
+void write_boundary_vtu(
+    const std::filesystem::path &path,
+    const TriMesh &mesh) {
+    validate_mesh(mesh);
+    if (mesh.boundary_edges.empty())
+        throw std::invalid_argument("boundary VTU export requires explicit boundary-edge tags");
+    if (!path.parent_path().empty())
+        std::filesystem::create_directories(path.parent_path());
+    std::ofstream output(path);
+    if (!output) throw std::runtime_error("cannot open boundary VTU output: " + path.string());
+    output << std::setprecision(std::numeric_limits<double>::max_digits10);
+    output << "<?xml version=\"1.0\"?>\n"
+              "<VTKFile type=\"UnstructuredGrid\" version=\"0.1\" byte_order=\"LittleEndian\">\n"
+              "  <UnstructuredGrid>\n"
+              "    <Piece NumberOfPoints=\"" << mesh.nodes.size()
+           << "\" NumberOfCells=\"" << mesh.boundary_edges.size() << "\">\n"
+              "      <PointData/>\n"
+              "      <CellData>\n"
+              "        <DataArray type=\"Int32\" Name=\"boundary_tag\" NumberOfComponents=\"1\" format=\"ascii\">\n          ";
+    for (const BoundaryEdge &edge : mesh.boundary_edges)
+        output << static_cast<int>(edge.tag) << ' ';
+    output << "\n        </DataArray>\n"
+              "      </CellData>\n"
+              "      <Points>\n"
+              "        <DataArray type=\"Float64\" NumberOfComponents=\"3\" format=\"ascii\">\n          ";
+    for (const Point2 &point : mesh.nodes)
+        output << point.x() << ' ' << point.y() << " 0 ";
+    output << "\n        </DataArray>\n"
+              "      </Points>\n"
+              "      <Cells>\n"
+              "        <DataArray type=\"Int32\" Name=\"connectivity\" format=\"ascii\">\n          ";
+    for (const BoundaryEdge &edge : mesh.boundary_edges)
+        output << edge.nodes[0] << ' ' << edge.nodes[1] << ' ';
+    output << "\n        </DataArray>\n"
+              "        <DataArray type=\"Int32\" Name=\"offsets\" format=\"ascii\">\n          ";
+    for (std::size_t cell = 0; cell < mesh.boundary_edges.size(); ++cell)
+        output << 2 * (cell + 1) << ' ';
+    output << "\n        </DataArray>\n"
+              "        <DataArray type=\"UInt8\" Name=\"types\" format=\"ascii\">\n          ";
+    for (std::size_t cell = 0; cell < mesh.boundary_edges.size(); ++cell)
+        output << "3 ";
+    output << "\n        </DataArray>\n"
+              "      </Cells>\n"
+              "    </Piece>\n"
+              "  </UnstructuredGrid>\n"
+              "</VTKFile>\n";
+    if (!output)
+        throw std::runtime_error("failed while writing boundary VTU output: " + path.string());
+}
+
 } // namespace lod2d::io

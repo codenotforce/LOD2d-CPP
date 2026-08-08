@@ -1,4 +1,5 @@
 #include "helmholtz/patch_system.h"
+#include "helmholtz/boundary.h"
 
 #include <Eigen/QR>
 #include <algorithm>
@@ -133,7 +134,9 @@ LocalPatchLevel build_local_patch_level(
             }
         }
         for (int vertex : touched) {
-            if (counts[vertex] == global_incidence[vertex])
+            if (counts[vertex] == global_incidence[vertex]
+                && !std::binary_search(
+                    mesh.dirichlet.begin(), mesh.dirichlet.end(), vertex))
                 level.vertices.push_back(vertex);
         }
     }
@@ -199,10 +202,15 @@ HelmholtzPatchAssembler::HelmholtzPatchAssembler(
       children_(fine_element_children(
           fine_element_prolongation, static_cast<int>(coarse.elems.size()))),
       fine_incidence_(node_incidence(fine)),
+      fine_dirichlet_(fine.nodes.size(), false),
       fine_edge_counts_(edge_counts(fine)),
       hierarchy_meshes_(hierarchy_meshes),
       node_level_prolongations_(node_level_prolongations),
       element_level_prolongations_(element_level_prolongations) {
+    for (int node : dirichlet_nodes(fine_)) {
+        if (node >= 0 && node < static_cast<int>(fine_dirichlet_.size()))
+            fine_dirichlet_[node] = true;
+    }
     const int coarse_element_count = static_cast<int>(coarse_.elems.size());
     if (patches_.rows() != coarse_element_count
         || patches_.cols() != coarse_element_count)
@@ -284,6 +292,7 @@ HelmholtzPatchSystem HelmholtzPatchAssembler::assemble(int target) const {
     system.local_vertices.reserve(touched_vertices.size());
     for (int vertex : touched_vertices) {
         if (patch_workspace.node_count[vertex] != fine_incidence_[vertex]) continue;
+        if (fine_dirichlet_[vertex]) continue;
         patch_workspace.local_seen[vertex] = stamp;
         patch_workspace.local_index[vertex]
             = static_cast<int>(system.local_vertices.size());
@@ -336,8 +345,11 @@ HelmholtzPatchSystem HelmholtzPatchAssembler::assemble(int target) const {
     for (int element : system.patch_elements) {
         const Triangle &triangle = fine_.elems[element];
         for (const auto &edge : local_edges) {
+            const Edge physical_edge = canonical_edge(
+                triangle[edge[0]], triangle[edge[1]]);
             if (fine_edge_counts_.at(edge_key(
-                    triangle[edge[0]], triangle[edge[1]])) == 1) {
+                    physical_edge[0], physical_edge[1])) == 1
+                && boundary_tag(fine_, physical_edge) == BoundaryTag::Robin) {
                 system.touches_physical_boundary = true;
                 break;
             }

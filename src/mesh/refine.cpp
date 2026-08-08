@@ -1,4 +1,5 @@
 #include "mesh/refine.h"
+#include "helmholtz/boundary.h"
 #include <Eigen/Sparse>
 #include <algorithm>
 #include <array>
@@ -149,6 +150,22 @@ void merge_coincident_nodes(RefineOutput &refinement) {
     for (int node : refinement.mesh.dirichlet)
         dirichlet.insert(old_to_new[node]);
     refinement.mesh.dirichlet.assign(dirichlet.begin(), dirichlet.end());
+    if (!refinement.mesh.boundary_edges.empty()) {
+        std::map<Edge, BoundaryTag> remapped;
+        for (const BoundaryEdge &entry : refinement.mesh.boundary_edges) {
+            const Edge edge = helmholtz::canonical_edge(
+                old_to_new[entry.nodes[0]], old_to_new[entry.nodes[1]]);
+            if (edge[0] == edge[1])
+                throw std::runtime_error("boundary tag merge created a degenerate edge");
+            const auto [found, inserted] = remapped.emplace(edge, entry.tag);
+            if (!inserted && found->second != entry.tag)
+                throw std::runtime_error("boundary tag merge created conflicting tags");
+        }
+        refinement.mesh.boundary_edges.clear();
+        for (const auto &[edge, tag] : remapped)
+            refinement.mesh.boundary_edges.push_back({edge, tag});
+        helmholtz::synchronize_dirichlet_nodes(refinement.mesh);
+    }
     refinement.mesh.nodes = std::move(nodes);
 
     std::vector<Eigen::Triplet<double>> selection_triplets;
@@ -281,6 +298,7 @@ RefineOutput refine_marked(const TriMesh &coarse, const std::vector<int> &marked
     Eigen::SparseMatrix<double> P_dg(3 * static_cast<int>(fine.elems.size()), 3 * nt);
     P_dg.setFromTriplets(pdg_triplets.begin(), pdg_triplets.end());
 
+    helmholtz::propagate_boundary_tags(coarse, fine);
     return {std::move(fine), std::move(P_node), std::move(P_elem), std::move(P_dg)};
 }
 
@@ -441,6 +459,10 @@ RefineOutput bisect_reference_edges(const TriMesh &coarse, const std::vector<cha
     Eigen::SparseMatrix<double> P_dg(3 * static_cast<int>(fine.elems.size()), 3 * nt);
     P_dg.setFromTriplets(pdg_triplets.begin(), pdg_triplets.end());
 
+    // A single closure sweep may still contain hanging edges. Propagating
+    // physical-boundary tags here would misclassify those temporary
+    // topological boundary edges. The complete NVB closure propagates tags
+    // from its original conforming mesh after all sweeps have finished.
     return {std::move(fine), std::move(P_node), std::move(P_elem), std::move(P_dg)};
 }
 
@@ -495,6 +517,7 @@ RefineOutput bisect_newest_vertex(const TriMesh &coarse, const std::vector<int> 
     }
 
     merge_coincident_nodes(total);
+    helmholtz::propagate_boundary_tags(coarse, total.mesh);
     return total;
 }
 
@@ -612,6 +635,7 @@ RefineOutput refine_red(const TriMesh &coarse) {
 
     Eigen::SparseMatrix<double> P_dg(12 * nt, 3 * nt);
     P_dg.setFromTriplets(pdg_triplets.begin(), pdg_triplets.end());
+    helmholtz::propagate_boundary_tags(coarse, fine);
     return {std::move(fine), std::move(P_node), std::move(P_elem), std::move(P_dg)};
 }
 

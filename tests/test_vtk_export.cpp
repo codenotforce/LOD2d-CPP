@@ -1,4 +1,5 @@
 #include "io/vtk_writer.h"
+#include "helmholtz/model.h"
 
 #include <array>
 #include <complex>
@@ -87,6 +88,17 @@ int main() {
             rejected = true;
         }
         require(rejected, "VTU writer accepted a mismatched point field");
+
+        const std::filesystem::path boundary_output =
+            std::filesystem::temp_directory_path() / "lod2d_test_boundary.vtu";
+        write_boundary_vtu(
+            boundary_output, lod2d::helmholtz::make_helmholtz_l_shape_mesh());
+        const std::string boundary_xml = read_text(boundary_output);
+        require(boundary_xml.find("Name=\"boundary_tag\"") != std::string::npos,
+                "boundary VTU omitted the boundary_tag field");
+        require(boundary_xml.find("NumberOfCells=\"8\"") != std::string::npos,
+                "boundary VTU has the wrong edge count");
+        std::filesystem::remove(boundary_output);
 
         std::filesystem::remove(output);
         std::cout << "VTU streaming export schema passed\n";

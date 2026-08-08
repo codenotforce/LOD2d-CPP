@@ -1,4 +1,5 @@
 #include "helmholtz/adaptive/estimator.h"
+#include "helmholtz/boundary.h"
 
 #include "lod/patches.h"
 
@@ -13,21 +14,6 @@
 
 namespace lod2d::helmholtz::adaptive {
 namespace {
-
-struct QuadraturePoint {
-    std::array<double, 3> barycentric;
-    double weight;
-};
-
-constexpr std::array<QuadraturePoint, 7> kTriangleQuadrature{{
-    {{{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0}}, 0.225000000000000},
-    {{{0.059715871789770, 0.470142064105115, 0.470142064105115}}, 0.132394152788506},
-    {{{0.470142064105115, 0.059715871789770, 0.470142064105115}}, 0.132394152788506},
-    {{{0.470142064105115, 0.470142064105115, 0.059715871789770}}, 0.132394152788506},
-    {{{0.797426985353087, 0.101286507323456, 0.101286507323456}}, 0.125939180544827},
-    {{{0.101286507323456, 0.797426985353087, 0.101286507323456}}, 0.125939180544827},
-    {{{0.101286507323456, 0.101286507323456, 0.797426985353087}}, 0.125939180544827}
-}};
 
 struct ElementGeometry {
     double area = 0.0;
@@ -143,7 +129,9 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
     const HelmholtzOperators &operators,
     const ComplexVector &solution,
     const ComplexVector &load,
-    const ComplexFunction &source) {
+    const ComplexFunction &source,
+    const QuadraturePolicy &quadrature,
+    const QuadratureContext &quadrature_context) {
     const TriMesh &fine = problem.fine;
     const int element_count = static_cast<int>(fine.elems.size());
     const int node_count = static_cast<int>(fine.nodes.size());
@@ -182,21 +170,19 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
                 {element, tri[local_edge[2]]});
         }
 
-        for (const QuadraturePoint &quadrature : kTriangleQuadrature) {
-            Point2 point = Point2::Zero();
+        for (const auto &point : triangle_quadrature_points(
+                 fine, element, quadrature, quadrature_context)) {
             Complex value = 0.0;
             for (int local = 0; local < 3; ++local) {
-                point += quadrature.barycentric[local] * fine.nodes[tri[local]];
-                value += quadrature.barycentric[local] * solution(tri[local]);
+                value += point.barycentric[local] * solution(tri[local]);
             }
-            const Complex residual = source(point)
+            const Complex residual = source(point.point)
                 + operators.wavenumber * operators.wavenumber
                 * operators.refractive_index[element] * value;
-            const double weight = geometry[element].area * quadrature.weight;
-            result.body_l2_squared[element] += weight * std::norm(residual);
+            result.body_l2_squared[element] += point.weight * std::norm(residual);
             for (int local = 0; local < 3; ++local) {
                 result.body_residual_nodal[element][local]
-                    += weight * residual * quadrature.barycentric[local];
+                    += point.weight * residual * point.barycentric[local];
             }
         }
         for (int local = 0; local < 3; ++local)
@@ -228,7 +214,8 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
             edge.residual_l2_squared = edge.length * std::norm(jump);
             edge.residual_nodal[0] = -0.5 * edge.length * jump;
             edge.residual_nodal[1] = -0.5 * edge.length * jump;
-        } else {
+        } else if (boundary_tag(fine, canonical_edge(edge.nodes[0], edge.nodes[1]))
+                   == BoundaryTag::Robin) {
             edge.robin_boundary = true;
             const Complex impedance(0.0, operators.wavenumber * operators.boundary_beta);
             const Complex boundary0 = left_flux - impedance * solution(edge.nodes[0]);
@@ -246,7 +233,11 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
         result.edges.push_back(edge);
     }
 
-    const ComplexVector algebraic = load - operators.system * solution;
+    ComplexVector algebraic = load - operators.system * solution;
+    for (int node : dirichlet_nodes(fine)) {
+        result.reconstructed_residual(node) = Complex(0.0, 0.0);
+        algebraic(node) = Complex(0.0, 0.0);
+    }
     result.algebraic_relative_difference = (result.reconstructed_residual - algebraic).norm()
         / std::max(1.0, algebraic.norm());
     return result;

@@ -1,5 +1,6 @@
 #include "helmholtz/model.h"
 #include "helmholtz/adaptive/hierarchy.h"
+#include "helmholtz/boundary.h"
 
 #include <Eigen/SparseLU>
 #include <algorithm>
@@ -39,11 +40,25 @@ void report_progress(
         std::cerr << "[helmholtz-model] " << message << '\n';
 }
 
-void validate_pure_robin_mesh(const TriMesh &mesh) {
+void validate_helmholtz_mesh(const TriMesh &mesh) {
     if (mesh.nodes.empty() || mesh.elems.empty())
         throw std::invalid_argument("Helmholtz initial mesh must not be empty");
-    if (!mesh.dirichlet.empty())
-        throw std::invalid_argument("pure Robin Helmholtz mesh must not contain Dirichlet nodes");
+    validate_boundary_tags(mesh);
+}
+
+ComplexSparseMatrix select_columns(
+    const ComplexSparseMatrix &matrix,
+    const std::vector<int> &columns) {
+    std::vector<ComplexTriplet> triplets;
+    for (int selected = 0; selected < static_cast<int>(columns.size()); ++selected) {
+        const int original = columns[selected];
+        for (ComplexSparseMatrix::InnerIterator it(matrix, original); it; ++it)
+            triplets.emplace_back(it.row(), selected, it.value());
+    }
+    ComplexSparseMatrix result(matrix.rows(), columns.size());
+    result.setFromTriplets(triplets.begin(), triplets.end());
+    result.makeCompressed();
+    return result;
 }
 
 } // namespace
@@ -61,6 +76,36 @@ TriMesh make_helmholtz_unit_square_mesh() {
     TriMesh mesh;
     mesh.nodes = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     mesh.elems = {{0, 1, 3}, {2, 3, 1}};
+    return mesh;
+}
+
+TriMesh make_helmholtz_l_shape_mesh() {
+    TriMesh mesh;
+    mesh.nodes = {
+        {-1, -1}, {0, -1},
+        {-1, 0}, {0, 0}, {1, 0},
+        {-1, 1}, {0, 1}, {1, 1}};
+    // Three unit squares, each using the same compatible two-triangle NVB
+    // pattern as make_helmholtz_unit_square_mesh(). The lower-right square is
+    // removed.
+    mesh.elems = {
+        {0, 1, 2}, {3, 2, 1},
+        {2, 3, 5}, {6, 5, 3},
+        {3, 4, 6}, {7, 6, 4}};
+    const auto [edges, boundary] = compute_edges(mesh);
+    for (std::size_t index = 0; index < edges.size(); ++index) {
+        if (!boundary[index]) continue;
+        const Edge edge = edges[index];
+        const Point2 midpoint = 0.5 * (mesh.nodes[edge[0]] + mesh.nodes[edge[1]]);
+        const bool reentrant_edge =
+            (std::abs(midpoint.x()) < 1e-14 && midpoint.y() < 0.0)
+            || (std::abs(midpoint.y()) < 1e-14 && midpoint.x() > 0.0);
+        mesh.boundary_edges.push_back({
+            edge,
+            reentrant_edge ? BoundaryTag::Dirichlet : BoundaryTag::Robin});
+    }
+    synchronize_dirichlet_nodes(mesh);
+    validate_boundary_tags(mesh);
     return mesh;
 }
 
@@ -108,9 +153,11 @@ HelmholtzProblemData finish_problem_data(
 
     const Eigen::MatrixXd projection_check = Eigen::MatrixXd(
         problem.quasi_interpolation * problem.coarse_to_fine);
-    const Eigen::MatrixXd identity = Eigen::MatrixXd::Identity(
+    Eigen::MatrixXd expected = Eigen::MatrixXd::Identity(
         projection_check.rows(), projection_check.cols());
-    if ((projection_check - identity).norm() > 1e-9)
+    for (int node : dirichlet_nodes(problem.coarse))
+        expected.row(node).setZero();
+    if ((projection_check - expected).norm() > 1e-9)
         throw std::runtime_error("complex quasi-interpolation does not reproduce the coarse P1 space");
 
     return problem;
@@ -161,7 +208,7 @@ HelmholtzProblemData build_helmholtz_problem_data(
     int H,
     int h,
     int ell) {
-    validate_pure_robin_mesh(initial_mesh);
+    validate_helmholtz_mesh(initial_mesh);
     if (H < 0 || h < H)
         throw std::invalid_argument("Helmholtz refinement levels must satisfy 0 <= H <= h");
 
@@ -185,7 +232,7 @@ HelmholtzProblemData build_adaptive_helmholtz_problem_data(
     const std::vector<int> &coarse_element_levels,
     int fine_level,
     int ell) {
-    validate_pure_robin_mesh(coarse_mesh);
+    validate_helmholtz_mesh(coarse_mesh);
     if (coarse_element_levels.size() != coarse_mesh.elems.size())
         throw std::invalid_argument("adaptive coarse level count must match coarse elements");
     if (coarse_element_levels.empty()
@@ -306,11 +353,22 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     stage_start = std::chrono::steady_clock::now();
     report_progress(model.config_, "corrected basis assembly begin");
     const int fine_node_count = static_cast<int>(model.problem_.fine.nodes.size());
-    model.corrected_trial_basis_ = build_helmholtz_corrected_basis(
+    const ComplexSparseMatrix full_corrected_trial_basis = build_helmholtz_corrected_basis(
         model.problem_.coarse_to_fine,
         model.problem_.coarse,
         fine_node_count,
         model.correctors_.primal);
+    std::vector<char> coarse_is_dirichlet(model.problem_.coarse.nodes.size(), false);
+    for (int node : dirichlet_nodes(model.problem_.coarse))
+        coarse_is_dirichlet[node] = true;
+    std::vector<int> free_coarse_nodes;
+    for (int node = 0; node < static_cast<int>(coarse_is_dirichlet.size()); ++node) {
+        if (!coarse_is_dirichlet[node]) free_coarse_nodes.push_back(node);
+    }
+    if (free_coarse_nodes.empty())
+        throw std::runtime_error("Helmholtz coarse space has no unconstrained degrees of freedom");
+    model.corrected_trial_basis_ = select_columns(
+        full_corrected_trial_basis, free_coarse_nodes);
     report_progress(
         model.config_,
         "corrected trial basis ready: nonzeros="
@@ -325,7 +383,8 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     if (model.config_.mode == HelmholtzPetrovMode::TwoSided)
         model.trial_basis_ = model.corrected_trial_basis_;
     else
-        model.trial_basis_ = model.problem_.coarse_to_fine.cast<Complex>();
+        model.trial_basis_ = select_columns(
+            model.problem_.coarse_to_fine.cast<Complex>(), free_coarse_nodes);
 
     report_progress(model.config_, "coarse operator assembly begin");
     model.coarse_operator_ = model.test_basis_.adjoint()
@@ -372,8 +431,11 @@ HelmholtzLodSolution HelmholtzLodModel::solve_load(const ComplexVector &fine_loa
     return solution;
 }
 
-HelmholtzLodSolution HelmholtzLodModel::solve_source(const ComplexFunction &source) const {
-    return solve_load(assemble_helmholtz_load(problem_.fine, source));
+HelmholtzLodSolution HelmholtzLodModel::solve_source(
+    const ComplexFunction &source) const {
+    return solve_load(assemble_helmholtz_load(
+        problem_.fine, source,
+        config_.quadrature, config_.quadrature_context));
 }
 
 ComplexVector HelmholtzLodModel::solve_fine_reference(const ComplexVector &fine_load) const {

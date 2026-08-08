@@ -14,6 +14,17 @@ using Triangle = std::array<int, 3>;
 /// Edge: sorted vertex pair (i < j)
 using Edge = std::array<int, 2>;
 
+enum class BoundaryTag : std::uint8_t {
+    Interior = 0,
+    Dirichlet = 1,
+    Robin = 2
+};
+
+struct BoundaryEdge {
+    Edge nodes{};
+    BoundaryTag tag = BoundaryTag::Interior;
+};
+
 /// 2D point
 using Point2 = Eigen::Vector2d;
 
@@ -22,6 +33,11 @@ struct TriMesh {
     std::vector<Point2>     nodes;       // vertex coordinates
     std::vector<Triangle>   elems;       // element connectivity
     std::vector<int>        dirichlet;   // Dirichlet boundary node indices
+    // Explicit physical-boundary classification. When nonempty, this must
+    // contain every geometric boundary edge exactly once. The legacy
+    // dirichlet node list is retained for the elliptic code and synchronized
+    // from edges tagged Dirichlet.
+    std::vector<BoundaryEdge> boundary_edges;
 };
 
 /// Refinement output: refined mesh + three prolongation matrices

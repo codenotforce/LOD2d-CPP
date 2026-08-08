@@ -52,6 +52,7 @@ private:
     const HelmholtzOperators &operators_;
     std::vector<std::vector<int>> children_;
     std::vector<int> fine_incidence_;
+    std::vector<char> fine_dirichlet_;
     std::unordered_map<std::uint64_t, int> fine_edge_counts_;
     const std::vector<TriMesh> &hierarchy_meshes_;
     const std::vector<Eigen::SparseMatrix<double>> &node_level_prolongations_;

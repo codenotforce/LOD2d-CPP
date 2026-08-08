@@ -26,6 +26,8 @@ struct HelmholtzProblemConfig {
     HelmholtzPatchSolverConfig patch_solver;
     std::vector<double> diffusion;
     std::vector<double> refractive_index;
+    QuadraturePolicy quadrature;
+    QuadratureContext quadrature_context;
 };
 
 struct HelmholtzProblemData {
@@ -58,6 +60,7 @@ struct HelmholtzBuildTimings {
 };
 
 TriMesh make_helmholtz_unit_square_mesh();
+TriMesh make_helmholtz_l_shape_mesh();
 
 HelmholtzProblemData build_helmholtz_problem_data(
     const TriMesh &initial_mesh,

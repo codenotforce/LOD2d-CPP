@@ -52,7 +52,9 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
     const HelmholtzOperators &operators,
     const ComplexVector &solution,
     const ComplexVector &load,
-    const ComplexFunction &source);
+    const ComplexFunction &source,
+    const QuadraturePolicy &quadrature = {},
+    const QuadratureContext &quadrature_context = {});
 
 HelmholtzIndicatorSet build_helmholtz_indicators(
     const HelmholtzProblemData &problem,

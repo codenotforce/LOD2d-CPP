@@ -1,6 +1,6 @@
 add_executable(test_mesh test_mesh.cpp)
 add_executable(test_vtk_export test_vtk_export.cpp)
-target_link_libraries(test_vtk_export PRIVATE lod2d_visualization_io)
+target_link_libraries(test_vtk_export PRIVATE lod2d_visualization_io lod2d_core)
 add_test(NAME vtk_streaming_export COMMAND test_vtk_export)
 
 add_executable(test_right_gmres test_right_gmres.cpp)
@@ -60,6 +60,22 @@ add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)
 add_executable(test_helmholtz_adaptive test_helmholtz_adaptive.cpp)
 target_link_libraries(test_helmholtz_adaptive PRIVATE lod2d_core)
 add_test(NAME helmholtz_adaptive COMMAND test_helmholtz_adaptive)
+
+add_executable(test_helmholtz_paper_config test_helmholtz_paper_config.cpp)
+target_link_libraries(test_helmholtz_paper_config PRIVATE lod2d_core)
+add_test(NAME helmholtz_paper_config COMMAND test_helmholtz_paper_config)
+
+add_executable(test_helmholtz_mixed_boundary test_helmholtz_mixed_boundary.cpp)
+target_link_libraries(test_helmholtz_mixed_boundary PRIVATE lod2d_core)
+add_test(NAME helmholtz_mixed_boundary COMMAND test_helmholtz_mixed_boundary)
+
+add_executable(test_helmholtz_paper_cases test_helmholtz_paper_cases.cpp)
+target_link_libraries(test_helmholtz_paper_cases PRIVATE lod2d_core)
+add_test(NAME helmholtz_paper_cases COMMAND test_helmholtz_paper_cases)
+
+add_executable(test_helmholtz_quadrature test_helmholtz_quadrature.cpp)
+target_link_libraries(test_helmholtz_quadrature PRIVATE lod2d_core)
+add_test(NAME helmholtz_quadrature COMMAND test_helmholtz_quadrature)
 
 add_executable(test_helmholtz_coarse_schwarz test_helmholtz_coarse_schwarz.cpp)
 target_link_libraries(test_helmholtz_coarse_schwarz PRIVATE lod2d_core)

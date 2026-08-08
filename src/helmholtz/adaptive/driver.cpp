@@ -180,7 +180,9 @@ AdaptiveHelmholtzResult run_adaptive_helmholtz(
             hierarchy.coarse_levels().begin(), hierarchy.coarse_levels().end());
         record.H_max = max_element_diameter(model.problem().coarse);
 
-        const ComplexVector load = assemble_helmholtz_load(model.problem().fine, source);
+        const ComplexVector load = assemble_helmholtz_load(
+            model.problem().fine, source,
+            model.config().quadrature, model.config().quadrature_context);
         stage_start = std::chrono::steady_clock::now();
         const HelmholtzLodSolution lod = model.solve_load(load);
         record.solve_ms = elapsed_ms(stage_start);
@@ -200,13 +202,17 @@ AdaptiveHelmholtzResult run_adaptive_helmholtz(
                 lod.fine_values,
                 model.config().wavenumber,
                 exact,
-                exact_gradient);
+                exact_gradient,
+                model.config().quadrature,
+                model.config().quadrature_context);
             const HelmholtzError fine_exact = compute_helmholtz_error(
                 model.problem().fine,
                 reference,
                 model.config().wavenumber,
                 exact,
-                exact_gradient);
+                exact_gradient,
+                model.config().quadrature,
+                model.config().quadrature_context);
             record.exact_energy_error = lod_exact.energy;
             record.exact_l2_error = lod_exact.l2;
             record.fine_exact_energy_error = fine_exact.energy;
@@ -216,7 +222,8 @@ AdaptiveHelmholtzResult run_adaptive_helmholtz(
         stage_start = std::chrono::steady_clock::now();
         const HelmholtzResidualContributions contributions =
             assemble_helmholtz_residual_contributions(
-                model.problem(), model.operators(), lod.fine_values, load, source);
+                model.problem(), model.operators(), lod.fine_values, load, source,
+                model.config().quadrature, model.config().quadrature_context);
         const HelmholtzIndicatorSet indicators = build_helmholtz_indicators(
             model.problem(), contributions);
         record.estimate_ms = elapsed_ms(stage_start);

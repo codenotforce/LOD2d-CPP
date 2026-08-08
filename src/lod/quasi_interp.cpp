@@ -1,6 +1,7 @@
 #include "lod/quasi_interp.h"
 #include "mesh/refine.h"
 #include <Eigen/Sparse>
+#include <algorithm>
 #include <vector>
 
 namespace lod2d {
@@ -82,8 +83,24 @@ build_quasi_interp(const TriMesh &coarse, const TriMesh &fine,
     Eigen::SparseMatrix<double> EH(Nh_c, NHdg);
     EH.setFromTriplets(eh2_t.begin(), eh2_t.end());
 
-    // ---- 5. IH = EH * PiHdg ----
-    return EH * PiHdg;
+    // ---- 5. IH = EH * PiHdg, restricted to V_H with homogeneous trace ----
+    Eigen::SparseMatrix<double> unrestricted = EH * PiHdg;
+    std::vector<char> is_dirichlet(coarse.nodes.size(), false);
+    for (int node : coarse.dirichlet) {
+        if (node >= 0 && node < static_cast<int>(is_dirichlet.size()))
+            is_dirichlet[node] = true;
+    }
+    std::vector<Eigen::Triplet<double>> restricted_triplets;
+    restricted_triplets.reserve(unrestricted.nonZeros());
+    for (int column = 0; column < unrestricted.outerSize(); ++column) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(unrestricted, column); it; ++it) {
+            if (!is_dirichlet[it.row()] && it.value() != 0.0)
+                restricted_triplets.emplace_back(it.row(), it.col(), it.value());
+        }
+    }
+    Eigen::SparseMatrix<double> restricted(unrestricted.rows(), unrestricted.cols());
+    restricted.setFromTriplets(restricted_triplets.begin(), restricted_triplets.end());
+    return restricted;
 }
 
 } // namespace lod2d

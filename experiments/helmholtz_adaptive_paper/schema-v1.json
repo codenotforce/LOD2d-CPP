@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lod2d.helmholtz-adaptive-paper.config.v1",
+  "title": "Certified adaptive Helmholtz LOD paper run configuration",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "build_hash", "case", "git_commit", "method", "quadrature",
+    "relative_energy_targets", "repeat_index", "schema_version", "theta_H",
+    "timing_repeats", "tolerances", "wavenumber"
+  ],
+  "properties": {
+    "build_hash": {"type": "string", "minLength": 1},
+    "case": {"enum": ["R1", "R2a", "R2b", "S"]},
+    "git_commit": {"type": "string", "minLength": 1},
+    "method": {
+      "enum": ["CALOD", "HLOD", "SLOD-prior", "SLOD-matched", "UFEM", "AFEM", "HLOD-proxy"]
+    },
+    "quadrature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_triangle_order", "gaussian_triangle_order", "max_recursive_subdivisions", "singular_triangle_order"],
+      "properties": {
+        "base_triangle_order": {"type": "integer", "minimum": 1},
+        "gaussian_triangle_order": {"type": "integer", "minimum": 1},
+        "max_recursive_subdivisions": {"type": "integer", "minimum": 0},
+        "singular_triangle_order": {"type": "integer", "minimum": 1}
+      }
+    },
+    "relative_energy_targets": {
+      "type": "array", "prefixItems": [{"const": 0.1}, {"const": 0.05}, {"const": 0.02}, {"const": 0.01}],
+      "minItems": 4, "maxItems": 4
+    },
+    "repeat_index": {"type": "integer", "minimum": 0, "maximum": 4},
+    "schema_version": {"const": 1},
+    "theta_H": {"enum": [0.3, 0.5, 0.7]},
+    "timing_repeats": {"const": 5},
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eigen_relative_residual", "interpolation_right_inverse", "linear_relative_residual", "prolongation_composition"],
+      "properties": {
+        "eigen_relative_residual": {"type": "number", "exclusiveMinimum": 0},
+        "interpolation_right_inverse": {"type": "number", "exclusiveMinimum": 0},
+        "linear_relative_residual": {"type": "number", "exclusiveMinimum": 0},
+        "prolongation_composition": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "wavenumber": {"enum": [8, 16, 32]}
+  }
+}

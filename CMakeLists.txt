@@ -45,6 +45,8 @@ add_library(lod2d_core STATIC
     src/fem/hp_triangle.cpp
     src/lod/quasi_interp.cpp
     src/helmholtz/manufactured.cpp
+    src/helmholtz/boundary.cpp
+    src/helmholtz/quadrature.cpp
     src/lod/patches.cpp
     src/lod/corrector.cpp
     src/lod/lod_model.cpp
@@ -70,6 +72,8 @@ add_library(lod2d_core STATIC
     src/helmholtz/adaptive/estimator.cpp
     src/helmholtz/adaptive/reliability.cpp
     src/helmholtz/adaptive/driver.cpp
+    src/helmholtz/experiments/paper_config.cpp
+    src/helmholtz/benchmarks/paper_cases.cpp
     src/solver/coarse_solve.cpp
     src/solver/right_gmres.cpp
     src/solver/lod_reuse.cpp

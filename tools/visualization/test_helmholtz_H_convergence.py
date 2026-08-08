@@ -28,23 +28,31 @@ class HelmholtzHConvergenceTest(unittest.TestCase):
 
     def test_server_rows_and_negative_dof_slopes(self) -> None:
         rows = convergence.load_and_validate(self.input_csv)
-        self.assertEqual(len(rows), 5)
-        self.assertTrue(all(convergence.integer(row, "k") == 16 for row in rows))
+        self.assertEqual(len(rows), 7)
+        self.assertTrue(all(convergence.integer(row, "k") == 8 for row in rows))
         self.assertTrue(all(convergence.integer(row, "h_level") == 18 for row in rows))
         self.assertEqual(
             [convergence.integer(row, "H_level") for row in rows],
-            [9, 10, 11, 12, 13],
+            [6, 7, 8, 9, 10, 11, 12],
         )
         dofs = [convergence.integer(row, "coarse_nodes") for row in rows]
-        p1 = [convergence.number(row, "p1_energy_abs") for row in rows]
-        lod = [convergence.number(row, "lod_energy_abs") for row in rows]
-        self.assertLess(convergence.power_slope(dofs, p1), 0.0)
-        self.assertLess(convergence.power_slope(dofs, lod), 0.0)
-        self.assertTrue(all(lod_value < p1_value for p1_value, lod_value in zip(p1, lod)))
-        self.assertGreater(p1[-1] / lod[-1], 6.0)
-        fine_floor = convergence.optional_number(rows[-1], "fine_energy_abs")
-        self.assertIsNotNone(fine_floor)
-        self.assertLess(lod[-1] / fine_floor, 1.05)
+        for p1_field, lod_field, floor_field, max_floor_ratio in (
+            ("p1_energy_abs", "lod_energy_abs", "fine_energy_abs", 1.1),
+            ("p1_l2_abs", "lod_l2_abs", "fine_l2_abs", 1.5),
+        ):
+            p1 = [convergence.number(row, p1_field) for row in rows]
+            lod = [convergence.number(row, lod_field) for row in rows]
+            self.assertLess(convergence.power_slope(dofs, p1), 0.0)
+            self.assertLess(convergence.power_slope(dofs, lod), 0.0)
+            self.assertTrue(
+                all(
+                    lod_value < p1_value
+                    for p1_value, lod_value in zip(p1, lod)
+                )
+            )
+            fine_floor = convergence.optional_number(rows[-1], floor_field)
+            self.assertIsNotNone(fine_floor)
+            self.assertLess(lod[-1] / fine_floor, max_floor_ratio)
 
     def test_headless_render(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

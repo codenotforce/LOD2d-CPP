@@ -35,10 +35,11 @@ series runs from upper left to lower right. The metrics CSV names these values
 EPYC-server experiment in
 `results/helmholtz_H_convergence_server/all_results.csv`. It infers the common
 wave number, fine level, coarse-level interval, oversampling level, and solver
-from the rows. It produces the absolute `k`-weighted energy error versus coarse
-DOFs, the successive measured `H`-orders, and a CSV containing fitted DOF
-slopes and residual maxima. When `fine_energy_abs` is available, the figure
-also displays that exact-error floor.
+from the rows. It produces a four-panel figure containing the absolute
+`k`-weighted energy and `L^2` errors versus coarse DOFs and both sets of
+successive measured `H`-orders. The metrics CSV contains fitted DOF slopes,
+P1/LOD ratios, fine-reference floors, and residual maxima. When the fine exact
+errors are available, both error panels display the corresponding floor.
 
 The pollution figure uses fixed `kH=1`. Its primary panel uses `kh=1/8`; its
 strict-reference panel uses `kh=1/16`. The coarse P1 FEM exact error is

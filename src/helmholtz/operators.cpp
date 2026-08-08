@@ -1,4 +1,5 @@
 #include "helmholtz/operators.h"
+#include "helmholtz/boundary.h"
 
 #include <Eigen/SparseLU>
 #include <algorithm>
@@ -10,21 +11,6 @@
 
 namespace lod2d::helmholtz {
 namespace {
-
-struct QuadraturePoint {
-    std::array<double, 3> barycentric;
-    double weight;
-};
-
-constexpr std::array<QuadraturePoint, 7> kTriangleQuadrature{{
-    {{{1.0 / 3.0, 1.0 / 3.0, 1.0 / 3.0}}, 0.225000000000000},
-    {{{0.059715871789770, 0.470142064105115, 0.470142064105115}}, 0.132394152788506},
-    {{{0.470142064105115, 0.059715871789770, 0.470142064105115}}, 0.132394152788506},
-    {{{0.470142064105115, 0.470142064105115, 0.059715871789770}}, 0.132394152788506},
-    {{{0.797426985353087, 0.101286507323456, 0.101286507323456}}, 0.125939180544827},
-    {{{0.101286507323456, 0.797426985353087, 0.101286507323456}}, 0.125939180544827},
-    {{{0.101286507323456, 0.101286507323456, 0.797426985353087}}, 0.125939180544827}
-}};
 
 std::uint64_t edge_key(int a, int b) {
     const auto lo = static_cast<std::uint32_t>(std::min(a, b));
@@ -72,6 +58,7 @@ HelmholtzOperators assemble_helmholtz_operators(
         throw std::invalid_argument("Helmholtz wavenumber must be positive");
     if (mesh.nodes.empty() || mesh.elems.empty())
         throw std::invalid_argument("Helmholtz mesh must not be empty");
+    validate_boundary_tags(mesh);
 
     const int node_count = static_cast<int>(mesh.nodes.size());
     const int element_count = static_cast<int>(mesh.elems.size());
@@ -98,6 +85,7 @@ HelmholtzOperators assemble_helmholtz_operators(
     result.diffusion = diffusion_values;
     result.refractive_index = refractive_values;
     result.boundary_beta = boundary_beta;
+    result.dirichlet_nodes = dirichlet_nodes(mesh);
     result.element_blocks.resize(element_count, Eigen::Matrix3cd::Zero());
 
     static constexpr double mass_pattern[3][3] = {
@@ -129,6 +117,8 @@ HelmholtzOperators assemble_helmholtz_operators(
             const int i = local_edge[0];
             const int j = local_edge[1];
             if (edge_counts.at(edge_key(tri[i], tri[j])) != 1) continue;
+            if (boundary_tag(mesh, canonical_edge(tri[i], tri[j]))
+                != BoundaryTag::Robin) continue;
             const double length = (mesh.nodes[tri[i]] - mesh.nodes[tri[j]]).norm();
             const double diagonal = boundary_beta * length / 3.0;
             const double off_diagonal = boundary_beta * length / 6.0;
@@ -163,21 +153,19 @@ HelmholtzOperators assemble_helmholtz_operators(
 
 ComplexVector assemble_helmholtz_load(
     const TriMesh &mesh,
-    const ComplexFunction &source) {
+    const ComplexFunction &source,
+    const QuadraturePolicy &quadrature,
+    const QuadratureContext &quadrature_context) {
     if (!source) throw std::invalid_argument("Helmholtz source function is empty");
     ComplexVector load = ComplexVector::Zero(static_cast<int>(mesh.nodes.size()));
 
-    for (const Triangle &tri : mesh.elems) {
-        std::array<Eigen::Vector2d, 3> gradients;
-        const double area = triangle_geometry(mesh, tri, gradients);
-        for (const auto &quadrature : kTriangleQuadrature) {
-            Point2 point = Point2::Zero();
-            for (int i = 0; i < 3; ++i)
-                point += quadrature.barycentric[i] * mesh.nodes[tri[i]];
-            const Complex value = source(point);
+    for (int element = 0; element < static_cast<int>(mesh.elems.size()); ++element) {
+        const Triangle &tri = mesh.elems[element];
+        for (const auto &point : triangle_quadrature_points(
+                 mesh, element, quadrature, quadrature_context)) {
+            const Complex value = source(point.point);
             for (int i = 0; i < 3; ++i) {
-                load(tri[i]) += area * quadrature.weight
-                              * value * quadrature.barycentric[i];
+                load(tri[i]) += point.weight * value * point.barycentric[i];
             }
         }
     }
@@ -189,14 +177,47 @@ ComplexVector solve_helmholtz_fem(
     const ComplexVector &load) {
     if (operators.system.rows() != load.size())
         throw std::invalid_argument("Helmholtz load size does not match the system matrix");
+    std::vector<char> is_dirichlet(load.size(), false);
+    for (int node : operators.dirichlet_nodes) {
+        if (node < 0 || node >= load.size())
+            throw std::invalid_argument("Dirichlet node index is out of range");
+        is_dirichlet[node] = true;
+    }
+    std::vector<int> free_nodes;
+    std::vector<int> global_to_free(load.size(), -1);
+    for (int node = 0; node < load.size(); ++node) {
+        if (is_dirichlet[node]) continue;
+        global_to_free[node] = static_cast<int>(free_nodes.size());
+        free_nodes.push_back(node);
+    }
+    if (free_nodes.empty())
+        throw std::invalid_argument("Helmholtz FEM has no unconstrained degrees of freedom");
+
+    std::vector<ComplexTriplet> triplets;
+    for (int global_col : free_nodes) {
+        const int local_col = global_to_free[global_col];
+        for (ComplexSparseMatrix::InnerIterator it(operators.system, global_col); it; ++it) {
+            const int local_row = global_to_free[it.row()];
+            if (local_row >= 0) triplets.emplace_back(local_row, local_col, it.value());
+        }
+    }
+    ComplexSparseMatrix reduced(free_nodes.size(), free_nodes.size());
+    reduced.setFromTriplets(triplets.begin(), triplets.end());
+    ComplexVector reduced_load(free_nodes.size());
+    for (int local = 0; local < static_cast<int>(free_nodes.size()); ++local)
+        reduced_load(local) = load(free_nodes[local]);
+
     Eigen::SparseLU<ComplexSparseMatrix> solver;
-    solver.analyzePattern(operators.system);
-    solver.factorize(operators.system);
+    solver.analyzePattern(reduced);
+    solver.factorize(reduced);
     if (solver.info() != Eigen::Success)
         throw std::runtime_error("Helmholtz sparse LU factorization failed");
-    ComplexVector solution = solver.solve(load);
-    if (solver.info() != Eigen::Success || !solution.allFinite())
+    const ComplexVector reduced_solution = solver.solve(reduced_load);
+    if (solver.info() != Eigen::Success || !reduced_solution.allFinite())
         throw std::runtime_error("Helmholtz sparse LU solve failed");
+    ComplexVector solution = ComplexVector::Zero(load.size());
+    for (int local = 0; local < static_cast<int>(free_nodes.size()); ++local)
+        solution(free_nodes[local]) = reduced_solution(local);
     return solution;
 }
 
@@ -205,7 +226,9 @@ HelmholtzError compute_helmholtz_error(
     const ComplexVector &solution,
     double wavenumber,
     const ComplexFunction &exact,
-    const ComplexGradientFunction &exact_gradient) {
+    const ComplexGradientFunction &exact_gradient,
+    const QuadraturePolicy &quadrature,
+    const QuadratureContext &quadrature_context) {
     if (solution.size() != static_cast<int>(mesh.nodes.size()))
         throw std::invalid_argument("Helmholtz solution size does not match mesh nodes");
     if (!exact || !exact_gradient)
@@ -213,24 +236,24 @@ HelmholtzError compute_helmholtz_error(
 
     double l2_squared = 0.0;
     double gradient_squared = 0.0;
-    for (const Triangle &tri : mesh.elems) {
+    for (int element = 0; element < static_cast<int>(mesh.elems.size()); ++element) {
+        const Triangle &tri = mesh.elems[element];
         std::array<Eigen::Vector2d, 3> gradients;
-        const double area = triangle_geometry(mesh, tri, gradients);
+        (void)triangle_geometry(mesh, tri, gradients);
         Eigen::Vector2cd discrete_gradient = Eigen::Vector2cd::Zero();
         for (int i = 0; i < 3; ++i)
             discrete_gradient += solution(tri[i]) * gradients[i].cast<Complex>();
 
-        for (const auto &quadrature : kTriangleQuadrature) {
-            Point2 point = Point2::Zero();
+        for (const auto &point : triangle_quadrature_points(
+                 mesh, element, quadrature, quadrature_context)) {
             Complex discrete_value = 0.0;
             for (int i = 0; i < 3; ++i) {
-                point += quadrature.barycentric[i] * mesh.nodes[tri[i]];
-                discrete_value += quadrature.barycentric[i] * solution(tri[i]);
+                discrete_value += point.barycentric[i] * solution(tri[i]);
             }
-            const Complex value_error = exact(point) - discrete_value;
-            const Eigen::Vector2cd gradient_error = exact_gradient(point) - discrete_gradient;
-            l2_squared += area * quadrature.weight * std::norm(value_error);
-            gradient_squared += area * quadrature.weight * gradient_error.squaredNorm();
+            const Complex value_error = exact(point.point) - discrete_value;
+            const Eigen::Vector2cd gradient_error = exact_gradient(point.point) - discrete_gradient;
+            l2_squared += point.weight * std::norm(value_error);
+            gradient_squared += point.weight * gradient_error.squaredNorm();
         }
     }
 

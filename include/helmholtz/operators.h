@@ -1,6 +1,7 @@
 #pragma once
 
 #include "helmholtz/types.h"
+#include "helmholtz/quadrature.h"
 #include <Eigen/Dense>
 #include <functional>
 #include <vector>
@@ -19,6 +20,7 @@ struct HelmholtzOperators {
     Eigen::SparseMatrix<double> mass;
     Eigen::SparseMatrix<double> boundary_mass;
     ComplexSparseMatrix system;
+    std::vector<int> dirichlet_nodes;
 };
 
 struct HelmholtzError {
@@ -35,7 +37,9 @@ HelmholtzOperators assemble_helmholtz_operators(
 
 ComplexVector assemble_helmholtz_load(
     const TriMesh &mesh,
-    const ComplexFunction &source);
+    const ComplexFunction &source,
+    const QuadraturePolicy &quadrature = {},
+    const QuadratureContext &quadrature_context = {});
 
 ComplexVector solve_helmholtz_fem(
     const HelmholtzOperators &operators,
@@ -46,7 +50,9 @@ HelmholtzError compute_helmholtz_error(
     const ComplexVector &solution,
     double wavenumber,
     const ComplexFunction &exact,
-    const ComplexGradientFunction &exact_gradient);
+    const ComplexGradientFunction &exact_gradient,
+    const QuadraturePolicy &quadrature = {},
+    const QuadratureContext &quadrature_context = {});
 
 double max_element_diameter(const TriMesh &mesh);
 
