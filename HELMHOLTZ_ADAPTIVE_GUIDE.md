@@ -1,40 +1,141 @@
-# Helmholtz Adaptive LOD Stage-1 User Guide
+# Helmholtz Adaptive LOD Guide
 
-## Purpose And Status
+## Scope And Status
 
-Stage 1 is implemented as a correctness-first calibration workflow:
+The repository currently contains two different adaptive Helmholtz paths. They
+serve different purposes and must not be reported under the same method name.
 
-- the fine finite-element space is fixed;
-- only the coarse NVB mesh is adaptively refined;
-- every iteration fully rebuilds the LOD model;
-- strong-residual candidates are compared with exact or fine-reference errors.
+| Path | Entry point | Intended use | Paper status |
+|---|---|---|---|
+| Legacy H-only calibration | `bench_helmholtz_adaptive` | Regression, diagnostics, and strong-residual calibration on a fixed fine space | `HLOD-proxy`; excluded from the six-method comparator matrix |
+| Certified-adaptive foundation | `helmholtz/adaptive/*.h` plus CTest targets | WP0-WP5 contracts, estimators, certificates, and decision-state validation | Not runnable as the formal CALOD/HLOD paper experiment until WP6 |
 
-Incremental corrector reuse, L-shaped domains, joint `H/h/ell` adaptation, and
-PML are not part of stage 1. This guide documents only the implemented
-calibration workflow. Measured calibration histories are recorded in
-[DEVELOPMENT.md](DEVELOPMENT.md).
+The active scientific protocol and remaining work are defined in
+[HELMHOLTZ_ADAPTIVE_LOD_PLAN.md](HELMHOLTZ_ADAPTIVE_LOD_PLAN.md). Versioned
+experiment contracts are documented in
+[experiments/helmholtz_adaptive_paper/README.md](experiments/helmholtz_adaptive_paper/README.md).
 
-## Implemented Invariants
+## Implemented Work Packages
 
-- One NVB tree supplies all coarse meshes and the fixed master fine mesh.
-- Coarse elements retain stable IDs and explicit parents.
-- Every adaptive coarse mesh is completed to the same master fine level.
-- Element and nodal prolongation identities are checked.
-- NVB closure may not create duplicate global midpoint nodes.
-- The reference fine solution and finite-element space remain unchanged
-  throughout one adaptive run.
+### WP0: Experiment Contract
+
+- strict v1 input and output schemas;
+- canonical JSON configuration hashing and immutable run IDs;
+- explicit provenance, timing ownership, nullable numeric values, censored
+  resource states, and method labels;
+- rejection of unknown fields and non-RFC-8259 numeric values.
+
+### WP1: Paper Problems
+
+- registered paper cases and manufactured/source definitions;
+- mixed Dirichlet/impedance boundary tagging;
+- coefficient, geometry, and quadrature checks;
+- exact-solution checks remain validation data and are not exposed to adaptive
+  MARK/STOP decisions.
+
+### WP2: Three-Mesh Hierarchy And Error Roles
+
+- independently refinable coarse mesh `T_H`, corrector-fine mesh `T_h`, and
+  certification-audit mesh `T_aud`;
+- exact P1, element, and DG embeddings for conforming nested meshes;
+- parent maps, version counters, local fine refinement, and kernel-constraint
+  restriction;
+- separate certification-audit and post-processing evaluation-reference
+  services, with their timings owned by different accounting domains.
+
+The full-rebuild path is the correctness reference after an `H`, `h`, or audit
+mutation. Incremental reuse must reproduce it before it can become a default.
+
+### WP3: Coarse Audit-Kernel Estimator
+
+- residual Riesz solves in the constrained audit kernel;
+- elementwise source allocation and the global `eta_H` quantity;
+- primal/adjoint, constraint, stationarity, and energy-identity diagnostics;
+- allocation-sum and conjugation checks.
+
+`eta_H` is not automatically verified just because the linear solve succeeds.
+Its claim level follows the evidence attached to its operators and inputs.
+
+### WP4: Corrector And Stability Certificates
+
+- directional certificate-constant registry and derived overlap constants;
+- matrix-enclosure and verified generalized-spectrum interfaces;
+- total, fine-discretization, localization, stability, and LOD-error bounds;
+- elementwise `eta_h` allocation and worse-side handling;
+- MPFR/MPFI directed-rounding backend behind a CMake option.
+
+Without verified theorem constants, verified assembly enclosures, and a
+verified `eta_H`, the same computation is explicitly `conditional`. It must not
+be relabelled as a verified certificate.
+
+### WP5: Certified Decision State Machine
+
+The checkpointable driver enforces this order:
+
+```text
+coarse admissibility
+  -> corrector certification
+  -> coarse error control
+  -> audit control
+  -> done / work limit / failure
+```
+
+It supports independent coarse, corrector-fine, oversampling, and audit
+mutations; Dorfler marking; pending coarse marks while the audit space is
+refined; structured terminal codes; resource limits; and deterministic
+checkpoint/resume. CALOD never silently falls back to H-only adaptation.
+The HLOD path checks its frozen prior corrector-space identifier and
+oversampling value before every decision.
 
 ## Build And Test
 
+### Standard Eigen Build
+
 ```bash
-cmake -S . -B build-debug -DCMAKE_BUILD_TYPE=Debug
-cmake --build build-debug --target \
-  test_helmholtz_adaptive test_helmholtz_reliability -j 8
-ctest --test-dir build-debug -R 'helmholtz_(adaptive|reliability)' \
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j "$(nproc)"
+ctest --test-dir build --output-on-failure
+```
+
+The WP0-WP5 regression targets are:
+
+```bash
+cmake --build build --target \
+  test_helmholtz_adaptive \
+  test_helmholtz_error_control \
+  test_helmholtz_kernel_residual \
+  test_verified_spectrum \
+  test_helmholtz_certificates \
+  test_helmholtz_certified_driver \
+  test_helmholtz_paper_config \
+  test_helmholtz_mixed_boundary \
+  test_helmholtz_paper_cases \
+  test_helmholtz_quadrature -j "$(nproc)"
+
+ctest --test-dir build \
+  -R 'helmholtz_(adaptive|error_control|kernel_residual|certificates|certified_driver|paper_config|mixed_boundary|paper_cases|quadrature)|verified_spectrum' \
   --output-on-failure
 ```
 
-## Run A Calibration
+### Verified-Certificate Build
+
+Install `libmpfr-dev`, `libmpfi-dev`, and `libgmp-dev`, then use a separate
+build tree:
+
+```bash
+cmake -S . -B build-verified -DCMAKE_BUILD_TYPE=Release \
+  -DLOD_ENABLE_VERIFIED_CERTIFICATES=ON
+cmake --build build-verified -j "$(nproc)"
+ctest --test-dir build-verified --output-on-failure
+```
+
+The option enables directed-rounding verification code. It does not manufacture
+missing theorem constants or assembly enclosures, and it does not promote a
+conditional run to verified evidence.
+
+## Run The Legacy HLOD Proxy
+
+Build and run the fixed-fine-space calibration executable with:
 
 ```bash
 cmake -S . -B build-release -DCMAKE_BUILD_TYPE=Release
@@ -53,22 +154,23 @@ Key options:
 | `--H` | Initial coarse NVB level |
 | `--h` | Fixed master fine level |
 | `--ell` | Corrector oversampling layers |
-| `--iterations` | Maximum adaptive iterations |
+| `--iterations` | Maximum H-only adaptive iterations |
 | `--theta` | Dorfler marking fraction |
-| `--estimator` | `fine`, `mixed`, or `macro` aggregation |
-| `--q-limit` | Coarse/fine scale-separation gate |
+| `--estimator` | `fine`, `mixed`, or `macro` strong-residual aggregation |
+| `--q-limit` | Legacy coarse/fine scale-separation gate |
 | `--source` | `manufactured` or `gaussian` |
-| `--no-dual` | Skip expensive local energy-Riesz calibration |
+| `--no-dual` | Skip the local energy-Riesz calibration diagnostic |
 | `--format=csv` | Emit a machine-readable history |
 | `--mesh-out=PATH` | Write final mesh IDs, geometry, levels, and indicators |
 
-The driver stops before a refinement whose NVB closure would violate the
-configured scale-separation limit. Dense inf-sup diagnostics are omitted for
-large coarse systems.
+This driver fixes `h` and `ell`, rebuilds after each coarse refinement, and
+uses legacy strong-residual candidates. Its output is useful for regression
+and calibration only. Label it `HLOD-proxy`; do not label it CALOD or the frozen
+HLOD paper comparator.
 
-## Manufactured Solution
+### Manufactured Calibration Case
 
-The exact validation problem uses
+The legacy exact validation problem uses
 
 ```math
 \phi(t)=16t^2(1-t)^2,
@@ -76,7 +178,7 @@ The exact validation problem uses
 u(x,y)=\phi(x)\phi(y)e^{ikx},
 ```
 
-and
+with
 
 ```math
 f=-e^{ikx}\left[
@@ -85,60 +187,47 @@ f=-e^{ikx}\left[
 ```
 
 Because `phi=phi'=0` at the endpoints, the homogeneous impedance condition is
-satisfied. This source reports both the exact LOD error and the fixed fine-FEM
-discretization floor.
+satisfied. Exact error and the fixed fine-FEM discretization floor are
+diagnostics only.
 
-## Residual Identity
+### Residual Identity
 
-The estimator assembly reconstructs the integrated nodal residual from broken
-volume terms, interior flux jumps, and Robin boundary terms. It must agree
+The legacy estimator reconstructs the integrated nodal residual from broken
+volume terms, interior flux jumps, and impedance boundary terms. It must agree
 with
 
 ```math
 r_h=b_h-A_hu_{\mathrm{LOD}}.
 ```
 
-This identity is a correctness gate for signs, edge ownership, and complex
-conjugation. It is not by itself a reliability theorem.
+This is a sign, edge-ownership, and conjugation gate. It is not a reliability
+theorem and is not the WP3 audit-kernel `eta_H` definition.
 
-## Interpreting The Indicators
+## Evidence And Reporting Rules
 
-The strong-residual candidates target the continuous error
-`u-u_LOD`. They are not estimators of the purely discrete difference
-`u_h-u_LOD`.
+- An exact solution or evaluation-reference solution is post-processing data;
+  it may not influence MARK or STOP.
+- Certification-audit work belongs to CALOD method time. Evaluation-reference
+  work is reported separately.
+- Verified and conditional evidence are different run claims. Missing or
+  invalid evidence causes a structured failure under `RequireVerified`.
+- A resource limit is a censored terminal state, not convergence and not a
+  generic numerical failure.
+- HLOD and CALOD have no silent fallback path to `HLOD-proxy`.
+- Preserve configuration, provenance hashes, checkpoint compatibility data,
+  transition history, indicators, bounds, work counters, timings, and the
+  final structured stop code.
 
-When the coarse and fine meshes coincide, `u_h-u_LOD` and the algebraic
-residual vanish, while `u-u_h` and squared strong volume/jump residuals need
-not vanish. Therefore:
+## What Is Not Yet Available
 
-- do not divide a strong-residual indicator by a vanishing discrete error and
-  interpret the resulting effectivity as a failure;
-- use the manufactured exact solution for continuous-error calibration;
-- use the local algebraic energy-dual residual as a discrete calibration
-  quantity;
-- require parameter sweeps and holdout validation before claiming uniform
-  reliability or efficiency.
+WP6 must connect the state-machine backend to live paper meshes, correctors,
+estimators, and certificate evidence; freeze the formal run manifests; and
+provide a production CLI that emits the common output schema. Until then:
 
-A future estimator specifically targeting `u_h-u_LOD` should use an algebraic
-dual-residual localization or a hierarchical two-level construction.
+- there is no supported command for a formal CALOD or frozen-HLOD paper run;
+- the six-method comparison matrix has not been executed by this code path;
+- no paper table or figure should be claimed from WP0-WP5 unit tests;
+- exact/reference quantities must remain isolated from algorithmic decisions.
 
-## Output Checklist
-
-For every adaptive iteration retain:
-
-- coarse element and DOF counts;
-- exact and/or fine-reference errors;
-- all requested indicators and effectivities;
-- marked elements and NVB closure growth;
-- `q_max` and effective scale separation;
-- residual identity and solver residuals;
-- inf-sup value when available;
-- solve, estimate, mark, refine, and total timings;
-- final mesh output and run metadata.
-
-## Scientific Gate
-
-Stage 1 validates implementation and estimator behavior on the unit square.
-It does not yet establish a theorem or an adaptive optimality result. Continue
-to stage 2 only after the candidate estimator has a stable reliability
-envelope and acceptable marking correlation on training and holdout cases.
+Measured calibration histories and implementation decisions belong in
+[DEVELOPMENT.md](DEVELOPMENT.md), not in this user guide.

@@ -9,7 +9,9 @@ experiments, migration defects, and performance conclusions.
 - Public quick start and capability summary: [README.md](README.md)
 - Helmholtz commands and stable options: [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md)
 - Benchmark implementation rules: [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md)
-- Future work and acceptance gates: the three `*_PLAN.md` files
+- Certified-adaptive user boundary: [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md)
+- Active paper work packages and acceptance gates:
+  [HELMHOLTZ_ADAPTIVE_LOD_PLAN.md](HELMHOLTZ_ADAPTIVE_LOD_PLAN.md)
 
 Do not copy command catalogs or future task lists into this log. A command is
 shown here only when it is needed to reproduce a recorded result.
@@ -23,7 +25,10 @@ shown here only when it is needed to reproduce a recorded result.
 | Helmholtz corrector | DirectSaddle is the default; DirectSchur is the leading large-patch experiment |
 | Shifted patch GMRES | Correct, but no runtime crossover over direct methods |
 | Two-level Schwarz | S4e complete; useful iteration/memory behavior, still experimental |
-| Adaptive Helmholtz | Stage-1 calibration implemented; no production estimator frozen |
+| Legacy adaptive H-only proxy | Retained for regression and calibration; excluded from the paper comparator matrix |
+| Certified hierarchy and error roles | WP0-WP2 complete: contracts, paper cases, three meshes, and reference isolation |
+| Estimators and certificates | WP3-WP4 implemented; verified claims still require verified constants and assembly evidence |
+| Certified adaptive driver | WP5 state machine and checkpointing complete; WP6 numerical backend and runner pending |
 
 ## Navigation
 
@@ -36,6 +41,9 @@ shown here only when it is needed to reproduce a recorded result.
 - Adaptive Helmholtz stage 1: section 17.
 - Helmholtz patch solver: section 18.
 - Coarse and fine-space Schwarz studies: sections 19-27.
+- hp finite elements, hp Petrov-Galerkin LOD, parallelism, and DirectSchur:
+  sections 28-32.
+- Certified-adaptive WP0-WP5 foundation and current paper boundary: section 33.
 
 ## Elliptic Migration Baseline
 
@@ -2481,3 +2489,90 @@ The model now aggregates `max_schur_residual`, `min_schur_rcond`, and
 `--check` rejects a large Schur residual or any fallback. This keeps the
 faster route subject to the same correctness gate rather than treating a
 successful factorization as sufficient evidence.
+
+## 33. Certified-Adaptive Helmholtz Foundation Through WP5
+
+WP0-WP5 of `HELMHOLTZ_ADAPTIVE_LOD_PLAN.md` were implemented and audited on
+2026-08-08 through 2026-08-09. This milestone establishes the contracts and
+algorithmic foundation needed by the paper experiments; it does not claim that
+the formal numerical matrix has been run.
+
+### Implemented Scope
+
+- **WP0, experiment contract:** strict v1 input/output schemas, canonical
+  configuration hashes, immutable run IDs, provenance, typed nullable numbers,
+  timing ownership, and censored terminal states.
+- **WP1, paper problems:** paper-case registry, mixed Dirichlet/impedance
+  boundaries, geometry/coefficient/source definitions, and quadrature checks.
+- **WP2, space separation:** independently refinable coarse, corrector-fine,
+  and certification-audit meshes; exact nested P1/element/DG embeddings;
+  parent maps, version counters, local refinement, and kernel constraints.
+  Certification-audit and evaluation-reference services have disjoint APIs and
+  timing ownership, so exact/reference data cannot enter MARK/STOP code through
+  the certified-driver interface.
+- **WP3, `eta_H`:** constrained audit-kernel residual Riesz solves, element
+  allocation, primal/adjoint and energy-identity diagnostics, and explicit
+  evidence propagation.
+- **WP4, certificates:** directional theorem-constant registry, matrix
+  enclosures, verified spectrum hooks, total/fine/localization decomposition,
+  stability and LOD-error bounds, elementwise `eta_h`, and MPFR/MPFI directed
+  rounding behind `LOD_ENABLE_VERIFIED_CERTIFICATES`.
+- **WP5, state machine:** coarse-admissibility, corrector-certification,
+  coarse-error, and audit-control states; independent `H`, `h`, `ell`, and audit
+  mutations; pending coarse marking; resource gates; terminal codes;
+  checkpoint/resume; verified-versus-conditional evidence policy; frozen-HLOD
+  prior checks; and an explicit no-fallback rule.
+
+### Defects Found During The Audit
+
+The three-mesh work replaced the old fixed-fine alignment assumption with a
+geometry-validated nested embedding. The old path required the rebuilt fine
+mesh to have exactly the same node/element ordering and could not represent
+independent local `h` or audit refinement. The replacement checks containment,
+area, boundary consistency, element ancestry, and composition identities.
+
+A second defect was found in the thread-local `PatchWorkspace`. Resizing only
+the coarse-row arrays reset the shared generation stamp but left the fine-node
+generation arrays unchanged. A reused stamp could therefore make stale nodes
+appear current. Resizing either side now clears every generation array before
+the stamp is reused.
+
+### Evidence Policy
+
+The Eigen-only build exercises the same certificate logic but cannot produce
+directed-rounding verification. Even in the MPFR/MPFI build, a certificate is
+`verified` only when its theorem constants, assembly enclosures, audit
+estimator, and all derived bounds carry valid verified evidence. Missing inputs
+produce an explicit conditional result or a structured failure under
+`RequireVerified`; successful factorization alone never promotes the claim.
+
+### Validation Recorded At The WP5 Boundary
+
+The final source tree was validated with:
+
+```text
+Release Eigen build:             34/34 registered CTest cases passed
+Release MPFR/MPFI build:         28/28 selected CTest cases passed
+Verified NVB executable:         passed separately from a source-relative cwd
+Debug ASan+UBSan WP5 targets:    passed
+git diff --check:                passed
+```
+
+The separate NVB invocation records an existing test-data path limitation: its
+golden-file lookup is relative to the current working directory and does not
+cover the temporary out-of-tree verified build location used for this audit.
+The numerical NVB test itself passed when run with the repository-relative
+golden path available.
+
+### Remaining Boundary
+
+WP6 must implement the live numerical backend that connects paper meshes,
+correctors, `eta_H`, certificate evidence, mutations, checkpoint state, and
+schema-v1 output. It must also freeze formal manifests and the HLOD prior.
+Only after those gates pass may the six-method matrix be executed and the
+paper tables and figures be generated. Until then:
+
+- `bench_helmholtz_adaptive` remains `HLOD-proxy`, not CALOD or frozen HLOD;
+- unit-test certificate fixtures are not paper evidence;
+- conditional bounds are not verified bounds;
+- no WP0-WP5 result should be described as a completed paper reproduction.

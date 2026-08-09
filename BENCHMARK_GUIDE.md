@@ -476,9 +476,17 @@ Use the domain guides for executable-specific commands and interpretation:
 
 - Helmholtz wave-number, patch-solver, and two-level Schwarz experiments:
   [HELMHOLTZ_GUIDE.md](HELMHOLTZ_GUIDE.md);
-- adaptive Helmholtz calibration:
+- legacy adaptive calibration and the certified-adaptive implementation
+  boundary:
   [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md);
+- certified-adaptive paper method definitions, scientific gates, and output
+  contract: [HELMHOLTZ_ADAPTIVE_LOD_PLAN.md](HELMHOLTZ_ADAPTIVE_LOD_PLAN.md);
 - measured timing tables and accepted or rejected performance conclusions:
   [DEVELOPMENT.md](DEVELOPMENT.md).
+
+Do not compare `bench_helmholtz_adaptive` as CALOD or frozen HLOD. It is the
+diagnostic `HLOD-proxy`. A formal paper benchmark must come from the WP6+
+runner, include its immutable configuration and provenance, and emit the
+versioned common output schema.
 
 Do not duplicate domain command catalogs or measured result tables here.
