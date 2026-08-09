@@ -20,19 +20,24 @@ struct PatchWorkspace {
     int stamp = 0;
 
     void begin(std::size_t fine_nodes, std::size_t coarse_nodes) {
+        bool resized = false;
         if (node_count.size() != fine_nodes) {
             node_count.assign(fine_nodes, 0);
             node_seen.assign(fine_nodes, 0);
             local_index.assign(fine_nodes, -1);
             local_seen.assign(fine_nodes, 0);
-            stamp = 0;
+            resized = true;
         }
         if (coarse_row_index.size() != coarse_nodes) {
             coarse_row_index.assign(coarse_nodes, -1);
             coarse_row_seen.assign(coarse_nodes, 0);
+            resized = true;
+        }
+        if (resized) {
             stamp = 0;
             std::fill(node_seen.begin(), node_seen.end(), 0);
             std::fill(local_seen.begin(), local_seen.end(), 0);
+            std::fill(coarse_row_seen.begin(), coarse_row_seen.end(), 0);
         }
         if (stamp == std::numeric_limits<int>::max()) {
             std::fill(node_seen.begin(), node_seen.end(), 0);

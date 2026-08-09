@@ -7,6 +7,7 @@
 #include <cmath>
 #include <array>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 
 using namespace lod2d;
@@ -64,6 +65,21 @@ void verify_three_level_prolongations(const AdaptiveMeshHierarchy &hierarchy) {
         hierarchy.fine_to_cert_audit() * hierarchy.coarse_to_fine();
     require((composed - hierarchy.coarse_to_cert_audit()).norm() < 1e-12,
             "P_H_audit is inconsistent with P_h_audit P_H_h");
+    const Eigen::SparseMatrix<double> composed_elements =
+        hierarchy.fine_elements_to_cert_audit()
+        * hierarchy.coarse_elements_to_fine();
+    require((composed_elements - hierarchy.coarse_elements_to_cert_audit()).norm() < 1e-12,
+            "element P_H_audit is inconsistent with P_h_audit P_H_h");
+    const Eigen::SparseMatrix<double> composed_dg =
+        hierarchy.fine_dg_to_cert_audit() * hierarchy.coarse_dg_to_fine();
+    require((composed_dg - hierarchy.coarse_dg_to_cert_audit()).norm() < 1e-12,
+            "DG P_H_audit is inconsistent with P_h_audit P_H_h");
+    require(hierarchy.fine_parent_coarse_elements().size()
+                == hierarchy.fine_mesh().elems.size(),
+            "fine parent map has the wrong size");
+    require(hierarchy.cert_audit_parent_fine_elements().size()
+                == hierarchy.cert_audit_mesh().elems.size(),
+            "cert-audit parent map has the wrong size");
     require((hierarchy.coarse_to_fine() * node_coordinates(hierarchy.coarse_mesh())
              - node_coordinates(hierarchy.fine_mesh())).norm() < 1e-11,
             "P_H_h does not reproduce fine node coordinates");
@@ -162,14 +178,140 @@ void verify_hierarchy_and_estimator() {
         require(completed.refinement.mesh.nodes.size() == uniform_fine.nodes.size(),
                 "repeated adaptive completion contains duplicate node coordinates");
     }
+
+    std::vector<int> minimum_audit_level(
+        hierarchy.fine_mesh().elems.size(), std::numeric_limits<int>::max());
+    std::vector<int> maximum_audit_level(
+        hierarchy.fine_mesh().elems.size(), std::numeric_limits<int>::min());
+    for (int audit = 0;
+         audit < static_cast<int>(hierarchy.cert_audit_parent_fine_elements().size());
+         ++audit) {
+        const int fine_parent = hierarchy.cert_audit_parent_fine_elements()[audit];
+        minimum_audit_level[fine_parent] = std::min(
+            minimum_audit_level[fine_parent], hierarchy.cert_audit_element_levels()[audit]);
+        maximum_audit_level[fine_parent] = std::max(
+            maximum_audit_level[fine_parent], hierarchy.cert_audit_element_levels()[audit]);
+    }
+    int locally_unrefined_fine_element = -1;
+    for (int element = 0; element < static_cast<int>(minimum_audit_level.size()); ++element) {
+        if (minimum_audit_level[element] == hierarchy.fine_element_levels()[element]
+            && maximum_audit_level[element] == hierarchy.fine_element_levels()[element]) {
+            locally_unrefined_fine_element = element;
+            break;
+        }
+    }
+    require(locally_unrefined_fine_element >= 0,
+            "test setup has no fine element without prior audit refinement");
+    const std::size_t fine_elements_before = hierarchy.fine_mesh().elems.size();
+    const std::uint64_t coarse_version_before = hierarchy.coarse_mesh_version();
+    const std::uint64_t fine_version_before = hierarchy.fine_mesh_version();
+    const std::uint64_t audit_version_before = hierarchy.cert_audit_mesh_version();
+    const std::uint64_t interpolation_version_before = hierarchy.interpolation_version();
+    const std::uint64_t boundary_version_before = hierarchy.boundary_version();
+    const std::uint64_t corrector_version_before = hierarchy.corrector_space_version();
+    const int selected_coarse_element =
+        hierarchy.fine_parent_coarse_elements()[locally_unrefined_fine_element];
+    const std::vector<int> covered_fine_elements =
+        hierarchy.fine_elements_in_coarse_patch({selected_coarse_element});
+    require(std::find(covered_fine_elements.begin(), covered_fine_elements.end(),
+                      locally_unrefined_fine_element) != covered_fine_elements.end(),
+            "coarse corrector patch omitted one of its fine descendants");
+    hierarchy.refine_fine_in_coarse_patch({selected_coarse_element});
+    require(hierarchy.fine_mesh().elems.size() > fine_elements_before,
+            "local V_h refinement did not change the fine mesh");
+    require(*std::min_element(
+                hierarchy.fine_element_levels().begin(),
+                hierarchy.fine_element_levels().end()) == hierarchy.fine_level(),
+            "local V_h refinement unexpectedly refined the entire fine mesh");
+    require(*std::max_element(
+                hierarchy.fine_element_levels().begin(),
+                hierarchy.fine_element_levels().end()) > hierarchy.fine_level(),
+            "local V_h refinement did not create a finer level");
+    require(hierarchy.coarse_mesh_version() == coarse_version_before,
+            "local V_h refinement changed the coarse mesh version");
+    require(hierarchy.fine_mesh_version() == fine_version_before + 1,
+            "local V_h refinement did not advance its mesh version");
+    require(hierarchy.cert_audit_mesh_version() > audit_version_before,
+            "cert-audit mesh did not preserve nesting after local V_h refinement");
+    require(hierarchy.interpolation_version() == interpolation_version_before + 1,
+            "local V_h refinement did not invalidate interpolation caches");
+    require(hierarchy.boundary_version() == boundary_version_before + 1,
+            "local V_h refinement did not invalidate boundary caches");
+    require(hierarchy.corrector_space_version() == corrector_version_before + 1,
+            "local V_h refinement did not invalidate corrector-space caches");
+    verify_three_level_prolongations(hierarchy);
+
+    const std::vector<int> local_dofs = {
+        0, static_cast<int>(hierarchy.fine_mesh().nodes.size() / 2)};
+    const Eigen::SparseMatrix<double> local_constraints =
+        hierarchy.fine_kernel_constraints(local_dofs);
+    require(local_constraints.cols() == static_cast<int>(local_dofs.size()),
+            "local kernel constraint restriction has the wrong column count");
+    for (int column = 0; column < static_cast<int>(local_dofs.size()); ++column)
+        require((local_constraints.col(column)
+                 - hierarchy.fine_quasi_interpolation().col(local_dofs[column])).norm() < 1e-14,
+                "local kernel constraint restriction selected the wrong column");
+
+    std::vector<int> minimum_fine_level(
+        hierarchy.coarse_mesh().elems.size(), std::numeric_limits<int>::max());
+    for (int fine = 0; fine < static_cast<int>(hierarchy.fine_parent_coarse_elements().size());
+         ++fine) {
+        const int coarse_parent = hierarchy.fine_parent_coarse_elements()[fine];
+        minimum_fine_level[coarse_parent] = std::min(
+            minimum_fine_level[coarse_parent], hierarchy.fine_element_levels()[fine]);
+    }
+    int coarse_with_capacity = -1;
+    for (int coarse = 0; coarse < static_cast<int>(minimum_fine_level.size()); ++coarse) {
+        if (hierarchy.coarse_levels()[coarse] < minimum_fine_level[coarse]) {
+            coarse_with_capacity = coarse;
+            break;
+        }
+    }
+    require(coarse_with_capacity >= 0,
+            "test setup has no coarse element below its local V_h descendants");
+    const std::vector<TriangleSignature> fine_before_second_coarse_refinement =
+        canonical_triangles(hierarchy.fine_mesh());
+    const std::vector<TriangleSignature> audit_before_second_coarse_refinement =
+        canonical_triangles(hierarchy.cert_audit_mesh());
+    hierarchy.refine({coarse_with_capacity});
+    require(canonical_triangles(hierarchy.fine_mesh())
+                == fine_before_second_coarse_refinement,
+            "coarse refinement after local V_h refinement changed the fine mesh");
+    require(canonical_triangles(hierarchy.cert_audit_mesh())
+                == audit_before_second_coarse_refinement,
+            "coarse refinement after local V_h refinement changed the audit mesh");
+    verify_three_level_prolongations(hierarchy);
+
+    const std::uint64_t second_audit_version = hierarchy.cert_audit_mesh_version();
+    const std::uint64_t second_interpolation_version = hierarchy.interpolation_version();
+    const std::uint64_t second_boundary_version = hierarchy.boundary_version();
+    const std::uint64_t second_corrector_version = hierarchy.corrector_space_version();
+    hierarchy.refine_cert_audit_from_fine_elements(
+        {static_cast<int>(hierarchy.fine_mesh().elems.size() - 1)});
+    require(hierarchy.cert_audit_mesh_version() == second_audit_version + 1,
+            "audit refinement after H/h updates did not advance its mesh version");
+    require(hierarchy.interpolation_version() == second_interpolation_version + 1,
+            "audit refinement did not invalidate interpolation caches");
+    require(hierarchy.boundary_version() == second_boundary_version + 1,
+            "audit refinement did not invalidate boundary caches");
+    require(hierarchy.corrector_space_version() == second_corrector_version,
+            "audit-only refinement invalidated the corrector-space cache");
+    verify_three_level_prolongations(hierarchy);
+
     config.h = 4;
     config.ell = 1;
     config.wavenumber = 3.0;
     HelmholtzLodModel model = HelmholtzLodModel::build_adaptive(
-        config, hierarchy.coarse_mesh(), hierarchy.coarse_levels());
+        config, hierarchy.coarse_mesh(), hierarchy.coarse_levels(),
+        hierarchy.fine_mesh(), hierarchy.fine_element_levels());
     require(model.problem().coarse.elems.size() == hierarchy.coarse_mesh().elems.size(),
             "adaptive model changed the coarse mesh");
     require(model.problem().fine_level == 4, "adaptive model lost the fixed fine level");
+    require(model.problem().max_fine_level > model.problem().fine_level,
+            "adaptive model discarded local V_h levels");
+    require(canonical_triangles(model.problem().fine)
+                == canonical_triangles(hierarchy.fine_mesh()),
+            "adaptive model reconstructed a different fine mesh");
 
     const ComplexFunction source = source_function();
     const ComplexVector load = assemble_helmholtz_load(model.problem().fine, source);
@@ -179,21 +321,21 @@ void verify_hierarchy_and_estimator() {
     require(discrete_energy_norm(model.operators(), error) > 0.0,
             "adaptive test unexpectedly has zero LOD error");
 
-    const HelmholtzResidualContributions residual =
-        assemble_helmholtz_residual_contributions(
+    const diagnostics::HelmholtzResidualContributions residual =
+        diagnostics::assemble_helmholtz_residual_contributions(
             model.problem(), model.operators(), solution.fine_values, load, source);
     std::cout << "Residual reconstruction difference: "
               << residual.algebraic_relative_difference << '\n';
     require(residual.algebraic_relative_difference < 1e-10,
             "integrated residual disagrees with b-Au");
-    const HelmholtzIndicatorSet indicators = build_helmholtz_indicators(
+    const diagnostics::HelmholtzIndicatorSet indicators = diagnostics::build_helmholtz_indicators(
         model.problem(), residual);
     require(indicators.fine > 0.0 && indicators.mixed > 0.0 && indicators.macro > 0.0,
             "adaptive residual indicators must be positive");
     require(indicators.fine_squared.size() == model.problem().coarse.elems.size(),
             "coarse indicator count is incorrect");
 
-    const std::vector<double> dual = build_local_dual_indicators(
+    const std::vector<double> dual = diagnostics::build_local_dual_indicators(
         model.problem(), model.operators(), residual, 1);
     require(dual.size() == model.problem().coarse.elems.size(),
             "local dual indicator count is incorrect");

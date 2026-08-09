@@ -24,6 +24,30 @@ enum class PaperMethod {
     HlodProxy
 };
 
+// Frozen run-level outcomes. Resource exhaustion is censored data, never a
+// silently dropped or successful run.
+enum class PaperRunStatus {
+    Success,
+    Interrupted,
+    CensoredWorkLimit,
+    CensoredMemoryLimit,
+    CensoredTimeLimit,
+    CensoredIterationLimit,
+    LinearAlgebraFailure,
+    CertificateFailure,
+    Unavailable
+};
+
+// Every nullable numeric output is paired with one of these states. JSON null
+// is used for the value itself; NaN, infinity, and numeric sentinels are banned.
+enum class PaperValueStatus {
+    Valid,
+    NotApplicable,
+    NotComputed,
+    InvalidDenominator,
+    EnclosureFailed
+};
+
 struct CaseDefinition {
     PaperCase id;
     std::string name;
@@ -72,8 +96,12 @@ const MethodDefinition &method_definition(PaperMethod id);
 
 std::string_view to_string(PaperCase id);
 std::string_view to_string(PaperMethod id);
+std::string_view to_string(PaperRunStatus status);
+std::string_view to_string(PaperValueStatus status);
 PaperCase parse_paper_case(std::string_view text);
 PaperMethod parse_paper_method(std::string_view text);
+PaperRunStatus parse_paper_run_status(std::string_view text);
+PaperValueStatus parse_paper_value_status(std::string_view text);
 
 void validate_paper_config(const PaperConfig &config);
 std::string canonical_json(const PaperConfig &config);

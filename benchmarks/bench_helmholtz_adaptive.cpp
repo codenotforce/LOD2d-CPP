@@ -31,7 +31,8 @@ struct Options {
     double tolerance = 0.0;
     double q_limit = 0.5;
     int dual_patch_layers = 1;
-    ResidualEstimatorKind estimator = ResidualEstimatorKind::Mixed;
+    diagnostics::ResidualEstimatorKind estimator =
+        diagnostics::ResidualEstimatorKind::Mixed;
     bool dual = true;
     bool csv = false;
     std::string source = "gaussian";
@@ -78,9 +79,9 @@ Options parse_options(int argc, char **argv) {
             result.dual_patch_layers = parse_int(value("--dual-patch="), "dual patch");
         else if (argument.rfind("--estimator=", 0) == 0) {
             const std::string name = value("--estimator=");
-            if (name == "fine") result.estimator = ResidualEstimatorKind::Fine;
-            else if (name == "mixed") result.estimator = ResidualEstimatorKind::Mixed;
-            else if (name == "macro") result.estimator = ResidualEstimatorKind::Macro;
+            if (name == "fine") result.estimator = diagnostics::ResidualEstimatorKind::Fine;
+            else if (name == "mixed") result.estimator = diagnostics::ResidualEstimatorKind::Mixed;
+            else if (name == "macro") result.estimator = diagnostics::ResidualEstimatorKind::Macro;
             else throw std::invalid_argument("estimator must be fine, mixed, or macro");
         } else if (argument == "--no-dual") result.dual = false;
         else if (argument.rfind("--source=", 0) == 0) {

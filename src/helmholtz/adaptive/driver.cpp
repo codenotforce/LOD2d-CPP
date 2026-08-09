@@ -120,9 +120,9 @@ std::vector<TriangleGeometrySignature> canonical_triangle_geometry(const TriMesh
 
 } // namespace
 
-const char *residual_estimator_name(ResidualEstimatorKind kind) {
-    if (kind == ResidualEstimatorKind::Fine) return "fine";
-    if (kind == ResidualEstimatorKind::Mixed) return "mixed";
+const char *residual_estimator_name(diagnostics::ResidualEstimatorKind kind) {
+    if (kind == diagnostics::ResidualEstimatorKind::Fine) return "fine";
+    if (kind == diagnostics::ResidualEstimatorKind::Mixed) return "mixed";
     return "macro";
 }
 
@@ -220,11 +220,11 @@ AdaptiveHelmholtzResult run_adaptive_helmholtz(
         }
 
         stage_start = std::chrono::steady_clock::now();
-        const HelmholtzResidualContributions contributions =
-            assemble_helmholtz_residual_contributions(
+        const diagnostics::HelmholtzResidualContributions contributions =
+            diagnostics::assemble_helmholtz_residual_contributions(
                 model.problem(), model.operators(), lod.fine_values, load, source,
                 model.config().quadrature, model.config().quadrature_context);
-        const HelmholtzIndicatorSet indicators = build_helmholtz_indicators(
+        const diagnostics::HelmholtzIndicatorSet indicators = diagnostics::build_helmholtz_indicators(
             model.problem(), contributions);
         record.estimate_ms = elapsed_ms(stage_start);
         record.eta_fine = indicators.fine;
@@ -249,7 +249,7 @@ AdaptiveHelmholtzResult run_adaptive_helmholtz(
         std::vector<int> marked;
         if (config.compute_dual_calibration) {
             stage_start = std::chrono::steady_clock::now();
-            const std::vector<double> dual = build_local_dual_indicators(
+            const std::vector<double> dual = diagnostics::build_local_dual_indicators(
                 model.problem(), model.operators(), contributions, config.dual_patch_layers);
             record.dual_ms = elapsed_ms(stage_start);
             std::vector<double> dual_squared(dual.size());

@@ -1,5 +1,7 @@
 #pragma once
 
+// Legacy strong-residual H-only implementation.  Its output identity is
+// intentionally distinct from the paper HLOD and CALOD state-machine driver.
 #include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/adaptive/reliability.h"
 
@@ -19,7 +21,8 @@ struct AdaptiveHelmholtzConfig {
     double theta = 0.5;
     double tolerance = 0.0;
     double q_limit = 0.5;
-    ResidualEstimatorKind estimator = ResidualEstimatorKind::Mixed;
+    diagnostics::ResidualEstimatorKind estimator =
+        diagnostics::ResidualEstimatorKind::Mixed;
     bool compute_dual_calibration = true;
 };
 
@@ -67,6 +70,8 @@ struct AdaptiveIterationRecord {
 };
 
 struct AdaptiveHelmholtzResult {
+    std::string output_namespace = "helmholtz/hlod_proxy";
+    std::string implementation_status = "diagnostic_h_only_proxy";
     std::vector<AdaptiveIterationRecord> history;
     TriMesh final_coarse_mesh;
     std::vector<int> final_coarse_levels;
@@ -75,12 +80,14 @@ struct AdaptiveHelmholtzResult {
     std::string stop_reason;
 };
 
+// This function remains the diagnostic HLOD-proxy entry point.  Paper HLOD
+// and CALOD use CertifiedAdaptiveDriver from certified_driver.h.
 AdaptiveHelmholtzResult run_adaptive_helmholtz(
     const AdaptiveHelmholtzConfig &config,
     const ComplexFunction &source,
     const ComplexFunction &exact = {},
     const ComplexGradientFunction &exact_gradient = {});
 
-const char *residual_estimator_name(ResidualEstimatorKind kind);
+const char *residual_estimator_name(diagnostics::ResidualEstimatorKind kind);
 
 } // namespace lod2d::helmholtz::adaptive

@@ -1,6 +1,8 @@
 #include "helmholtz/experiments/paper_config.h"
 
+#include <array>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
@@ -85,6 +87,50 @@ void verify_strict_validation() {
     invalid.wavenumber = 7.0;
     require_invalid([&] { (void)canonical_json(invalid); },
                     "non-protocol wavenumber was accepted");
+
+    const std::string number_needle = "\"wavenumber\":16";
+    for (const std::string replacement : {
+             "\"wavenumber\":+16", "\"wavenumber\":016",
+             "\"wavenumber\":16.", "\"wavenumber\":16e"}) {
+        std::string malformed = encoded;
+        malformed.replace(
+            malformed.find(number_needle), number_needle.size(), replacement);
+        require_invalid([&] { (void)parse_paper_config(malformed); },
+                        "non-RFC-8259 JSON number was accepted");
+    }
+
+    invalid = sample_config();
+    invalid.tolerances.linear_relative_residual =
+        std::numeric_limits<double>::infinity();
+    require_invalid([&] { (void)canonical_json(invalid); },
+                    "infinite tolerance was accepted");
+    invalid = sample_config();
+    invalid.build_hash.push_back('\x01');
+    require_invalid([&] { (void)canonical_json(invalid); },
+                    "control character in provenance was accepted");
+}
+
+void verify_status_contract() {
+    for (PaperRunStatus status : std::array{
+             PaperRunStatus::Success, PaperRunStatus::Interrupted,
+             PaperRunStatus::CensoredWorkLimit, PaperRunStatus::CensoredMemoryLimit,
+             PaperRunStatus::CensoredTimeLimit, PaperRunStatus::CensoredIterationLimit,
+             PaperRunStatus::LinearAlgebraFailure, PaperRunStatus::CertificateFailure,
+             PaperRunStatus::Unavailable}) {
+        require(parse_paper_run_status(to_string(status)) == status,
+                "paper run status does not round trip");
+    }
+    for (PaperValueStatus status : std::array{
+             PaperValueStatus::Valid, PaperValueStatus::NotApplicable,
+             PaperValueStatus::NotComputed, PaperValueStatus::InvalidDenominator,
+             PaperValueStatus::EnclosureFailed}) {
+        require(parse_paper_value_status(to_string(status)) == status,
+                "paper value status does not round trip");
+    }
+    require_invalid([&] { (void)parse_paper_run_status("timeout"); },
+                    "unknown paper run status was accepted");
+    require_invalid([&] { (void)parse_paper_value_status("nan"); },
+                    "unknown paper value status was accepted");
 }
 
 } // namespace
@@ -94,6 +140,7 @@ int main() {
         verify_registries();
         verify_round_trip_and_hash();
         verify_strict_validation();
+        verify_status_contract();
         std::cout << "Helmholtz paper configuration protocol passed\n";
         return 0;
     } catch (const std::exception &error) {

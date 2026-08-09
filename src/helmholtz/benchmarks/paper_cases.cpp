@@ -141,7 +141,7 @@ PaperCaseData make_s(double wavenumber) {
         const Complex phase = std::exp(Complex(0.0, wavenumber * point.x()));
         Eigen::Vector2cd gradient = amplitude.gradient.cast<Complex>();
         gradient.x() += Complex(0.0, wavenumber * amplitude.value);
-        return phase * gradient;
+        return (phase * gradient).eval();
     };
     result.exact_laplacian = [=](const Point2 &point) {
         const SingularAmplitude amplitude = singular_amplitude(point);

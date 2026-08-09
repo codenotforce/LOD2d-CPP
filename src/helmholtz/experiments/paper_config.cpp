@@ -107,16 +107,48 @@ private:
 
     double parse_number() {
         const std::size_t begin = position_;
-        while (position_ < input_.size()) {
-            const char c = input_[position_];
-            if ((c >= '0' && c <= '9') || c == '-' || c == '+' || c == '.'
-                || c == 'e' || c == 'E') {
-                ++position_;
-            } else {
-                break;
+        if (consume('-') && position_ >= input_.size()) fail("incomplete number");
+        if (position_ >= input_.size()) fail("expected JSON number");
+
+        if (input_[position_] == '0') {
+            ++position_;
+            if (position_ < input_.size()
+                && input_[position_] >= '0' && input_[position_] <= '9') {
+                fail("leading zero in number");
             }
+        } else if (input_[position_] >= '1' && input_[position_] <= '9') {
+            do {
+                ++position_;
+            } while (position_ < input_.size()
+                     && input_[position_] >= '0' && input_[position_] <= '9');
+        } else {
+            fail("expected JSON number");
         }
-        if (begin == position_) fail("expected JSON value");
+
+        if (position_ < input_.size() && input_[position_] == '.') {
+            ++position_;
+            const std::size_t fraction_begin = position_;
+            while (position_ < input_.size()
+                   && input_[position_] >= '0' && input_[position_] <= '9') {
+                ++position_;
+            }
+            if (fraction_begin == position_) fail("fraction requires a digit");
+        }
+        if (position_ < input_.size()
+            && (input_[position_] == 'e' || input_[position_] == 'E')) {
+            ++position_;
+            if (position_ < input_.size()
+                && (input_[position_] == '+' || input_[position_] == '-')) {
+                ++position_;
+            }
+            const std::size_t exponent_begin = position_;
+            while (position_ < input_.size()
+                   && input_[position_] >= '0' && input_[position_] <= '9') {
+                ++position_;
+            }
+            if (exponent_begin == position_) fail("exponent requires a digit");
+        }
+
         double result = 0.0;
         const char *first = input_.data() + begin;
         const char *last = input_.data() + position_;
@@ -218,10 +250,16 @@ std::string json_string(std::string_view value) {
         switch (c) {
         case '"': result += "\\\""; break;
         case '\\': result += "\\\\"; break;
+        case '\b': result += "\\b"; break;
+        case '\f': result += "\\f"; break;
         case '\n': result += "\\n"; break;
         case '\r': result += "\\r"; break;
         case '\t': result += "\\t"; break;
-        default: result.push_back(c); break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20)
+                throw std::invalid_argument("paper metadata string contains a control character");
+            result.push_back(c);
+            break;
         }
     }
     result.push_back('"');
@@ -302,6 +340,54 @@ std::string_view to_string(PaperMethod id) {
     return method_definition(id).name;
 }
 
+std::string_view to_string(PaperRunStatus status) {
+    switch (status) {
+    case PaperRunStatus::Success: return "success";
+    case PaperRunStatus::Interrupted: return "interrupted";
+    case PaperRunStatus::CensoredWorkLimit: return "censored_work_limit";
+    case PaperRunStatus::CensoredMemoryLimit: return "censored_memory_limit";
+    case PaperRunStatus::CensoredTimeLimit: return "censored_time_limit";
+    case PaperRunStatus::CensoredIterationLimit: return "censored_iteration_limit";
+    case PaperRunStatus::LinearAlgebraFailure: return "linear_algebra_failure";
+    case PaperRunStatus::CertificateFailure: return "certificate_failure";
+    case PaperRunStatus::Unavailable: return "unavailable";
+    }
+    throw std::invalid_argument("unknown paper run status enum");
+}
+
+std::string_view to_string(PaperValueStatus status) {
+    switch (status) {
+    case PaperValueStatus::Valid: return "valid";
+    case PaperValueStatus::NotApplicable: return "not_applicable";
+    case PaperValueStatus::NotComputed: return "not_computed";
+    case PaperValueStatus::InvalidDenominator: return "invalid_denominator";
+    case PaperValueStatus::EnclosureFailed: return "enclosure_failed";
+    }
+    throw std::invalid_argument("unknown paper value status enum");
+}
+
+PaperRunStatus parse_paper_run_status(std::string_view text) {
+    for (PaperRunStatus status : {
+             PaperRunStatus::Success, PaperRunStatus::Interrupted,
+             PaperRunStatus::CensoredWorkLimit, PaperRunStatus::CensoredMemoryLimit,
+             PaperRunStatus::CensoredTimeLimit, PaperRunStatus::CensoredIterationLimit,
+             PaperRunStatus::LinearAlgebraFailure, PaperRunStatus::CertificateFailure,
+             PaperRunStatus::Unavailable}) {
+        if (to_string(status) == text) return status;
+    }
+    throw std::invalid_argument("unknown paper run status: " + std::string(text));
+}
+
+PaperValueStatus parse_paper_value_status(std::string_view text) {
+    for (PaperValueStatus status : {
+             PaperValueStatus::Valid, PaperValueStatus::NotApplicable,
+             PaperValueStatus::NotComputed, PaperValueStatus::InvalidDenominator,
+             PaperValueStatus::EnclosureFailed}) {
+        if (to_string(status) == text) return status;
+    }
+    throw std::invalid_argument("unknown paper value status: " + std::string(text));
+}
+
 PaperCase parse_paper_case(std::string_view text) {
     for (const auto &entry : paper_case_registry()) {
         if (to_string(entry.id) == text) return entry.id;
@@ -344,15 +430,26 @@ void validate_paper_config(const PaperConfig &config) {
         || config.quadrature.max_recursive_subdivisions < 0) {
         throw std::invalid_argument("quadrature policy contains invalid orders");
     }
-    if (!(config.tolerances.linear_relative_residual > 0.0)
-        || !(config.tolerances.eigen_relative_residual > 0.0)
-        || !(config.tolerances.interpolation_right_inverse > 0.0)
-        || !(config.tolerances.prolongation_composition > 0.0)) {
-        throw std::invalid_argument("tolerances must be positive");
+    const std::array<double, 4> tolerances{
+        config.tolerances.linear_relative_residual,
+        config.tolerances.eigen_relative_residual,
+        config.tolerances.interpolation_right_inverse,
+        config.tolerances.prolongation_composition};
+    if (std::any_of(tolerances.begin(), tolerances.end(), [](double value) {
+            return !std::isfinite(value) || !(value > 0.0);
+        })) {
+        throw std::invalid_argument("tolerances must be positive finite numbers");
     }
     if (config.git_commit.empty() || config.build_hash.empty()) {
         throw std::invalid_argument("git_commit and build_hash are required for immutable runs");
     }
+    const auto contains_control = [](const std::string &value) {
+        return std::any_of(value.begin(), value.end(), [](unsigned char character) {
+            return character < 0x20;
+        });
+    };
+    if (contains_control(config.git_commit) || contains_control(config.build_hash))
+        throw std::invalid_argument("git_commit and build_hash cannot contain control characters");
 }
 
 std::string canonical_json(const PaperConfig &config) {

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lod2d.helmholtz-adaptive-paper.output.v1",
+  "title": "Certified adaptive Helmholtz LOD paper run output envelope",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "config_hash", "case", "method",
+    "repeat_index", "status", "stop_reason", "history_file", "metadata_file",
+    "method_time_ms", "evaluation_reference_time_ms",
+    "evaluation_reference_excluded_from_method_time", "values"
+  ],
+  "properties": {
+    "schema_version": {"const": 1},
+    "run_id": {"type": "string", "minLength": 1},
+    "config_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "case": {"enum": ["R1", "R2a", "R2b", "S"]},
+    "method": {
+      "enum": ["CALOD", "HLOD", "SLOD-prior", "SLOD-matched", "UFEM", "AFEM", "HLOD-proxy"]
+    },
+    "repeat_index": {"type": "integer", "minimum": 0, "maximum": 4},
+    "status": {
+      "enum": [
+        "success", "interrupted", "censored_work_limit",
+        "censored_memory_limit", "censored_time_limit",
+        "censored_iteration_limit", "linear_algebra_failure",
+        "certificate_failure", "unavailable"
+      ]
+    },
+    "stop_reason": {"type": "string"},
+    "history_file": {"type": "string", "minLength": 1},
+    "metadata_file": {"type": "string", "minLength": 1},
+    "method_time_ms": {"type": "number", "minimum": 0},
+    "evaluation_reference_time_ms": {"type": "number", "minimum": 0},
+    "evaluation_reference_excluded_from_method_time": {"const": true},
+    "values": {
+      "type": "object",
+      "additionalProperties": {"$ref": "#/$defs/typedNumericValue"}
+    }
+  },
+  "$defs": {
+    "typedNumericValue": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "value_status"],
+      "properties": {
+        "value": {"type": ["number", "null"]},
+        "value_status": {
+          "enum": [
+            "valid", "not_applicable", "not_computed",
+            "invalid_denominator", "enclosure_failed"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"value_status": {"const": "valid"}}},
+          "then": {"properties": {"value": {"type": "number"}}},
+          "else": {"properties": {"value": {"type": "null"}}}
+        }
+      ]
+    }
+  }
+}

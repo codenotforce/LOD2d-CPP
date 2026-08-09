@@ -87,14 +87,14 @@ ComplexVector coarse_partition_residual(
     int coarse_element,
     int fine_node_count,
     const TriMesh &fine,
-    const HelmholtzResidualContributions &contributions) {
+    const diagnostics::HelmholtzResidualContributions &contributions) {
     ComplexVector rhs = ComplexVector::Zero(fine_node_count);
     for (int element = 0; element < static_cast<int>(fine.elems.size()); ++element) {
         if (contributions.fine_element_parent[element] != coarse_element) continue;
         for (int local = 0; local < 3; ++local)
             rhs(fine.elems[element][local]) += contributions.body_residual_nodal[element][local];
     }
-    for (const ResidualEdgeContribution &edge : contributions.edges) {
+    for (const diagnostics::ResidualEdgeContribution &edge : contributions.edges) {
         double share = 0.0;
         if (edge.right_element < 0) {
             if (edge.left_parent == coarse_element) share = 1.0;
@@ -111,6 +111,8 @@ ComplexVector coarse_partition_residual(
 }
 
 } // namespace
+
+namespace diagnostics {
 
 const std::vector<double> &HelmholtzIndicatorSet::squared(ResidualEstimatorKind kind) const {
     if (kind == ResidualEstimatorKind::Fine) return fine_squared;
@@ -366,6 +368,8 @@ std::vector<double> build_local_dual_indicators(
     }
     return indicators;
 }
+
+} // namespace diagnostics
 
 std::vector<int> mark_doerfler(
     const std::vector<double> &indicator_squared,
