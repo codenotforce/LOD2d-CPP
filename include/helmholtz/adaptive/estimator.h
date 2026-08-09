@@ -8,6 +8,10 @@
 
 namespace lod2d::helmholtz::adaptive {
 
+// Strong/broken residual quantities are retained strictly as diagnostics.
+// The paper estimator eta_H is declared in kernel_residual.h.
+namespace diagnostics {
+
 enum class ResidualEstimatorKind {
     Fine,
     Mixed,
@@ -60,11 +64,15 @@ HelmholtzIndicatorSet build_helmholtz_indicators(
     const HelmholtzProblemData &problem,
     const HelmholtzResidualContributions &contributions);
 
+// Historical calibration diagnostic. Unlike eta_H, this partitions a broken
+// residual by coarse-element ownership and must never drive paper MARK/STOP.
 std::vector<double> build_local_dual_indicators(
     const HelmholtzProblemData &problem,
     const HelmholtzOperators &operators,
     const HelmholtzResidualContributions &contributions,
     int patch_layers);
+
+} // namespace diagnostics
 
 std::vector<int> mark_doerfler(
     const std::vector<double> &indicator_squared,

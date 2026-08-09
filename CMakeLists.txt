@@ -9,6 +9,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(LOD2D_USE_OPENMP "Enable OpenMP parallelism" ON)
 option(LOD2D_BUILD_TESTS "Build test suite" ON)
 option(LOD2D_BUILD_BENCHMARKS "Build benchmarks" ON)
+option(LOD_ENABLE_VERIFIED_CERTIFICATES
+    "Enable MPFR/MPFI directed-rounding certificate verification" OFF)
 
 # ---- Dependencies ----
 find_package(Eigen3 REQUIRED NO_MODULE)
@@ -26,6 +28,19 @@ if(NOT SuiteSparse_FOUND)
     endif()
 endif()
 find_package(TBB QUIET)
+
+if(LOD_ENABLE_VERIFIED_CERTIFICATES)
+    find_path(MPFR_INCLUDE_DIR mpfr.h)
+    find_path(MPFI_INCLUDE_DIR mpfi.h)
+    find_library(MPFR_LIBRARY NAMES mpfr)
+    find_library(MPFI_LIBRARY NAMES mpfi)
+    find_library(GMP_LIBRARY NAMES gmp)
+    if(NOT MPFR_INCLUDE_DIR OR NOT MPFI_INCLUDE_DIR OR NOT MPFR_LIBRARY OR
+       NOT MPFI_LIBRARY OR NOT GMP_LIBRARY)
+        message(FATAL_ERROR
+            "LOD_ENABLE_VERIFIED_CERTIFICATES requires MPFR, MPFI, and GMP")
+    endif()
+endif()
 
 # ---- Compiler flags ----
 if(CMAKE_BUILD_TYPE STREQUAL "Release")
@@ -69,6 +84,12 @@ add_library(lod2d_core STATIC
     src/helmholtz/corrector.cpp
     src/helmholtz/model.cpp
     src/helmholtz/adaptive/hierarchy.cpp
+    src/helmholtz/adaptive/error_control.cpp
+    src/helmholtz/adaptive/kernel_residual.cpp
+    src/helmholtz/adaptive/verified_spectrum.cpp
+    src/helmholtz/adaptive/certificates.cpp
+    src/helmholtz/adaptive/certified_driver.cpp
+    src/helmholtz/adaptive/numerical_backend.cpp
     src/helmholtz/adaptive/estimator.cpp
     src/helmholtz/adaptive/reliability.cpp
     src/helmholtz/adaptive/driver.cpp
@@ -80,6 +101,13 @@ add_library(lod2d_core STATIC
 )
 target_include_directories(lod2d_core PUBLIC include)
 target_link_libraries(lod2d_core PUBLIC Eigen3::Eigen)
+if(LOD_ENABLE_VERIFIED_CERTIFICATES)
+    target_compile_definitions(lod2d_core PUBLIC LOD_ENABLE_VERIFIED_CERTIFICATES=1)
+    target_include_directories(lod2d_core PRIVATE
+        ${MPFR_INCLUDE_DIR} ${MPFI_INCLUDE_DIR})
+    target_link_libraries(lod2d_core PUBLIC
+        ${MPFI_LIBRARY} ${MPFR_LIBRARY} ${GMP_LIBRARY})
+endif()
 if(SuiteSparse_FOUND)
     target_link_libraries(lod2d_core PUBLIC
         SuiteSparse::CHOLMOD SuiteSparse::AMD SuiteSparse::COLAMD)

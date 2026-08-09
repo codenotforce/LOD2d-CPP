@@ -7,7 +7,8 @@ their solver options. It does not contain performance history or future-task
 definitions:
 
 - measured results and engineering decisions: [DEVELOPMENT.md](DEVELOPMENT.md);
-- adaptive stage 1: [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md).
+- legacy adaptive proxy and certified-adaptive WP0-WP5 boundary:
+  [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md).
 
 ## Mathematical Convention
 
@@ -225,6 +226,8 @@ bash scripts/run_helmholtz_schwarz_scale.sh
 
 ## Adaptive Workflow
 
-Use [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md) for the
-implemented fixed-fine-space adaptive calibration workflow. Uniform estimator
-reliability is not currently claimed.
+Use [HELMHOLTZ_ADAPTIVE_GUIDE.md](HELMHOLTZ_ADAPTIVE_GUIDE.md) for both the
+legacy fixed-fine-space H-only calibration driver and the separate certified
+WP0-WP5 library foundation. The legacy executable is `HLOD-proxy`; it is not a
+formal CALOD or frozen-HLOD paper runner. Uniform estimator reliability and a
+completed paper experiment matrix are not currently claimed.

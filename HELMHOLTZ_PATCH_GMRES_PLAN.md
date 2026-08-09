@@ -6,7 +6,9 @@
 >
 > Two-level Schwarz: S0-S4e complete as an experimental branch.
 >
-> Adaptive Helmholtz work remains paused after stage 1.
+> Historical note: adaptive Helmholtz work was paused after stage 1 when this
+> status was recorded. Current certified-adaptive work is tracked in
+> [HELMHOLTZ_ADAPTIVE_LOD_PLAN.md](HELMHOLTZ_ADAPTIVE_LOD_PLAN.md).
 
 ## 1. Document Role
 

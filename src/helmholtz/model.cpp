@@ -76,6 +76,10 @@ TriMesh make_helmholtz_unit_square_mesh() {
     TriMesh mesh;
     mesh.nodes = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     mesh.elems = {{0, 1, 3}, {2, 3, 1}};
+    // R1 and R2 use a pure impedance boundary.  Keep the classification on
+    // the mesh itself so every downstream assembly path consumes the same
+    // edge contract instead of reconstructing it from the legacy node list.
+    tag_all_boundary_edges(mesh, BoundaryTag::Robin);
     return mesh;
 }
 
@@ -115,7 +119,7 @@ HelmholtzProblemData finish_problem_data(
     TriMesh coarse,
     RefineOutput fine_output,
     std::vector<int> coarse_levels,
-    int fine_level,
+    std::vector<int> fine_levels,
     int ell,
     std::vector<TriMesh> hierarchy_meshes,
     std::vector<Eigen::SparseMatrix<double>> node_level_prolongations,
@@ -129,8 +133,15 @@ HelmholtzProblemData finish_problem_data(
     problem.fine_element_prolongation = std::move(fine_output.P_elem);
     problem.fine_dg_prolongation = std::move(fine_output.P_dg);
     problem.patches = build_patches(problem.coarse, ell);
+    if (fine_levels.size() != problem.fine.elems.size())
+        throw std::invalid_argument("fine level count must match fine elements");
+    if (fine_levels.empty()
+        || *std::min_element(fine_levels.begin(), fine_levels.end()) < 0)
+        throw std::invalid_argument("fine element levels must be nonnegative");
     problem.coarse_element_levels = std::move(coarse_levels);
-    problem.fine_level = fine_level;
+    problem.fine_level = *std::min_element(fine_levels.begin(), fine_levels.end());
+    problem.max_fine_level = *std::max_element(fine_levels.begin(), fine_levels.end());
+    problem.fine_element_levels = std::move(fine_levels);
     problem.fine_hierarchy_meshes = std::move(hierarchy_meshes);
     problem.fine_node_level_prolongations = std::move(node_level_prolongations);
     problem.fine_element_level_prolongations = std::move(element_level_prolongations);
@@ -217,11 +228,12 @@ HelmholtzProblemData build_helmholtz_problem_data(
     UniformFineHierarchy hierarchy =
         build_uniform_fine_hierarchy(coarse, h - H);
     const int coarse_elements = hierarchy.accumulated.P_elem.cols();
+    std::vector<int> fine_levels(hierarchy.accumulated.mesh.elems.size(), h);
     return finish_problem_data(
         std::move(coarse),
         std::move(hierarchy.accumulated),
         std::vector<int>(coarse_elements, H),
-        h,
+        std::move(fine_levels),
         ell, std::move(hierarchy.meshes),
         std::move(hierarchy.node_prolongations),
         std::move(hierarchy.element_prolongations));
@@ -246,8 +258,35 @@ HelmholtzProblemData build_adaptive_helmholtz_problem_data(
         coarse_mesh,
         std::move(nested.refinement),
         coarse_element_levels,
-        fine_level,
+        std::move(nested.element_levels),
         ell, {}, {}, {});
+}
+
+HelmholtzProblemData build_adaptive_helmholtz_problem_data(
+    const TriMesh &coarse_mesh,
+    const std::vector<int> &coarse_element_levels,
+    const TriMesh &fine_mesh,
+    const std::vector<int> &fine_element_levels,
+    int ell) {
+    validate_helmholtz_mesh(coarse_mesh);
+    validate_helmholtz_mesh(fine_mesh);
+    if (coarse_element_levels.size() != coarse_mesh.elems.size())
+        throw std::invalid_argument("adaptive coarse level count must match coarse elements");
+    if (coarse_element_levels.empty()
+        || *std::min_element(coarse_element_levels.begin(), coarse_element_levels.end()) < 0)
+        throw std::invalid_argument("adaptive coarse levels must be nonnegative");
+    if (fine_element_levels.size() != fine_mesh.elems.size())
+        throw std::invalid_argument("adaptive fine level count must match fine elements");
+
+    RefineOutput embedding = adaptive::build_nested_mesh_embedding(coarse_mesh, fine_mesh);
+    const std::vector<int> derived_levels = adaptive::refinement_child_levels(
+        coarse_mesh, coarse_element_levels, embedding);
+    if (derived_levels != fine_element_levels)
+        throw std::invalid_argument(
+            "adaptive fine levels are inconsistent with the nested mesh geometry");
+    return finish_problem_data(
+        coarse_mesh, std::move(embedding), coarse_element_levels,
+        fine_element_levels, ell, {}, {}, {});
 }
 
 HelmholtzLodModel HelmholtzLodModel::build(const HelmholtzProblemConfig &config) {
@@ -277,6 +316,28 @@ HelmholtzLodModel HelmholtzLodModel::build_adaptive(
     const auto mesh_start = std::chrono::steady_clock::now();
     HelmholtzProblemData problem = build_adaptive_helmholtz_problem_data(
         coarse_mesh, coarse_element_levels, resolved.h, resolved.ell);
+    return build_with_problem(
+        std::move(resolved), std::move(problem), elapsed_ms(mesh_start));
+}
+
+HelmholtzLodModel HelmholtzLodModel::build_adaptive(
+    const HelmholtzProblemConfig &config,
+    const TriMesh &coarse_mesh,
+    const std::vector<int> &coarse_element_levels,
+    const TriMesh &fine_mesh,
+    const std::vector<int> &fine_element_levels) {
+    if (config.wavenumber <= 0.0)
+        throw std::invalid_argument("Helmholtz wavenumber must be positive");
+    HelmholtzProblemConfig resolved = config;
+    if (!coarse_element_levels.empty())
+        resolved.H = *std::min_element(
+            coarse_element_levels.begin(), coarse_element_levels.end());
+    if (!fine_element_levels.empty())
+        resolved.h = *std::min_element(fine_element_levels.begin(), fine_element_levels.end());
+
+    const auto mesh_start = std::chrono::steady_clock::now();
+    HelmholtzProblemData problem = build_adaptive_helmholtz_problem_data(
+        coarse_mesh, coarse_element_levels, fine_mesh, fine_element_levels, resolved.ell);
     return build_with_problem(
         std::move(resolved), std::move(problem), elapsed_ms(mesh_start));
 }

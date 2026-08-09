@@ -119,8 +119,8 @@ void verify_mixed_lod_chain() {
     require(solution.petrov_residual < 1e-10,
             "mixed LOD Petrov residual is too large");
     const ComplexVector lod_load = assemble_helmholtz_load(model.problem().fine, source);
-    const adaptive::HelmholtzResidualContributions residual =
-        adaptive::assemble_helmholtz_residual_contributions(
+    const adaptive::diagnostics::HelmholtzResidualContributions residual =
+        adaptive::diagnostics::assemble_helmholtz_residual_contributions(
             model.problem(), model.operators(), solution.fine_values, lod_load, source);
     require(residual.algebraic_relative_difference < 1e-10,
             "mixed residual reconstruction disagrees with the free-node algebraic residual");

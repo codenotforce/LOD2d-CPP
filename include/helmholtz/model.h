@@ -42,7 +42,9 @@ struct HelmholtzProblemData {
     std::vector<Eigen::SparseMatrix<double>> fine_element_level_prolongations;
     Eigen::SparseMatrix<double> patches;
     std::vector<int> coarse_element_levels;
+    std::vector<int> fine_element_levels;
     int fine_level = -1;
+    int max_fine_level = -1;
 };
 
 struct HelmholtzLodSolution {
@@ -72,6 +74,12 @@ HelmholtzProblemData build_adaptive_helmholtz_problem_data(
     const std::vector<int> &coarse_element_levels,
     int fine_level,
     int ell);
+HelmholtzProblemData build_adaptive_helmholtz_problem_data(
+    const TriMesh &coarse_mesh,
+    const std::vector<int> &coarse_element_levels,
+    const TriMesh &fine_mesh,
+    const std::vector<int> &fine_element_levels,
+    int ell);
 
 class HelmholtzLodModel {
 public:
@@ -87,6 +95,12 @@ public:
         const HelmholtzProblemConfig &config,
         const TriMesh &coarse_mesh,
         const std::vector<int> &coarse_element_levels);
+    static HelmholtzLodModel build_adaptive(
+        const HelmholtzProblemConfig &config,
+        const TriMesh &coarse_mesh,
+        const std::vector<int> &coarse_element_levels,
+        const TriMesh &fine_mesh,
+        const std::vector<int> &fine_element_levels);
 
     HelmholtzLodSolution solve_load(const ComplexVector &fine_load) const;
     HelmholtzLodSolution solve_source(const ComplexFunction &source) const;

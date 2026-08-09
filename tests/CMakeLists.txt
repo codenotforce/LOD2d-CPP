@@ -20,6 +20,8 @@ add_test(NAME dg_assembly COMMAND test_dg)
 add_executable(test_nvb test_nvb.cpp)
 target_link_libraries(test_nvb PRIVATE lod2d_core)
 add_test(NAME newest_vertex_bisection COMMAND test_nvb)
+set_tests_properties(newest_vertex_bisection PROPERTIES
+    WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
 add_executable(test_qi test_qi.cpp)
 target_link_libraries(test_qi PRIVATE lod2d_core)
@@ -60,6 +62,30 @@ add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)
 add_executable(test_helmholtz_adaptive test_helmholtz_adaptive.cpp)
 target_link_libraries(test_helmholtz_adaptive PRIVATE lod2d_core)
 add_test(NAME helmholtz_adaptive COMMAND test_helmholtz_adaptive)
+
+add_executable(test_helmholtz_error_control test_helmholtz_error_control.cpp)
+target_link_libraries(test_helmholtz_error_control PRIVATE lod2d_core)
+add_test(NAME helmholtz_error_control COMMAND test_helmholtz_error_control)
+
+add_executable(test_helmholtz_kernel_residual test_helmholtz_kernel_residual.cpp)
+target_link_libraries(test_helmholtz_kernel_residual PRIVATE lod2d_core)
+add_test(NAME helmholtz_kernel_residual COMMAND test_helmholtz_kernel_residual)
+
+add_executable(test_verified_spectrum test_verified_spectrum.cpp)
+target_link_libraries(test_verified_spectrum PRIVATE lod2d_core)
+add_test(NAME verified_spectrum COMMAND test_verified_spectrum)
+
+add_executable(test_helmholtz_certificates test_helmholtz_certificates.cpp)
+target_link_libraries(test_helmholtz_certificates PRIVATE lod2d_core)
+add_test(NAME helmholtz_certificates COMMAND test_helmholtz_certificates)
+
+add_executable(test_helmholtz_certified_driver test_helmholtz_certified_driver.cpp)
+target_link_libraries(test_helmholtz_certified_driver PRIVATE lod2d_core)
+add_test(NAME helmholtz_certified_driver COMMAND test_helmholtz_certified_driver)
+
+add_executable(test_helmholtz_numerical_backend test_helmholtz_numerical_backend.cpp)
+target_link_libraries(test_helmholtz_numerical_backend PRIVATE lod2d_core)
+add_test(NAME helmholtz_numerical_backend COMMAND test_helmholtz_numerical_backend)
 
 add_executable(test_helmholtz_paper_config test_helmholtz_paper_config.cpp)
 target_link_libraries(test_helmholtz_paper_config PRIVATE lod2d_core)

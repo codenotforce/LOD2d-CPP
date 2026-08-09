@@ -1,12 +1,12 @@
 # Helmholtz 认证自适应 LOD：论文数值实验交付计划
 
-> 状态日期：2026-08-07
+> 状态日期：2026-08-09
 >
 > 唯一终点：完成论文数值实验章节所要求的全部算例、对照方法、认证量、误差与工作量统计、图表和可复现数据。
 >
-> 理论与实验合同来源：[helmholtz_lod_certified_amsart.tex](../LOD_paper/helmholtz_lod_certified_amsart.tex)，重点对应 Certification-driven adaptivity 和 Adaptive numerical experiments 两节。
+> 理论与实验合同来源：helmholtz_lod_certified_amsart.tex (`../LOD_paper/helmholtz_lod_certified_amsart.tex`, external working-copy path)，重点对应 Certification-driven adaptivity 和 Adaptive numerical experiments 两节。
 >
-> 当前实现事实：项目已经具备单位正方形、固定 \(h,\ell\)、仅自适应 \(H\) 的 Stage-1 基线；尚不能把当前 strong-residual proxy 的结果称为 certified adaptive LOD。
+> 当前实现事实：项目已经具备独立的 audit-kernel \(\eta_H\)、fail-closed 的 WP4 corrector/stability 证书框架、WP5 CALOD/HLOD 状态机，以及把 hierarchy、真实 LOD solve、WP3、WP4 和经验 audit 诊断串联起来的 `NumericalCertifiedBackend`。该数值后端只允许产生 `conditional` 结果；默认严格策略会在缺少 verified evidence 时结构化停止。统一论文 runner、verified theorem constants、verified FE/corrector enclosure、verified \(\eta_H\)、定向舍入的矩阵/标量传播及独立 adjoint fallback 尚未完成，因此当前没有任何结果可以称为完整的 certified adaptive LOD。
 
 本文件取代 2026-07-25 版本的旧主线。原计划中的 fine/mixed/macro 强残差、经验 reliability envelope、高对比系数、局部 \(\ell_T\) 和独立 patch 细网格不再阻塞论文实验；它们仅作为诊断或论文完成后的扩展。正式实现严格跟随论文已经冻结的
 
@@ -119,8 +119,8 @@ r_0=\tfrac14,\quad r_1=\tfrac12.
 
 | 方法 ID | 方法 | 参数规则 | 当前状态 |
 |---|---|---|---|
-| CALOD | 完整 certified adaptive LOD | 按论文顺序联合更新 \(H,h,\ell\) 和 audit space | 未实现 |
-| HLOD | fixed-\(h,\ell\) 的 \(H\)-adaptive LOD | 使用与 CALOD 相同的 \(\eta_H\)，冻结下述 \(h_{\mathrm{prior}},\ell_{\mathrm{prior}}\) | 当前只有 strong-residual proxy |
+| CALOD | 完整 certified adaptive LOD | 按论文顺序联合更新 \(H,h,\ell\) 和 audit space | WP5 控制器及真实浮点 `conditional` backend 已实现；缺 verified backend 与 WP6 统一 runner |
+| HLOD | fixed-\(h,\ell\) 的 \(H\)-adaptive LOD | 使用与 CALOD 相同的 \(\eta_H\)，冻结下述 \(h_{\mathrm{prior}},\ell_{\mathrm{prior}}\) | 复用 WP5 控制器；正式 prior 配置与统一 runner 未完成，旧 strong-residual proxy 保持隔离 |
 | SLOD-prior | quasi-uniform standard LOD | 使用同一 \(h_{\mathrm{prior}},\ell_{\mathrm{prior}}\) | 核心求解已实现，缺统一驱动 |
 | SLOD-matched | quasi-uniform standard LOD | 使用同一算例 CALOD 在成功或资源停止前全部有效历史中的最大 fine resolution 和最大 \(\ell\) | 未实现自动匹配 |
 | UFEM | uniform conforming \(P_1\) FEM | 一致 NVB 加细 | 核心求解已实现，缺统一驱动 |
@@ -159,18 +159,19 @@ HLOD 与 SLOD-prior 的固定参数不得使用正式误差回调。令 \(h_{\ma
 
 | 能力 | 状态 | 现有证据 | 距离论文交付 |
 |---|---|---|---|
-| NVB、稳定粗单元 ID、固定 master fine mesh、\(V_H\subset V_h\) | 已实现 | include/helmholtz/adaptive/hierarchy.h，tests/test_helmholtz_adaptive.cpp | 需扩展为 \(V_H\subset V_h\subset V_{\widehat h}\) |
-| 拟插值和自然延长，\(I_HP_{Hh}\approx I\) | 已实现 | Helmholtz model 构建检查 | 需同时覆盖 mixed boundary、非均匀 \(V_h\) 和 audit space |
+| 三层 NVB、稳定粗单元 ID、局部 \(V_h\)、独立 cert-audit、\(V_H\subset V_h\subset V_{\widehat h}\) | 已实现 | include/helmholtz/adaptive/hierarchy.h，tests/test_helmholtz_adaptive.cpp | coarse 追上 fine 时会自动扩展 fine/audit，并在生产路径检查嵌套、复合和 right inverse；正式 runner 仍缺 |
+| 三组 prolongation、fine/audit 两套 \(I_H\) 和局部 kernel constraint restriction | 已实现 | tests/test_helmholtz_adaptive.cpp，tests/test_helmholtz_kernel_residual.cpp | WP3/WP4 与真实数值 backend 已调用；verified enclosure 尚缺 |
+| exact/external/two-level 误差角色、cert/reference 独立缓存与计时 | 已实现 | include/helmholtz/adaptive/error_control.h，tests/test_helmholtz_error_control.cpp | WP5 backend contract 已隔离 reference；WP6 runner 不得绕过 |
 | R1 制造解、standard LOD、uniform FEM | 部分实现 | manufactured benchmark 和 \(k\)-scan | 缺统一方法注册、共同目标和累计工作量 |
 | fixed-\(h,\ell\) H-only 自适应 | 已实现 Stage-1 | src/helmholtz/adaptive/driver.cpp | 当前估计子不是论文 \(\eta_H\) |
 | fine/mixed/macro 强残差 | 已实现诊断 | src/helmholtz/adaptive/estimator.cpp | 只保留 HLOD-proxy 和 AFEM 复用，不是 CALOD 主估计子 |
-| 局部无约束能量 Riesz | 已实现诊断 | estimator.cpp 的 dual calibration | 必须改为 audit-kernel 受约束 Riesz |
-| R2 Gaussian | 部分实现 | adaptive 和 \(k\)-scan 各有一种 Gaussian | \(\sigma\) 与归一化均不符合论文 |
-| L 型区域与 mixed Dirichlet/Robin | 未实现 | TriMesh 有 Dirichlet 节点字段 | 当前 Helmholtz model 明确拒绝 Dirichlet 节点，是 S 的硬阻塞项 |
-| \(\eta_{H,z}\)、\(\eta_H\)、局部效率诊断 | 未实现 | 无 | CALOD 和最终 HLOD 的前置条件 |
-| \(G_{\mathrm{tot}},G_h,\Theta_{\mathrm{tot}},\Theta_h\) | 未实现 | 无 | \(h/\ell\) 决策的前置条件 |
-| verified eigen/SVD enclosure 和 inf-sup 下界 | 未实现 | 仅有小系统近似 inf-sup | 无此项只能输出 conditional |
-| 局部 corrector-\(h\) 更新和全局 \(\ell\) 更新 | 未实现 | 当前 \(h,\ell\) 全程固定 | CALOD 内循环缺失 |
+| 局部 audit-kernel 受约束能量 Riesz | 已实现 diagnostic 路径 | kernel_residual、numerical_backend 与对应测试 | 普通 Eigen token 固定为 Diagnostic；verified \(\eta_H\) producer 尚不存在 |
+| R2 Gaussian | 已实现 | paper case registry、解析归一化与 quadrature 收敛测试 | WP6 统一 runner 仍需调用该 case 对象 |
+| L 型区域与 mixed Dirichlet/Robin | 已实现 | boundary-edge tags、mixed-boundary 与 paper-case 测试 | WP6 runner 仍须复用同一边标签 |
+| \(\eta_{H,z}\)、\(\eta_H\)、\(\eta_{H,T}\)、Dörfler 集和局部效率诊断 | 已实现 | kernel_residual.h/.cpp，tests/test_helmholtz_kernel_residual.cpp | 真实 LOD candidate 已进入 R1/R2/S 测试和 numerical backend；正式输出仍缺 |
+| \(G_{\mathrm{tot}},G_h,\Theta_{\mathrm{tot}},\Theta_h\) | diagnostic 计算已实现 | certificates.h/.cpp，tests/test_helmholtz_certificates.cpp | 已接入 \(h/\ell\) 决策；严格矩阵/标量 enclosure 传播尚未闭合 |
+| verified eigen/SVD enclosure 和 inf-sup 下界 | 独立 kernel 已实现，证书链未闭合 | verified_spectrum.h/.cpp | theorem constants、assembly/corrector enclosure、verified \(\eta_H\) 和 directed matrix/scalar propagation 均是 G3 blocker |
+| 局部 corrector-\(h\) 与全局 \(\ell\) 更新 | 控制与 full-rebuild backend 已实现 | certified_driver、numerical_backend 及对应测试 | 当前只形成 conditional implementation-study；正式配置 runner 未完成 |
 | adaptive \(P_1\) FEM | 未实现 | NVB、Dörfler 和残差装配可复用 | 必做 comparator |
 | matched-tolerance 比较驱动 | 未实现 | benchmark 输出格式彼此独立 | 无法生成论文主表 |
 | 累计 patch dimension、峰值内存、core time | 未实现或不完整 | 有阶段 wall time，patch_cost 仅用于调度 | 必须建立统一数据协议 |
@@ -488,7 +489,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 
 ### WP0：冻结实验协议和数据模式
 
-**状态：已完成（2026-08-08）；配置协议、注册表、canonical hash/run ID 和严格往返测试已落地。**
+**状态：合同层已完成并于 2026-08-09 再修正；配置/输出双 schema、注册表、五类 certificate status、固定指标列、严格 RFC 8259 解析和往返测试均已落地。canonical hash/run ID 现覆盖 driver 决策、资源上限以及 numerical-backend 的层级、solver、certificate、audit 和常数集内容摘要；这些对象接入统一论文 runner 仍属于 WP6。**
 
 任务：
 
@@ -501,6 +502,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 建议产物：
 
 - experiments/helmholtz_adaptive_paper/schema-v1.json
+- experiments/helmholtz_adaptive_paper/output-schema-v1.json
 - experiments/helmholtz_adaptive_paper/cases/*.json
 - experiments/helmholtz_adaptive_paper/methods/*.json
 - include/helmholtz/experiments/paper_config.h
@@ -515,7 +517,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 
 ### WP1：统一几何、边界和论文数据
 
-**状态：已完成（2026-08-08）；显式边标签及局部/全局 NVB 标签守恒、mixed-boundary P1 FEM/LOD/residual、L 型网格、R1/R2/S 数据对象、统一高阶 QuadraturePolicy、边界标签 VTK 输出及积分收敛门槛均已完成。**
+**状态：已完成并于 2026-08-09 再复核；显式边标签及局部/全局 NVB 标签守恒、mixed-boundary P1 FEM/LOD/residual、L 型网格、R1/R2/S 数据对象、统一高阶 QuadraturePolicy、边界标签 VTK 输出及积分收敛门槛均已完成。R1/R2 单位方形初始网格也显式写入四条 Robin 边，不再依赖 legacy Dirichlet-node 推断；此前 S 梯度回调的 Eigen 惰性表达式悬空引用亦已修正。**
 
 任务：
 
@@ -548,7 +550,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 
 ### WP2：三层网格、audit space 和统一误差模块
 
-**状态：进行中（2026-08-08）；已显式维护 \(T_H,T_h,T_{\widehat h}\)、父子映射、三组节点 prolongation、fine/audit 两套 \(I_H\) 及按 fine-element 集合驱动的 cert-audit 共形局部加细；统一误差角色接口、局部误差服务和分离计时缓存待完成。**
+**状态：已完成并于 2026-08-09 修复容量边界；显式三层网格及父子映射、共形局部 \(V_h\) 加细、独立 cert-audit 加细、节点/单元/DG prolongation、fine/audit 两套 \(I_H\)、kernel constraint restriction、误差角色隔离及独立缓存均已落地。coarse refinement 追上原 fine 容量时现在自动扩展 fine 和 audit，而不是抛错；每次变化后在生产路径验证三层复合、坐标映射、right inverse 和边界标签。**
 
 任务：
 
@@ -559,6 +561,14 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 5. 建立统一细空间服务但分开两个角色：CALOD 内部可更新的 cert_audit，以及全部方法共享、只供评价的 evaluation reference。exact、外部 estimator 和 two-level saturation 通过显式角色接口调用。
 6. 提供全局能量误差、\(L^2\) 误差和 \(D_z^+\) 局部能量误差。
 7. 分别缓存 cert-audit 和 evaluation-reference factorization；前者计入 CALOD certificate time，后者记为 evaluation_reference_time 并单列排除。
+
+建议产物：
+
+- include/helmholtz/adaptive/hierarchy.h
+- include/helmholtz/adaptive/error_control.h
+- src/helmholtz/adaptive/error_control.cpp
+- tests/test_helmholtz_adaptive.cpp
+- tests/test_helmholtz_error_control.cpp
 
 验收：
 
@@ -571,7 +581,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 
 ### WP3：audit-kernel 局部残差估计子 \(\eta_H\)
 
-**状态：未实现；替换旧计划的主估计子。**
+**状态：diagnostic 数值实现已完成并于 2026-08-09 加固；冻结 shared-coarse-vertex patch policy 及 hash，按完整单元支撑选择 audit DOF，实现 saddle 与 kernel-basis 双路径、唯一全局代数残差、指标分配、Dörfler 标记和局部 effectivity。R1/R2a/R2b/S 测试现使用真实、非零且不同于 audit FEM 的 LOD candidate。估计器返回只读 evidence token，绑定三层上下文、算子、solver、load、candidate 和输出；普通 Eigen 永远是 Diagnostic，verified \(\eta_H\) producer 尚未实现。**
 
 任务：
 
@@ -600,7 +610,7 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 
 ### WP4：Corrector、谱与稳定性证书
 
-**状态：未实现；CALOD 的核心阻塞项。**
+**状态：部分完成、严格 fail-closed（2026-08-09 复审）；audit/fine Riesz、\(M_\kappa,G_{\mathrm{tot}},G_{h,T},G_h\)、谱簇、corrector/stability/error 公式、常数注册表和 MPFR/MPFI 谱 kernel 已有实现，但 G3 尚未通过。当前缺少 verified theorem constants、verified FE/corrector assembly producer、verified \(\eta_H\)、全程定向舍入的矩阵/标量传播，以及共轭门槛失败后的独立 adjoint corrector。上述任一项缺失都强制保持 `conditional`。**
 
 任务：
 
@@ -644,9 +654,22 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 - R1、R2、S 的 primal/adjoint 共轭门槛通过，或两侧独立证书路径通过；
 - 缺任一 verified 输入时状态自动降为 conditional，不能由命令行强行标成 certified。
 
+实现与验证记录（2026-08-08）：
+
+- `certificates.{h,cpp}` 从 audit 上的同一个离散算子装配 primal/adjoint total functional，并在每个 corrector patch 上装配 fine residual；所有 Riesz 解均保存 constraint、stationarity、energy-identity 和 interval-correction 误差。
+- `verified_spectrum.{h,cpp}` 在 `LOD_ENABLE_VERIFIED_CERTIFICATES=ON` 时把复杂矩阵转换为实 (2\times2) block，使用 MPFI outward interval 和 MPFR RNDD/RNDU；广义最大特征值使用验证 Rayleigh 下界与合同变换 Gershgorin 上界，inf-sup 使用验证逆残差下界。OFF 时只保留 Eigen approximation，enclosure 永不标为 verified。
+- 复数矩阵乘加、Riesz residual correction、Gram 装配和谱计算会传播 diagnostic componentwise entry radius；复审确认其半径累加仍使用普通 double，尚不能视为严格 outward interval propagation，因此即使输入 evidence 完整也不会进入 verified 链。
+- 常数注册表保存值、界方向、来源、推导、mesh class、patch-policy hash 和 verified 位；(c_W,C_\Pi,C_F) 按论文公式传播，(C_{\mathrm{ol}}(\ell)) 与 (C_{\mathrm{ol}}(\ell+s)) 由 patch incidence 精确枚举。未导入的 (C_{\mathrm{app}},C_{\mathrm{st}},C_{\mathrm{sd}},C_{\mathrm{ov}},C_a,C_{\mathrm{loc}},\beta,s) 不会被猜测或校准值替代。
+- R1、R2a、R2b、S 的共轭诊断、Hermitian/PSD、稠密广义特征值和 cluster-aware \(\eta_{h,T}\) 守恒门槛有覆盖；当前 model 只保存 primal corrector，所谓 adjoint 是共轭派生量。共轭门槛失败时现已 fail-closed 为 conditional，不再错误声称使用了独立较差侧，但真正的 independent-adjoint fallback 仍待实现。
+- sensitivity 门槛实测：corrector fine level 加密时 Θ_h 从 0.383619 降至 0.279800；ℓ 从 0 增至 1 时 Θ_tot 从 1.10854 降至 0.903231。
+- `verified_spectrum` 的 MPFR/MPFI kernel 保留定向舍入接口；本次环境未安装 MPFR/MPFI 开发包，未重新接受旧的整链 verified 验收声明。证书层的矩阵传播与最终 \(\delta/q/L/U\) 标量组合仍需改为全程 interval arithmetic。
+- 并行复核发现并修正 `PatchWorkspace` 在 fine-node 数量变化而 coarse-node 数量不变时只重置 node stamp、未清空 coarse constraint stamp 的陈旧索引越界；移除测试单线程限制后，Eigen-only 与 MPFR/MPFI 证书测试均以默认 32 线程连续 10 次通过。
+- 2026-08-09 修复了 evidence 与实际 mesh/PDE/operator/patch context 的绑定、陈旧常数/assembly evidence 重放、普通 double corrector 被零半径升级、localization fallback 被可选常数永久阻塞等问题；最终 Release 全量回归为 37/37，通过数不代表 verified 证书链已经闭合，也不再沿用旧的 33/33 verified 声明。
+- WSL 构建验证后端需要 `libmpfr-dev`、`libmpfi-dev`（及其 GMP 依赖）。
+
 ### WP5：论文版 CALOD 与 HLOD 状态机
 
-**状态：H-only proxy 已有；完整状态机未实现。**
+**状态：控制器完成，端到端论文方法部分完成（2026-08-09 复审）；四步状态机、结构化限额、checkpoint 和 HLOD 冻结逻辑已实现，并已有真实浮点 `NumericalCertifiedBackend` 连接 hierarchy、LOD、WP3、WP4 和经验 audit 诊断。该 backend 只能形成 conditional implementation-study；verified backend、正式 case-matrix runner 和 G3 证书链仍缺，因此不得把 WP5 标为“完整 certified CALOD 已完成”。**
 
 任务：
 
@@ -673,6 +696,24 @@ R1、R2、S 的正式离散均使用实网格、实插值权、实系数和共�
 - 每个停止原因唯一、结构化且可序列化；
 - 给定固定标记序列，checkpoint 恢复与连续运行逐轮一致；
 - CALOD 在无法满足稳定性或资源限制时明确失败，不能静默转为 H-only。
+
+完成记录（2026-08-09）：
+
+- 新增 `certified_driver.{h,cpp}`，实现 `COARSE_ADMISSIBILITY -> CORRECTOR_CERTIFICATION -> COARSE_ERROR_CONTROL -> AUDIT_CONTROL` 的固定顺序以及 `DONE/WORK_LIMIT/FAILURE` 唯一终态；continuous 模式不会因 `U_LOD <= tol` 提前返回。
+- coarse admissibility 标记全部 `mu_T > mu0` 单元；corrector 不合格时严格按 `delta_h_upper > tau*delta_total_lower` 选择 cluster-aware `eta_h,T` Dörfler h 分支，否则执行全局 `ell <- ell+1`；只有合格后才调用 solve/`eta_H` backend。
+- `eta_H` 标记在 Step 3 暂存；audit 不充分时先加细 audit、丢弃暂存 H 标记并回到 Step 2；audit 充分时形成论文 continuous interval，仅在仍未达标时应用暂存 H 标记并回到 Step 1。
+- Step 2 的 corrector/stability evidence 与 Step 3 才能取得的 \(\eta_H\) evidence 已拆分；不可手填的 WP3 token 同时绑定上下文和实际 \(\eta_H/\eta_{H,T}\) 输出，跨上下文或修改数值后的 token 会被拒绝。
+- algorithm-facing backend 只暴露 `mu_H`、corrector bounds、`eta_H/eta_h`、audit interval、网格变更和资源快照，不暴露 `ErrorReference`、exact solution 或 evaluation-reference error；提供 WP3 `AuditKernelResidualEstimate` 与 WP4 `CorrectorCertificateResult` 的窄适配器。
+- verified evidence 为默认门槛；显式 conditional 模式会永久降级 run claim，不能被重新提升为 verified。无效/缺失证据、backend 异常、不可执行的 H/h/ell/audit 分支均返回结构化 `FAILURE`，CALOD 不存在 H-only fallback。
+- HLOD 使用同一 admissibility、`eta_H`、Dörfler 和 coarse refinement 路径，但逐步核对冻结的 corrector-space id 与 `ell_prior`；固定 prior 不满足 corrector 门槛时返回 `FrozenHlodCorrectorFailure`，绝不修改 h 或 ell。
+- 旧 strong-residual driver 保留为 diagnostic proxy；结果固定写出 `helmholtz/hlod_proxy` namespace 与 `diagnostic_h_only_proxy` implementation status，和新 `helmholtz/hlod`、`helmholtz/calod` 分离。
+- checkpoint v2 序列化保存配置 fingerprint、状态、唯一终止原因、区间、延后标记、累计资源、完整 transition history 和 H/h/ell/audit mutation journal；resume 从初始 backend 重放 mutation，并用 problem id、HLOD prior 和 backend fingerprint 拒绝不一致恢复。
+- work/state-transition、H/h/ell/audit 次数、coarse/fine/audit DOF、backend work、peak memory、elapsed time 均有独立 `WORK_LIMIT` code；终态类别与 stop code 在反序列化时强制一致。
+- 每个昂贵 observation 后重新检查 work/time/memory；continuous 零 indicator 仍会进入 audit 而不是以 EmptyMarking 失败。checkpoint 的累计资源和 AuditControl 恢复语义在 production backend 集成测试中覆盖。
+- 单元测试在一次 CALOD 脚本中依次强制触发 admissibility-H、h、ell、audit、延后 H 分支，逐项断言论文 action 序列与 continuous interval；compile-time 门槛确认 decision backend 没有 evaluation-reference accessor。
+- checkpoint 中断/恢复与连续运行的最终 canonical serialization 和 mutation log 字节级一致；HLOD 冻结成功/失败、conditional 降级、work limit、proxy identity 和 WP4 coarse adapter 均通过。
+- `NumericalCertifiedBackend` 对每次 H/h/ell/audit mutation 走 full rebuild，并提供确定性 problem/state fingerprint；普通 FE 装配、Eigen Riesz 和经验 saturation 均明确降为 conditional。它是实现 smoke/backend，不是 WP6 正式论文 runner。
+- 旧的 34/34 与 MPFR 整链记录已被本次审查发现的真实缺口否定；2026-08-09 的 Release 回归为 37/37，但 matrix/scalar directed interval propagation、verified theorem constants、verified \(\eta_H\) 与 independent-adjoint fallback 仍未完成。
 
 ### WP6：统一 comparator 和 matched-tolerance driver
 
@@ -1011,6 +1052,8 @@ SLOD-prior 与 SLOD-matched 在最终表中必须分成两行，不能继续合�
 
 依赖 WP2、WP3。
 
+**状态：diagnostic 数值门槛已通过（2026-08-09）；三层生产态不变量、basis/saddle 一致性、真实 LOD candidate 的 R1/R2a/R2b/S effectivity、分配守恒和 Dörfler 均有回归覆盖。该状态不等于 verified \(\eta_H\)：普通 Eigen evidence 固定为 Diagnostic。**
+
 - 三层嵌套和 right inverse 通过；
 - 局部 kernel Riesz 通过 basis/saddle 双实现校验；
 - 局部量求和、Dörfler 和局部效率诊断通过。
@@ -1021,6 +1064,8 @@ SLOD-prior 与 SLOD-matched 在最终表中必须分成两行，不能继续合�
 
 依赖 WP4。
 
+**状态：未通过。conditional 公式链和 fail-closed 降级可运行，但 verified constants/assembly/corrector/\(\eta_H\)、directed matrix/scalar interval propagation 与 independent-adjoint fallback 尚未闭合；因此不得生成 CALOD 论文数据。**
+
 - \(\Theta_{\mathrm{tot}},\Theta_h,\delta,q,L/U\) 全链路通过；
 - 谱和 inf-sup enclosure 通过小问题验证；
 - conditional/audit-certified 状态降级逻辑通过。
@@ -1030,6 +1075,8 @@ SLOD-prior 与 SLOD-matched 在最终表中必须分成两行，不能继续合�
 ### G4：四步状态机可控
 
 依赖 WP5。
+
+**状态：控制器门槛已通过，production integration 为 conditional。脚本 backend 覆盖全部确定性分支，真实 numerical backend 覆盖 full rebuild、证据降级和 checkpoint；在 G3 通过及 WP6 runner 完成前，这不构成 certified 端到端验收。**
 
 - \(H,h,\ell,\widehat h\) 四个分支均有确定性测试；
 - work limit、checkpoint 和 full-rebuild 历史一致性通过；若启用 incremental，再额外通过复用一致性；
