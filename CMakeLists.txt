@@ -89,6 +89,7 @@ add_library(lod2d_core STATIC
     src/helmholtz/adaptive/verified_spectrum.cpp
     src/helmholtz/adaptive/certificates.cpp
     src/helmholtz/adaptive/certified_driver.cpp
+    src/helmholtz/adaptive/numerical_backend.cpp
     src/helmholtz/adaptive/estimator.cpp
     src/helmholtz/adaptive/reliability.cpp
     src/helmholtz/adaptive/driver.cpp

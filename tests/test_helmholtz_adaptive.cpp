@@ -164,7 +164,7 @@ void verify_hierarchy_and_estimator() {
     for (int step = 0; step < 3; ++step) {
         std::vector<int> marked;
         for (int t = 0; t < static_cast<int>(hierarchy.coarse_levels().size()); ++t) {
-            if (hierarchy.coarse_levels()[t] < hierarchy.fine_level()
+            if (hierarchy.coarse_levels()[t] + 1 < hierarchy.fine_level()
                 && (t + step) % 3 == 0) {
                 marked.push_back(t);
             }
@@ -348,6 +348,59 @@ void verify_hierarchy_and_estimator() {
     require(!marked.empty(), "Doerfler marking returned an empty set");
 }
 
+void verify_capacity_expansion() {
+    AdaptiveMeshHierarchy hierarchy(make_helmholtz_unit_square_mesh(), 0, 1);
+    verify_three_level_prolongations(hierarchy);
+
+    for (int cycle = 0; cycle < 2; ++cycle) {
+        std::vector<int> marked(hierarchy.coarse_mesh().elems.size());
+        for (int element = 0; element < static_cast<int>(marked.size()); ++element)
+            marked[element] = element;
+
+        const std::size_t old_fine_elements = hierarchy.fine_mesh().elems.size();
+        const std::size_t old_audit_elements = hierarchy.cert_audit_mesh().elems.size();
+        const std::uint64_t old_fine_version = hierarchy.fine_mesh_version();
+        const std::uint64_t old_audit_version = hierarchy.cert_audit_mesh_version();
+        hierarchy.refine(marked);
+
+        require(hierarchy.fine_mesh().elems.size() > old_fine_elements,
+                "H capacity exhaustion did not expand the master fine mesh");
+        require(hierarchy.cert_audit_mesh().elems.size() > old_audit_elements,
+                "H capacity exhaustion did not expand the cert-audit mesh");
+        require(hierarchy.fine_mesh_version() > old_fine_version,
+                "H capacity expansion did not advance the fine mesh version");
+        require(hierarchy.cert_audit_mesh_version() > old_audit_version,
+                "H capacity expansion did not advance the audit mesh version");
+        require(*std::max_element(
+                    hierarchy.coarse_levels().begin(),
+                    hierarchy.coarse_levels().end())
+                    < *std::min_element(
+                        hierarchy.fine_element_levels().begin(),
+                        hierarchy.fine_element_levels().end()),
+                "H capacity expansion did not restore a fine-level gap");
+        require(std::abs(boundary_measure(
+                    hierarchy.fine_mesh(), BoundaryTag::Robin) - 4.0) < 2e-12,
+                "H capacity expansion changed the fine boundary contract");
+        require(std::abs(boundary_measure(
+                    hierarchy.cert_audit_mesh(), BoundaryTag::Robin) - 4.0) < 2e-12,
+                "H capacity expansion changed the audit boundary contract");
+        verify_three_level_prolongations(hierarchy);
+    }
+
+    AdaptiveMeshHierarchy mixed(make_helmholtz_l_shape_mesh(), 0, 1);
+    std::vector<int> mixed_marked(mixed.coarse_mesh().elems.size());
+    for (int element = 0; element < static_cast<int>(mixed_marked.size()); ++element)
+        mixed_marked[element] = element;
+    mixed.refine(mixed_marked);
+    require(std::abs(boundary_measure(
+                mixed.fine_mesh(), BoundaryTag::Dirichlet) - 2.0) < 2e-12,
+            "mixed H capacity expansion changed the Dirichlet boundary");
+    require(std::abs(boundary_measure(
+                mixed.cert_audit_mesh(), BoundaryTag::Robin) - 6.0) < 2e-12,
+            "mixed H capacity expansion changed the Robin boundary");
+    verify_three_level_prolongations(mixed);
+}
+
 void verify_doerfler_minimal_set() {
     const std::vector<int> marked = mark_doerfler({4.0, 3.0, 2.0, 1.0}, 0.6);
     require(marked == std::vector<int>({0, 1}),
@@ -359,6 +412,7 @@ void verify_doerfler_minimal_set() {
 int main() {
     try {
         verify_hierarchy_and_estimator();
+        verify_capacity_expansion();
         verify_doerfler_minimal_set();
         std::cout << "Adaptive Helmholtz hierarchy and residual estimators passed\n";
         return 0;

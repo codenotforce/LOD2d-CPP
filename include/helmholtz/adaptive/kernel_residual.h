@@ -16,6 +16,65 @@ enum class KernelRieszSolver {
     KernelBasisReference
 };
 
+enum class KernelResidualEvidenceLevel {
+    Diagnostic,
+    Verified
+};
+
+struct AuditKernelResidualEstimate;
+
+// Provenance for eta_H.  The verification state is deliberately read-only:
+// callers can copy evidence produced by the estimator, but cannot construct a
+// "verified" token or promote an ordinary floating-point result by setting a
+// bool.  A default-constructed object is an uninitialized diagnostic token.
+class AuditKernelResidualEvidence {
+public:
+    AuditKernelResidualEvidence() = default;
+
+    KernelResidualEvidenceLevel level() const noexcept { return level_; }
+    bool verified() const noexcept {
+        return level_ == KernelResidualEvidenceLevel::Verified;
+    }
+    const std::string &source() const noexcept { return source_; }
+    const std::string &backend() const noexcept { return backend_; }
+    const std::string &context_fingerprint() const noexcept {
+        return context_fingerprint_;
+    }
+    const std::string &diagnostic_fingerprint() const noexcept {
+        return diagnostic_fingerprint_;
+    }
+    const std::string &result_fingerprint() const noexcept {
+        return result_fingerprint_;
+    }
+    const std::string &failure_reason() const noexcept {
+        return failure_reason_;
+    }
+    // A token is valid only for the exact estimator output from which it was
+    // produced.  This prevents a copied token from being attached to a
+    // caller-modified eta or element allocation.
+    bool matches_eta(double eta) const noexcept;
+    bool matches_result(const AuditKernelResidualEstimate &estimate) const;
+
+private:
+    friend AuditKernelResidualEstimate estimate_audit_kernel_residual(
+        const AdaptiveMeshHierarchy &hierarchy,
+        const HelmholtzOperators &audit_operators,
+        const ComplexVector &audit_load,
+        const ComplexVector &candidate_on_audit,
+        double doerfler_theta,
+        KernelRieszSolver solver);
+
+    KernelResidualEvidenceLevel level_ =
+        KernelResidualEvidenceLevel::Diagnostic;
+    std::string source_ = "uninitialized audit-kernel residual evidence";
+    std::string backend_;
+    std::string context_fingerprint_;
+    std::string diagnostic_fingerprint_;
+    std::string result_fingerprint_;
+    double eta_ = 0.0;
+    std::string failure_reason_ = "the audit-kernel estimator has not run";
+};
+
 struct KernelPatchPolicy {
     int interpolation_support_layers = 0;
     int patch_layers = 1;
@@ -51,6 +110,7 @@ struct LocalKernelRieszResult {
 };
 
 struct AuditKernelResidualEstimate {
+    AuditKernelResidualEvidence evidence;
     KernelPatchPolicy policy;
     KernelRieszSolver solver = KernelRieszSolver::SaddlePoint;
     ComplexVector global_residual;
@@ -68,6 +128,15 @@ struct AuditKernelResidualEstimate {
 // corresponding D_z/D_z^+ construction in a deterministic policy hash.
 KernelPatchPolicy audit_kernel_patch_policy(
     const AdaptiveMeshHierarchy &hierarchy);
+
+// Context-only fingerprint shared with WP4.  Unlike the diagnostic
+// fingerprint, this excludes the load, candidate, solver, and marking theta,
+// so a certificate builder can recompute it from its current hierarchy and
+// audit operator and reject replayed eta_H evidence.
+std::string audit_kernel_residual_context_fingerprint(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzOperators &audit_operators,
+    const KernelPatchPolicy &policy);
 
 std::vector<AuditKernelPatch> build_audit_kernel_patches(
     const AdaptiveMeshHierarchy &hierarchy,

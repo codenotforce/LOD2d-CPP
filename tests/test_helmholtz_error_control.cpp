@@ -6,6 +6,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 
@@ -163,6 +164,40 @@ void verify_separate_factorization_and_timing() {
             "test setup did not exercise two independent one-build caches");
 }
 
+void verify_empirical_saturation_audit_interval_and_marking() {
+    const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
+    const FemResult audit = solve_case(data, 1);
+    std::vector<int> audit_parent_fine(audit.mesh.elems.size());
+    std::iota(audit_parent_fine.begin(), audit_parent_fine.end(), 0);
+    const double saturation_factor = 0.05;
+    const EmpiricalSaturationAuditEstimate estimate =
+        estimate_empirical_saturation_audit_error(
+            audit.mesh, audit.solution, data.source, data.wavenumber,
+            audit_parent_fine, static_cast<int>(audit.mesh.elems.size()),
+            saturation_factor, 0.5, {}, {}, 1.0, {},
+            data.quadrature_context);
+    require(!estimate.assumption_verified,
+            "empirical saturation assumption was promoted to verified");
+    require(estimate.two_level_energy_error > 0.0,
+            "two-level audit probe produced a zero difference unexpectedly");
+    require_close(
+        estimate.audit_error_lower,
+        estimate.two_level_energy_error / (1.0 + saturation_factor),
+        1e-14, "saturation lower interval is incorrect");
+    require_close(
+        estimate.audit_error_upper,
+        estimate.two_level_energy_error / (1.0 - saturation_factor),
+        1e-14, "saturation upper interval is incorrect");
+    require(estimate.audit_error_lower <= estimate.two_level_energy_error
+                && estimate.two_level_energy_error
+                    <= estimate.audit_error_upper,
+            "two-level difference is outside its saturation interval");
+    require(estimate.allocation_relative_error < 1e-12,
+            "audit element contributions do not conserve the probe error");
+    require(!estimate.marked_fine_elements.empty(),
+            "positive audit probe error produced an empty fine marking");
+}
+
 void verify_exact_reference_convergence(PaperCase id) {
     const PaperCaseData data = make_paper_case(id, 4.0);
     const FemResult candidate = solve_case(data, 1);
@@ -203,6 +238,7 @@ int main() {
     try {
         verify_global_and_local_errors();
         verify_separate_factorization_and_timing();
+        verify_empirical_saturation_audit_interval_and_marking();
         verify_exact_reference_convergence(PaperCase::R1);
         verify_exact_reference_convergence(PaperCase::S);
         std::cout << "Helmholtz error roles, local errors, and fine-space caches passed\n";

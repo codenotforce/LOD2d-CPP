@@ -9,6 +9,7 @@
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 
 using namespace lod2d;
 using namespace lod2d::helmholtz;
@@ -49,9 +50,55 @@ CertificateConstantRegistry diagnostic_constants() {
     return registry;
 }
 
+CertificateConstantRegistry verified_base_constants(
+    const CertificateContextFingerprint &context,
+    bool stale_operator_fingerprint = false) {
+    CertificateConstantRegistry registry;
+    const auto upper = [&](const std::string &name, double value) {
+        CertificateConstant constant;
+        constant.name = name;
+        constant.value = value;
+        constant.direction = CertificateBoundDirection::Upper;
+        constant.source = "verified negative-test fixture";
+        constant.derivation = "direct interval fixture";
+        constant.mesh_class = "test hierarchy";
+        constant.patch_policy_hash = context.patch_policy;
+        constant.verified = true;
+        constant.mesh_fingerprint = context.mesh;
+        constant.pde_fingerprint = context.pde;
+        constant.operator_fingerprint = stale_operator_fingerprint
+            && name == "C_sd"
+            ? "operators:fnv1a64:stale"
+            : context.operators;
+        registry.set(std::move(constant));
+    };
+    upper("C_app", 0.1);
+    upper("C_st", 2.0);
+    upper("C_sd", 2.0);
+    upper("C_ov", 2.0);
+    upper("C_a", 2.0);
+    // C_loc, beta, and s are intentionally absent: the theorem permits the
+    // delta_tot + delta_h localization fallback without those optional data.
+    return registry;
+}
+
+bool contains_reason(const CorrectorCertificateResult &result,
+                     const std::string &needle) {
+    return std::any_of(
+        result.conditional_reasons.begin(),
+        result.conditional_reasons.end(),
+        [&](const std::string &reason) {
+            return reason.find(needle) != std::string::npos;
+        });
+}
+
 CorrectorCertificateResult build_case(PaperCase id, int coarse_level,
                                       int fine_level, int ell,
-                                      bool verified_algebraic_inputs = false) {
+                                      bool verified_algebraic_inputs = false,
+                                       bool stale_evidence = false,
+                                       bool verified_theorem_constants = false,
+                                       bool stale_constant = false,
+                                       bool break_conjugation = false) {
     const PaperCaseData data = make_paper_case(id, 2.0);
     AdaptiveMeshHierarchy hierarchy(
         data.initial_mesh, coarse_level, fine_level);
@@ -65,8 +112,18 @@ CorrectorCertificateResult build_case(PaperCase id, int coarse_level,
     model_config.ell = ell;
     model_config.wavenumber = data.wavenumber;
     HelmholtzLodModel model = HelmholtzLodModel::build(model_config);
-    const HelmholtzOperators audit_operators = assemble_helmholtz_operators(
+    HelmholtzOperators audit_operators = assemble_helmholtz_operators(
         hierarchy.cert_audit_mesh(), data.wavenumber);
+    if (break_conjugation) {
+        require(audit_operators.system.rows() >= 2,
+                "conjugation negative fixture has too few audit nodes");
+        audit_operators.system.coeffRef(0, 1) += Complex(0.25, 0.125);
+        audit_operators.system.makeCompressed();
+    }
+    const KernelPatchPolicy patch_policy = audit_kernel_patch_policy(hierarchy);
+    const CertificateContextFingerprint context =
+        certificate_context_fingerprint(
+            hierarchy, model, audit_operators, patch_policy);
     CorrectorCertificateConfig certificate_config;
     certificate_config.precision_bits = 128;
     certificate_config.cluster_relative_gap = 1e-8;
@@ -76,12 +133,24 @@ CorrectorCertificateResult build_case(PaperCase id, int coarse_level,
         evidence.energy_entry_radius = 2e-15;
         evidence.system_entry_radius = 2e-15;
         evidence.local_source_entry_radius = 2e-15;
+        evidence.prolongation_entry_radius = 2e-15;
+        evidence.corrector_entry_radius = 2e-15;
+        evidence.constraint_entry_radius = 2e-15;
         evidence.source = "test algebraic input enclosure";
         evidence.hash = "test:wp4-algebraic-enclosure-v1";
+        evidence.mesh_fingerprint = context.mesh;
+        evidence.pde_fingerprint = context.pde;
+        evidence.patch_policy_hash = context.patch_policy;
+        evidence.operator_fingerprint = stale_evidence
+            ? "operators:fnv1a64:stale"
+            : context.operators;
     }
+    CertificateConstantRegistry constants = verified_theorem_constants
+        ? verified_base_constants(context, stale_constant)
+        : diagnostic_constants();
     CorrectorCertificateResult result = build_corrector_certificates(
-        hierarchy, model, audit_operators, diagnostic_constants(),
-        1.0, false, evidence, certificate_config);
+        hierarchy, model, audit_operators, std::move(constants),
+        1.0, AuditKernelResidualEvidence{}, evidence, certificate_config);
     return result;
 }
 
@@ -206,36 +275,117 @@ void verify_registry_direction_gate() {
             "incomplete constants registry passed the required-input gate");
 }
 
+void verify_plain_floating_inputs_fail_closed() {
+    const CorrectorCertificateResult result = build_case(
+        PaperCase::R1, 0, 1, 1,
+        false, false, true, false);
+    require(result.status != CorrectorCertificateStatus::Certified,
+            "ordinary floating-point matrices were promoted to Certified");
+    require(!result.matrices.total_primal.enclosure.entries_verified,
+            "ordinary floating-point corrector received a verified enclosure");
+    require(!result.matrices.fine_primal.enclosure.entries_verified,
+            "ordinary floating-point local corrector received a verified enclosure");
+    require(contains_reason(result, "assembly enclosure is incomplete"),
+            "fail-closed assembly reason is missing");
+}
+
+void verify_stale_context_rejected() {
+    const CorrectorCertificateResult bound = build_case(
+        PaperCase::R1, 0, 1, 1,
+        true, false, true, false);
+    require(bound.assembly_evidence.valid_for(bound.context_fingerprint),
+            "current-context evidence fixture did not bind");
+    CertificateAssemblyEvidence mismatch = bound.assembly_evidence;
+    mismatch.mesh_fingerprint += ":stale";
+    require(!mismatch.valid_for(bound.context_fingerprint),
+            "wrong mesh fingerprint matched the current context");
+    mismatch = bound.assembly_evidence;
+    mismatch.pde_fingerprint += ":stale";
+    require(!mismatch.valid_for(bound.context_fingerprint),
+            "wrong PDE fingerprint matched the current context");
+    mismatch = bound.assembly_evidence;
+    mismatch.patch_policy_hash += ":stale";
+    require(!mismatch.valid_for(bound.context_fingerprint),
+            "wrong patch-policy fingerprint matched the current context");
+    mismatch = bound.assembly_evidence;
+    mismatch.operator_fingerprint += ":stale";
+    require(!mismatch.valid_for(bound.context_fingerprint),
+            "wrong operator fingerprint matched the current context");
+
+    const CorrectorCertificateResult stale_evidence = build_case(
+        PaperCase::R1, 0, 1, 1,
+        true, true, true, false);
+    require(stale_evidence.assembly_evidence.valid(),
+            "stale evidence fixture is structurally invalid");
+    require(!stale_evidence.assembly_evidence.valid_for(
+                stale_evidence.context_fingerprint),
+            "wrong operator fingerprint matched the current context");
+    require(stale_evidence.status != CorrectorCertificateStatus::Certified,
+            "wrong operator fingerprint was promoted to Certified");
+    require(!stale_evidence.matrices.total_primal.enclosure.entries_verified,
+            "stale evidence entered the verified matrix chain");
+    require(contains_reason(stale_evidence, "context fingerprint mismatch"),
+            "stale assembly evidence has no mismatch reason");
+
+    const CorrectorCertificateResult stale_constant = build_case(
+        PaperCase::R1, 0, 1, 1,
+        true, false, true, true);
+    const CertificateConstant *c_sd = stale_constant.constants.find("C_sd");
+    require(c_sd != nullptr && !c_sd->verified,
+            "stale theorem constant retained its verified flag");
+    require(stale_constant.status != CorrectorCertificateStatus::Certified,
+            "stale theorem constant was promoted to Certified");
+    require(contains_reason(stale_constant,
+                            "constant context fingerprint mismatch: C_sd"),
+            "stale theorem constant has no mismatch reason");
+}
+
+void verify_localization_triangle_fallback() {
+    const CorrectorCertificateResult result = build_case(
+        PaperCase::R1, 0, 1, 1,
+        true, false, true, false);
+    require(!result.localization_decay_bound_used,
+            "missing C_loc/beta/s unexpectedly enabled localization decay");
+    require_close(result.delta_ell_upper,
+                  result.delta_total_upper + result.delta_h_upper,
+                  2e-12,
+                  "localization triangle fallback used the wrong upper bound");
+    for (const char *optional : {"C_loc", "beta", "s", "C_ol(ell+s)"}) {
+        require(!contains_reason(
+                    result,
+                    std::string("missing or unverified constant: ") + optional),
+                "optional localization data incorrectly blocked certification");
+    }
+}
+
+void verify_inconsistent_operator_rejected() {
+    bool rejected = false;
+    try {
+        (void)build_case(
+            PaperCase::R1, 0, 1, 1,
+            true, false, true, false, true);
+    } catch (const std::invalid_argument &) {
+        rejected = true;
+    }
+    require(rejected,
+            "same-size audit operator from another PDE context was accepted");
+}
+
 void verify_local_interval_correction_gate() {
     const CorrectorCertificateResult result =
         build_case(PaperCase::R1, 0, 1, 1, true);
-    if (!solver::verified_spectrum_backend_available()) {
-        require(result.total_primal_riesz.verified_solve_count == 0,
-                "Eigen-only build verified a local Riesz solve");
-        require(!result.total_spectrum.verified_lambda.metadata.verified,
-                "Eigen-only build verified a corrector spectrum");
-        return;
-    }
-    require(result.total_primal_riesz.verified_solve_count
-                == result.total_primal_riesz.solve_count,
-            "not every total primal Riesz solve received an interval correction");
-    require(result.total_adjoint_riesz.verified_solve_count
-                == result.total_adjoint_riesz.solve_count,
-            "not every total adjoint Riesz solve received an interval correction");
-    require(result.fine_primal_riesz.verified_solve_count
-                == result.fine_primal_riesz.solve_count,
-            "not every fine primal Riesz solve received an interval correction");
-    require(result.fine_adjoint_riesz.verified_solve_count
-                == result.fine_adjoint_riesz.solve_count,
-            "not every fine adjoint Riesz solve received an interval correction");
-    require(result.total_spectrum.verified_lambda.metadata.verified,
-            "verified Riesz Gram inputs did not yield a verified total spectrum");
-    require(result.fine_spectrum.verified_lambda.metadata.verified,
-            "verified Riesz Gram inputs did not yield a verified fine spectrum");
-    require(result.audit_infsup.metadata.verified,
-            "verified audit operator did not yield an inf-sup lower enclosure");
+    require(!result.matrix_enclosure_arithmetic_verified,
+            "ordinary-double matrix enclosure propagation was marked verified");
+    require(result.total_primal_riesz.verified_solve_count == 0,
+            "unverified matrix arithmetic entered a verified local Riesz solve");
+    require(!result.total_spectrum.verified_lambda.metadata.verified,
+            "unverified matrix arithmetic entered a verified spectrum");
     require(result.status == CorrectorCertificateStatus::Conditional,
-            "unverified theorem constants were bypassed by algebraic evidence");
+            "unverified matrix/scalar arithmetic was promoted to Certified");
+    require(contains_reason(result, "matrix enclosure propagation"),
+            "matrix arithmetic fail-closed reason is missing");
+    require(contains_reason(result, "scalar certificate formulas"),
+            "scalar arithmetic fail-closed reason is missing");
 }
 
 } // namespace
@@ -249,6 +399,10 @@ int main() {
         verify_resolution_sensitivity();
         verify_localization_sensitivity();
         verify_registry_direction_gate();
+        verify_plain_floating_inputs_fail_closed();
+        verify_stale_context_rejected();
+        verify_localization_triangle_fallback();
+        verify_inconsistent_operator_rejected();
         verify_local_interval_correction_gate();
         std::cout << "Corrector, spectrum, conjugation, and conditional gates passed\n";
         return 0;

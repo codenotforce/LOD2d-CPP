@@ -8,7 +8,8 @@ serve different purposes and must not be reported under the same method name.
 | Path | Entry point | Intended use | Paper status |
 |---|---|---|---|
 | Legacy H-only calibration | `bench_helmholtz_adaptive` | Regression, diagnostics, and strong-residual calibration on a fixed fine space | `HLOD-proxy`; excluded from the six-method comparator matrix |
-| Certified-adaptive foundation | `helmholtz/adaptive/*.h` plus CTest targets | WP0-WP5 contracts, estimators, certificates, and decision-state validation | Not runnable as the formal CALOD/HLOD paper experiment until WP6 |
+| Conditional numerical smoke | `bench_helmholtz_certified` | Real hierarchy/LOD/WP3/WP4/audit wiring and strict fail-closed validation | Implementation smoke only; never a certified or WP6 paper run |
+| Certified-adaptive foundation | `helmholtz/adaptive/*.h` plus CTest targets | WP0-WP5 contracts, estimators, certificates, state machine, and numerical backend | Formal verified CALOD/HLOD remains unavailable until G3 and WP6 pass |
 
 The active scientific protocol and remaining work are defined in
 [HELMHOLTZ_ADAPTIVE_LOD_PLAN.md](HELMHOLTZ_ADAPTIVE_LOD_PLAN.md). Versioned
@@ -21,6 +22,8 @@ experiment contracts are documented in
 
 - strict v1 input and output schemas;
 - canonical JSON configuration hashing and immutable run IDs;
+- hashing of every driver/resource and numerical-backend decision parameter;
+- five explicit certificate-status labels and a closed metric registry;
 - explicit provenance, timing ownership, nullable numeric values, censored
   resource states, and method labels;
 - rejection of unknown fields and non-RFC-8259 numeric values.
@@ -40,6 +43,8 @@ experiment contracts are documented in
 - exact P1, element, and DG embeddings for conforming nested meshes;
 - parent maps, version counters, local fine refinement, and kernel-constraint
   restriction;
+- automatic fine/audit capacity expansion when coarse refinement catches the
+  old fine mesh, followed by production composition/right-inverse checks;
 - separate certification-audit and post-processing evaluation-reference
   services, with their timings owned by different accounting domains.
 
@@ -51,22 +56,28 @@ mutation. Incremental reuse must reproduce it before it can become a default.
 - residual Riesz solves in the constrained audit kernel;
 - elementwise source allocation and the global `eta_H` quantity;
 - primal/adjoint, constraint, stationarity, and energy-identity diagnostics;
-- allocation-sum and conjugation checks.
+- allocation-sum and conjugation checks;
+- read-only provenance tokens binding the hierarchy, operators, inputs, eta,
+  and element allocation.
 
 `eta_H` is not automatically verified just because the linear solve succeeds.
-Its claim level follows the evidence attached to its operators and inputs.
+The current Eigen producer always emits Diagnostic evidence; no verified
+`eta_H` producer exists yet.
 
 ### WP4: Corrector And Stability Certificates
 
 - directional certificate-constant registry and derived overlap constants;
-- matrix-enclosure and verified generalized-spectrum interfaces;
+- diagnostic matrix-radius propagation and verified generalized-spectrum
+  kernel interfaces;
 - total, fine-discretization, localization, stability, and LOD-error bounds;
-- elementwise `eta_h` allocation and worse-side handling;
+- elementwise `eta_h` allocation and a fail-closed conjugation gate;
 - MPFR/MPFI directed-rounding backend behind a CMake option.
 
-Without verified theorem constants, verified assembly enclosures, and a
-verified `eta_H`, the same computation is explicitly `conditional`. It must not
-be relabelled as a verified certificate.
+The complete WP4 certificate is not yet verified. It lacks theorem constants,
+verified FE/corrector assembly and `eta_H` producers, fully directed matrix and
+scalar interval propagation, and an independent adjoint-corrector fallback.
+The implementation therefore forces the result to `conditional`, even when
+the standalone MPFR/MPFI spectrum kernel is enabled.
 
 ### WP5: Certified Decision State Machine
 
@@ -86,6 +97,11 @@ refined; structured terminal codes; resource limits; and deterministic
 checkpoint/resume. CALOD never silently falls back to H-only adaptation.
 The HLOD path checks its frozen prior corrector-space identifier and
 oversampling value before every decision.
+
+`NumericalCertifiedBackend` connects the controller to real meshes, LOD
+correctors and solves, WP3, WP4, and an empirical two-level audit diagnostic.
+All its observations remain Conditional; `RequireVerified` stops with
+`UnverifiedEvidence`.
 
 ## Build And Test
 
@@ -107,13 +123,14 @@ cmake --build build --target \
   test_verified_spectrum \
   test_helmholtz_certificates \
   test_helmholtz_certified_driver \
+  test_helmholtz_numerical_backend \
   test_helmholtz_paper_config \
   test_helmholtz_mixed_boundary \
   test_helmholtz_paper_cases \
   test_helmholtz_quadrature -j "$(nproc)"
 
 ctest --test-dir build \
-  -R 'helmholtz_(adaptive|error_control|kernel_residual|certificates|certified_driver|paper_config|mixed_boundary|paper_cases|quadrature)|verified_spectrum' \
+  -R 'helmholtz_(adaptive|error_control|kernel_residual|certificates|certified_driver|numerical_backend|paper_config|mixed_boundary|paper_cases|quadrature)|verified_spectrum' \
   --output-on-failure
 ```
 
@@ -129,9 +146,26 @@ cmake --build build-verified -j "$(nproc)"
 ctest --test-dir build-verified --output-on-failure
 ```
 
-The option enables directed-rounding verification code. It does not manufacture
-missing theorem constants or assembly enclosures, and it does not promote a
-conditional run to verified evidence.
+The option enables the standalone directed-rounding spectrum code. It does not
+manufacture missing evidence or fix the remaining ordinary-double matrix and
+scalar propagation, and therefore does not promote the WP4 chain to verified.
+
+## Run The Conditional Implementation Smoke
+
+```bash
+cmake --build build --target bench_helmholtz_certified -j "$(nproc)"
+
+./build/benchmarks/bench_helmholtz_certified \
+  --evidence=strict --check
+./build/benchmarks/bench_helmholtz_certified \
+  --evidence=conditional --check
+```
+
+The strict command must stop with `UnverifiedEvidence`. The conditional command
+must traverse the real coarse/corrector/error/audit path. The executable uses a
+small R1 configuration and prints `runner_scope=implementation-smoke` and
+`wp6_runner=false`; it neither consumes the frozen paper matrix nor emits the
+common paper output schema.
 
 ## Run The Legacy HLOD Proxy
 
@@ -220,9 +254,10 @@ theorem and is not the WP3 audit-kernel `eta_H` definition.
 
 ## What Is Not Yet Available
 
-WP6 must connect the state-machine backend to live paper meshes, correctors,
-estimators, and certificate evidence; freeze the formal run manifests; and
-provide a production CLI that emits the common output schema. Until then:
+WP6 must connect the immutable `PaperConfig` and all paper cases/comparators to
+the common output schema, frozen manifests, matched targets, and production
+CLI. Separately, G3 requires the missing verified numerical evidence and
+directed interval chain. Until both are complete:
 
 - there is no supported command for a formal CALOD or frozen-HLOD paper run;
 - the six-method comparison matrix has not been executed by this code path;

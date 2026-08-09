@@ -10,13 +10,14 @@ It provides conforming longest-edge bisection (LEB), newest-vertex bisection
 (NVB), reusable correctors for repeated right-hand sides, benchmark drivers,
 and regression tests against MATLAB-derived or direct-solver references.
 
-> **Certified-adaptive status.** The Helmholtz paper workflow has implemented
-> the WP0-WP5 foundation: versioned experiment contracts, paper cases, a
-> three-mesh hierarchy, error-role isolation, the audit-kernel estimator,
-> conditional/verified certificate machinery, and a checkpointable adaptive
-> state machine. The production numerical backend and frozen paper experiment
-> runner are WP6 work. This revision is therefore not a completed paper
-> reproduction and contains no six-method paper result matrix.
+> **Certified-adaptive status.** The Helmholtz paper workflow has a versioned
+> experiment contract, paper cases, a validated three-mesh hierarchy, the
+> audit-kernel estimator, a fail-closed certificate framework, a checkpointable
+> four-stage controller, and a real floating-point numerical backend. That
+> backend is intentionally `conditional`: it cannot emit a certified result.
+> Verified constants, assembly/corrector and eta evidence, fully directed
+> interval propagation, and the frozen six-method paper runner remain open.
+> This revision is not a completed paper reproduction.
 
 ## Quick Start
 
@@ -28,7 +29,7 @@ and regression tests against MATLAB-derived or direct-solver references.
 - OpenMP, recommended for parallel corrector computation
 - SuiteSparse/CHOLMOD, optional experimental sparse backend
 - TBB, optional Eigen backend dependency
-- MPFR, MPFI, and GMP, optional and required only for verified certificates
+- MPFR, MPFI, and GMP, optional, for the directed-rounding spectrum kernel
 
 Ubuntu and WSL:
 
@@ -38,7 +39,7 @@ sudo apt install -y build-essential cmake g++ \
   libeigen3-dev libsuitesparse-dev libtbb-dev
 ```
 
-For the verified-certificate build, also install:
+For the directed-rounding spectrum build, also install:
 
 ```bash
 sudo apt install -y libmpfr-dev libmpfi-dev libgmp-dev
@@ -63,7 +64,8 @@ Available CMake options:
 | `LOD2D_BUILD_BENCHMARKS` | `ON` | Build benchmark executables |
 | `LOD_ENABLE_VERIFIED_CERTIFICATES` | `OFF` | Use MPFR/MPFI directed rounding for certificate verification |
 
-Enable the verified backend in a separate build tree:
+Enable that kernel in a separate build tree (the overall WP4 chain remains
+conditional until its other verified inputs and interval operations exist):
 
 ```bash
 cmake -S . -B build-verified -DCMAKE_BUILD_TYPE=Release \
@@ -108,6 +110,17 @@ K_VALUES="4 8 16 32" FINE_GAP=6 \
   bash scripts/run_helmholtz_pollution.sh
 ```
 
+The following exercises the real WP5 backend as an implementation smoke. It
+does not use formal paper parameters and must not be reported as a certified or
+WP6 paper run:
+
+```bash
+./build/benchmarks/bench_helmholtz_certified \
+  --evidence=strict --check
+./build/benchmarks/bench_helmholtz_certified \
+  --evidence=conditional --check
+```
+
 Benchmark parameter conventions and reproducibility requirements are defined
 in [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md).
 
@@ -144,12 +157,12 @@ Dirichlet; physical impedance portions retain the Robin term.
 
 | Work package | Implemented scope | Current boundary |
 |---|---|---|
-| WP0 | Versioned input/output schemas, canonical run IDs, provenance fields, and strict paper configuration parsing | Formal run manifests are not frozen |
-| WP1 | Paper cases, mixed boundary tags, coefficients, sources, and quadrature validation | No production case-matrix runner |
-| WP2 | Independently refinable coarse, corrector-fine, and certification-audit meshes; exact nested embeddings; error-reference role isolation | Full rebuild is the correctness path |
-| WP3 | Audit-kernel residual Riesz solves, `eta_H`, element allocation, and diagnostic gates | A verified `eta_H` claim still requires verified inputs |
-| WP4 | Constant registry, matrix enclosures, verified spectrum hooks, corrector/stability/error certificates | Without verified constants and assembly evidence, results remain conditional |
-| WP5 | Four-stage CALOD/HLOD decision state machine, resource limits, terminal codes, checkpoints, and no-fallback policy | A live numerical backend is WP6 |
+| WP0 | Frozen schemas, result statuses, backend/driver parameters, canonical run IDs, and strict parsing | Unified runner consumption is WP6 |
+| WP1 | Paper cases, explicit boundary-edge tags, coefficients, sources, and quadrature validation | No production case-matrix runner |
+| WP2 | Independently refinable coarse, corrector-fine, and certification-audit meshes with production invariant checks and capacity expansion | Full rebuild is the correctness path |
+| WP3 | Audit-kernel Riesz solves, `eta_H`, allocation, real-LOD diagnostics, and immutable evidence fingerprints | The Eigen producer is Diagnostic; no verified `eta_H` producer exists |
+| WP4 | Constant registry, spectrum hooks, corrector/stability/error formulas, and context-bound fail-closed evidence | Matrix/scalar directed interval propagation, verified inputs, and independent adjoint fallback remain open |
+| WP5 | Four-stage controller, resource limits, checkpoints, no-fallback policy, and a real full-rebuild numerical backend | Backend results are conditional; formal verified runner is not complete |
 
 The legacy `bench_helmholtz_adaptive` executable is not the certified paper
 method and must not be reported as CALOD or as the frozen HLOD comparator. See
@@ -230,7 +243,7 @@ adopts them.
 | Shifted-GMRES and geometric V-cycle | Correct experimental paths; not runtime defaults |
 | Fine-space two-level Schwarz | Experimental through stage S4e |
 | Legacy adaptive H-only proxy | Implemented for regression and calibration only |
-| Certified adaptive Helmholtz LOD | WP0-WP5 foundation implemented; WP6 backend/runner pending |
+| Certified adaptive Helmholtz LOD | Conditional WP0-WP5 implementation smoke available; verified certificate chain and WP6 paper runner pending |
 | PML and three-dimensional extensions | Not implemented |
 
 ## Repository Layout

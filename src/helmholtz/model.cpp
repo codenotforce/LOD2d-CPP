@@ -76,6 +76,10 @@ TriMesh make_helmholtz_unit_square_mesh() {
     TriMesh mesh;
     mesh.nodes = {{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     mesh.elems = {{0, 1, 3}, {2, 3, 1}};
+    // R1 and R2 use a pure impedance boundary.  Keep the classification on
+    // the mesh itself so every downstream assembly path consumes the same
+    // edge contract instead of reconstructing it from the legacy node list.
+    tag_all_boundary_edges(mesh, BoundaryTag::Robin);
     return mesh;
 }
 

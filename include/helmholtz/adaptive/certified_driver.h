@@ -11,7 +11,9 @@
 
 namespace lod2d::helmholtz::adaptive {
 
-inline constexpr int certified_driver_checkpoint_version = 1;
+// Version 2 persists cumulative resource accounting.  Version-1 checkpoints
+// are rejected because resuming them would silently reset work/time budgets.
+inline constexpr int certified_driver_checkpoint_version = 2;
 
 enum class CertifiedMethod {
     Calod,
@@ -244,6 +246,8 @@ struct CertifiedTermination {
 };
 
 struct CertifiedDriverCheckpoint {
+    // Trusted local artifact: serialization is canonical and structurally
+    // validated, but it is not an authenticated format for hostile input.
     int schema_version = certified_driver_checkpoint_version;
     std::string config_fingerprint;
     CertifiedDriverState state = CertifiedDriverState::CoarseAdmissibility;
@@ -259,6 +263,12 @@ struct CertifiedDriverCheckpoint {
     std::optional<double> true_error_upper;
     std::string initial_problem_id;
     std::string backend_fingerprint;
+    // Cumulative algorithm work at the last accepted backend snapshot.  On
+    // resume, the reconstructed backend starts a new local counter epoch and
+    // the driver adds only post-replay deltas to these persisted baselines.
+    std::uint64_t cumulative_backend_work_units = 0;
+    std::uint64_t cumulative_peak_memory_bytes = 0;
+    double cumulative_elapsed_seconds = 0.0;
     std::string frozen_corrector_space_id;
     int frozen_oversampling = -1;
     std::vector<CertifiedMutation> mutations;
@@ -301,6 +311,17 @@ private:
 
     CertifiedDriverConfig config_;
     CertifiedDriverCheckpoint checkpoint_;
+    std::uint64_t backend_work_epoch_start_ = 0;
+    std::uint64_t backend_work_epoch_offset_ = 0;
+    std::uint64_t peak_memory_floor_ = 0;
+    double elapsed_epoch_start_ = 0.0;
+    double elapsed_epoch_offset_ = 0.0;
+
+    // Converts backend-local counters to checkpoint-cumulative counters.
+    // Returns a diagnostic rather than throwing so malformed snapshots remain
+    // structured driver outcomes.
+    std::optional<std::string> account_work_snapshot(
+        CertifiedWorkSnapshot &snapshot);
 };
 
 std::string serialize_certified_checkpoint(
@@ -313,6 +334,11 @@ CertifiedDriverCheckpoint deserialize_certified_checkpoint(
 CoarseAdmissibilityObservation make_coarse_admissibility_observation(
     const TriMesh &coarse_mesh,
     double wavenumber,
+    const CertificateConstantRegistry &constants);
+CoarseAdmissibilityObservation make_coarse_admissibility_observation(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzLodModel &model,
+    const HelmholtzOperators &audit_operators,
     const CertificateConstantRegistry &constants);
 CorrectorCertificationObservation make_corrector_certification_observation(
     const CorrectorCertificateResult &certificate);

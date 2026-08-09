@@ -90,6 +90,39 @@ struct CertificationAuditSolution {
     ComplexVector values;
 };
 
+// A computable Step-4 interval under the explicitly recorded saturation
+// assumption ||u-u_probe|| <= q_sat ||u-u_audit||.  This is empirical
+// evidence and must never be promoted to a verified external estimator.
+struct EmpiricalSaturationAuditEstimate {
+    double saturation_factor = 0.0;
+    double two_level_energy_error = 0.0;
+    double audit_error_lower = 0.0;
+    double audit_error_upper = 0.0;
+    std::vector<double> audit_element_error_squared;
+    std::vector<double> fine_element_error_squared;
+    std::vector<int> marked_fine_elements;
+    double allocation_relative_error = 0.0;
+    bool assumption_verified = false;
+};
+
+// Solves one uniformly finer probe problem, compares it with the prolongated
+// current audit solution, forms the saturation interval, and maps local probe
+// errors back to the persistent corrector-fine elements for refinement.
+EmpiricalSaturationAuditEstimate estimate_empirical_saturation_audit_error(
+    const TriMesh &audit_mesh,
+    const ComplexVector &audit_solution,
+    const ComplexFunction &source,
+    double wavenumber,
+    const std::vector<int> &audit_parent_fine_elements,
+    int fine_element_count,
+    double saturation_factor,
+    double doerfler_theta,
+    const std::vector<double> &audit_diffusion = {},
+    const std::vector<double> &audit_refractive_index = {},
+    double boundary_beta = 1.0,
+    const QuadraturePolicy &quadrature = {},
+    const QuadratureContext &quadrature_context = {});
+
 // Algorithm-facing service. Its costs are included in CALOD method time and
 // its solution may be used only for certification quantities.
 class CertificationAuditService {

@@ -11,6 +11,7 @@
 #include <Eigen/SparseLU>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstdint>
 #include <iomanip>
@@ -26,6 +27,117 @@ namespace {
 
 constexpr double kSupportTolerance = 1e-13;
 constexpr double kRankTolerance = 2e-12;
+
+class FingerprintBuilder {
+public:
+    void add_u64(std::uint64_t value) {
+        for (int byte = 0; byte < 8; ++byte) {
+            hash_ ^= static_cast<unsigned char>((value >> (8 * byte)) & 0xffU);
+            hash_ *= 1099511628211ULL;
+        }
+    }
+
+    void add_i64(std::int64_t value) {
+        add_u64(static_cast<std::uint64_t>(value));
+    }
+
+    void add_double(double value) {
+        // Positive and negative zero are numerically indistinguishable in all
+        // estimator operations, so give them one canonical representation.
+        if (value == 0.0) value = 0.0;
+        add_u64(std::bit_cast<std::uint64_t>(value));
+    }
+
+    void add_complex(const Complex &value) {
+        add_double(value.real());
+        add_double(value.imag());
+    }
+
+    void add_string(const std::string &value) {
+        add_u64(value.size());
+        for (unsigned char byte : value) {
+            hash_ ^= byte;
+            hash_ *= 1099511628211ULL;
+        }
+    }
+
+    std::string finish() const {
+        std::ostringstream encoded;
+        encoded << "fnv1a64:" << std::hex << std::setw(16)
+                << std::setfill('0') << hash_;
+        return encoded.str();
+    }
+
+private:
+    std::uint64_t hash_ = 14695981039346656037ULL;
+};
+
+void add_fingerprint_value(FingerprintBuilder &builder, double value) {
+    builder.add_double(value);
+}
+
+void add_fingerprint_value(FingerprintBuilder &builder, const Complex &value) {
+    builder.add_complex(value);
+}
+
+template <typename SparseMatrix>
+void add_sparse_fingerprint(
+    FingerprintBuilder &builder,
+    const SparseMatrix &matrix) {
+    builder.add_i64(matrix.rows());
+    builder.add_i64(matrix.cols());
+    builder.add_i64(matrix.nonZeros());
+    for (int outer = 0; outer < matrix.outerSize(); ++outer) {
+        for (typename SparseMatrix::InnerIterator it(matrix, outer); it; ++it) {
+            builder.add_i64(it.row());
+            builder.add_i64(it.col());
+            add_fingerprint_value(builder, it.value());
+        }
+    }
+}
+
+void add_mesh_fingerprint(FingerprintBuilder &builder, const TriMesh &mesh) {
+    builder.add_u64(mesh.nodes.size());
+    for (const Point2 &node : mesh.nodes) {
+        builder.add_double(node.x());
+        builder.add_double(node.y());
+    }
+    builder.add_u64(mesh.elems.size());
+    for (const Triangle &element : mesh.elems) {
+        for (int node : element) builder.add_i64(node);
+    }
+    builder.add_u64(mesh.dirichlet.size());
+    for (int node : mesh.dirichlet) builder.add_i64(node);
+    builder.add_u64(mesh.boundary_edges.size());
+    for (const BoundaryEdge &edge : mesh.boundary_edges) {
+        builder.add_i64(edge.nodes[0]);
+        builder.add_i64(edge.nodes[1]);
+        builder.add_u64(static_cast<std::uint8_t>(edge.tag));
+    }
+}
+
+template <typename Value>
+void add_integral_vector_fingerprint(
+    FingerprintBuilder &builder,
+    const std::vector<Value> &values) {
+    builder.add_u64(values.size());
+    for (Value value : values) builder.add_u64(static_cast<std::uint64_t>(value));
+}
+
+void add_double_vector_fingerprint(
+    FingerprintBuilder &builder,
+    const std::vector<double> &values) {
+    builder.add_u64(values.size());
+    for (double value : values) builder.add_double(value);
+}
+
+void add_complex_vector_fingerprint(
+    FingerprintBuilder &builder,
+    const ComplexVector &values) {
+    builder.add_i64(values.size());
+    for (int index = 0; index < values.size(); ++index)
+        builder.add_complex(values(index));
+}
 
 struct ConstraintReduction {
     std::vector<int> active_rows;
@@ -146,7 +258,7 @@ std::string policy_hash(const KernelPatchPolicy &policy) {
     description << "v1|" << policy.interpolation_support_layers << '|'
                 << policy.patch_layers << '|' << policy.enlargement_layers << '|'
                 << policy.adjacency << '|' << policy.audit_enlargement;
-    std::uint64_t hash = 1469598103934665603ULL;
+    std::uint64_t hash = 14695981039346656037ULL;
     for (unsigned char byte : description.str()) {
         hash ^= byte;
         hash *= 1099511628211ULL;
@@ -154,6 +266,127 @@ std::string policy_hash(const KernelPatchPolicy &policy) {
     std::ostringstream encoded;
     encoded << "fnv1a64:" << std::hex << std::setw(16) << std::setfill('0') << hash;
     return encoded.str();
+}
+
+std::string audit_kernel_context_fingerprint(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzOperators &operators,
+    const KernelPatchPolicy &policy) {
+    FingerprintBuilder builder;
+    builder.add_string("audit-kernel-context-v1");
+    add_mesh_fingerprint(builder, hierarchy.initial_mesh());
+    add_mesh_fingerprint(builder, hierarchy.coarse_mesh());
+    add_mesh_fingerprint(builder, hierarchy.fine_mesh());
+    add_mesh_fingerprint(builder, hierarchy.cert_audit_mesh());
+    add_integral_vector_fingerprint(builder, hierarchy.coarse_levels());
+    add_integral_vector_fingerprint(builder, hierarchy.coarse_element_ids());
+    add_integral_vector_fingerprint(builder, hierarchy.coarse_parent_ids());
+    add_integral_vector_fingerprint(builder, hierarchy.fine_element_levels());
+    add_integral_vector_fingerprint(
+        builder, hierarchy.cert_audit_element_levels());
+    builder.add_u64(hierarchy.coarse_mesh_version());
+    builder.add_u64(hierarchy.fine_mesh_version());
+    builder.add_u64(hierarchy.cert_audit_mesh_version());
+    builder.add_u64(hierarchy.interpolation_version());
+    builder.add_u64(hierarchy.boundary_version());
+    builder.add_u64(hierarchy.corrector_space_version());
+    add_sparse_fingerprint(builder, hierarchy.coarse_to_cert_audit());
+    add_sparse_fingerprint(builder, hierarchy.fine_to_cert_audit());
+    add_sparse_fingerprint(builder, hierarchy.coarse_elements_to_cert_audit());
+    add_sparse_fingerprint(builder, hierarchy.cert_audit_quasi_interpolation());
+    builder.add_string(policy.hash);
+
+    builder.add_double(operators.wavenumber);
+    builder.add_double(operators.boundary_beta);
+    add_double_vector_fingerprint(builder, operators.diffusion);
+    add_double_vector_fingerprint(builder, operators.refractive_index);
+    add_integral_vector_fingerprint(builder, operators.dirichlet_nodes);
+    add_sparse_fingerprint(builder, operators.stiffness);
+    add_sparse_fingerprint(builder, operators.mass);
+    add_sparse_fingerprint(builder, operators.boundary_mass);
+    add_sparse_fingerprint(builder, operators.system);
+    return builder.finish();
+}
+
+std::string audit_kernel_diagnostic_fingerprint(
+    const std::string &context_fingerprint,
+    KernelRieszSolver solver,
+    double doerfler_theta,
+    const ComplexVector &audit_load,
+    const ComplexVector &candidate_on_audit,
+    const AuditKernelResidualEstimate &estimate) {
+    FingerprintBuilder builder;
+    builder.add_string("audit-kernel-diagnostic-v1");
+    builder.add_string(context_fingerprint);
+    builder.add_u64(static_cast<std::uint64_t>(solver));
+    builder.add_double(doerfler_theta);
+    add_complex_vector_fingerprint(builder, audit_load);
+    add_complex_vector_fingerprint(builder, candidate_on_audit);
+    add_complex_vector_fingerprint(builder, estimate.global_residual);
+    add_double_vector_fingerprint(builder, estimate.node_eta);
+    add_double_vector_fingerprint(builder, estimate.node_eta_squared);
+    add_double_vector_fingerprint(builder, estimate.element_eta_squared);
+    add_integral_vector_fingerprint(builder, estimate.marked_elements);
+    builder.add_double(estimate.eta);
+    builder.add_double(estimate.allocation_relative_error);
+    return builder.finish();
+}
+
+std::string audit_kernel_result_fingerprint(
+    const AuditKernelResidualEstimate &estimate) {
+    FingerprintBuilder builder;
+    builder.add_string("audit-kernel-result-v1");
+    builder.add_u64(static_cast<std::uint64_t>(estimate.solver));
+    builder.add_i64(estimate.policy.interpolation_support_layers);
+    builder.add_i64(estimate.policy.patch_layers);
+    builder.add_i64(estimate.policy.enlargement_layers);
+    builder.add_string(estimate.policy.adjacency);
+    builder.add_string(estimate.policy.audit_enlargement);
+    builder.add_string(estimate.policy.hash);
+    add_complex_vector_fingerprint(builder, estimate.global_residual);
+    builder.add_u64(estimate.patches.size());
+    for (const AuditKernelPatch &patch : estimate.patches) {
+        builder.add_i64(patch.coarse_node);
+        add_integral_vector_fingerprint(builder, patch.coarse_hat_support);
+        add_integral_vector_fingerprint(builder, patch.interpolation_support);
+        add_integral_vector_fingerprint(builder, patch.coarse_elements);
+        add_integral_vector_fingerprint(
+            builder, patch.enlarged_coarse_elements);
+        add_integral_vector_fingerprint(builder, patch.audit_dofs);
+        add_integral_vector_fingerprint(
+            builder, patch.enlarged_audit_elements);
+        add_integral_vector_fingerprint(
+            builder, patch.active_constraint_rows);
+        add_integral_vector_fingerprint(
+            builder, patch.independent_constraint_rows);
+        builder.add_i64(patch.constraints.rows());
+        builder.add_i64(patch.constraints.cols());
+        for (Eigen::Index row = 0; row < patch.constraints.rows(); ++row) {
+            for (Eigen::Index column = 0;
+                 column < patch.constraints.cols(); ++column) {
+                builder.add_double(patch.constraints(row, column));
+            }
+        }
+    }
+    builder.add_u64(estimate.local_results.size());
+    for (const LocalKernelRieszResult &local : estimate.local_results) {
+        builder.add_double(local.eta);
+        builder.add_double(local.eta_squared);
+        builder.add_double(local.constraint_relative_residual);
+        builder.add_double(local.riesz_relative_residual);
+        builder.add_double(local.energy_identity_relative_error);
+        builder.add_i64(local.kernel_dimension);
+        builder.add_i64(local.saddle_unknowns);
+        add_complex_vector_fingerprint(builder, local.local_values);
+        add_complex_vector_fingerprint(builder, local.lagrange_multipliers);
+    }
+    add_double_vector_fingerprint(builder, estimate.node_eta);
+    add_double_vector_fingerprint(builder, estimate.node_eta_squared);
+    add_double_vector_fingerprint(builder, estimate.element_eta_squared);
+    add_integral_vector_fingerprint(builder, estimate.marked_elements);
+    builder.add_double(estimate.eta);
+    builder.add_double(estimate.allocation_relative_error);
+    return builder.finish();
 }
 
 PatchConstructionData patch_construction_data(
@@ -436,6 +669,18 @@ double spectral_norm(const Eigen::MatrixXd &matrix) {
 
 } // namespace
 
+bool AuditKernelResidualEvidence::matches_eta(double eta) const noexcept {
+    return !result_fingerprint_.empty() && std::isfinite(eta)
+        && eta == eta_;
+}
+
+bool AuditKernelResidualEvidence::matches_result(
+    const AuditKernelResidualEstimate &estimate) const {
+    return matches_eta(estimate.eta)
+        && !result_fingerprint_.empty()
+        && result_fingerprint_ == audit_kernel_result_fingerprint(estimate);
+}
+
 const char *kernel_riesz_solver_name(KernelRieszSolver solver) {
     return solver == KernelRieszSolver::SaddlePoint
         ? "saddle_point" : "kernel_basis_reference";
@@ -461,6 +706,24 @@ KernelPatchPolicy audit_kernel_patch_policy(
     result.audit_enlargement = "one_shared_coarse_vertex_layer";
     result.hash = policy_hash(result);
     return result;
+}
+
+std::string audit_kernel_residual_context_fingerprint(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzOperators &audit_operators,
+    const KernelPatchPolicy &policy) {
+    const KernelPatchPolicy expected = audit_kernel_patch_policy(hierarchy);
+    if (policy.interpolation_support_layers != expected.interpolation_support_layers
+        || policy.patch_layers != expected.patch_layers
+        || policy.enlargement_layers != expected.enlargement_layers
+        || policy.adjacency != expected.adjacency
+        || policy.audit_enlargement != expected.audit_enlargement
+        || policy.hash != expected.hash) {
+        throw std::invalid_argument(
+            "audit-kernel patch policy does not match the hierarchy");
+    }
+    return audit_kernel_context_fingerprint(
+        hierarchy, audit_operators, policy);
 }
 
 std::vector<AuditKernelPatch> build_audit_kernel_patches(
@@ -604,6 +867,23 @@ AuditKernelResidualEstimate estimate_audit_kernel_residual(
         : std::abs(element_sum - node_sum) / node_sum;
     if (node_sum > 0.0)
         result.marked_elements = mark_doerfler(result.element_eta_squared, doerfler_theta);
+
+    result.evidence.level_ = KernelResidualEvidenceLevel::Diagnostic;
+    result.evidence.source_ =
+        "ordinary floating-point audit-kernel Riesz computation";
+    result.evidence.backend_ =
+        std::string("Eigen/") + kernel_riesz_solver_name(solver);
+    result.evidence.context_fingerprint_ = audit_kernel_context_fingerprint(
+        hierarchy, audit_operators, result.policy);
+    result.evidence.eta_ = result.eta;
+    result.evidence.result_fingerprint_ =
+        audit_kernel_result_fingerprint(result);
+    result.evidence.diagnostic_fingerprint_ =
+        audit_kernel_diagnostic_fingerprint(
+            result.evidence.context_fingerprint_, solver, doerfler_theta,
+            audit_load, candidate_on_audit, result);
+    result.evidence.failure_reason_ =
+        "ordinary Eigen Riesz solves have no directed-rounding enclosure";
     return result;
 }
 

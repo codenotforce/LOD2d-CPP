@@ -1,6 +1,8 @@
 #include "helmholtz/adaptive/error_control.h"
+#include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/adaptive/kernel_residual.h"
 #include "helmholtz/benchmarks/paper_cases.h"
+#include "helmholtz/model.h"
 
 #include <Eigen/QR>
 
@@ -9,6 +11,7 @@
 #include <iostream>
 #include <numeric>
 #include <stdexcept>
+#include <type_traits>
 #include <vector>
 
 using namespace lod2d;
@@ -44,7 +47,49 @@ struct AuditProblem {
               hierarchy.cert_audit_mesh(), data.source, {}, data.quadrature_context)) {}
 };
 
+struct LodAuditCandidate {
+    ComplexVector values;
+    double petrov_residual = 0.0;
+};
+
+LodAuditCandidate solve_lod_candidate(
+    const AuditProblem &problem,
+    int ell = 1) {
+    HelmholtzProblemConfig config;
+    config.H = *std::min_element(
+        problem.hierarchy.coarse_levels().begin(),
+        problem.hierarchy.coarse_levels().end());
+    config.h = problem.hierarchy.fine_level();
+    config.ell = ell;
+    config.wavenumber = problem.data.wavenumber;
+    config.initial_mesh = problem.data.initial_mesh;
+    config.quadrature_context = problem.data.quadrature_context;
+    HelmholtzLodModel model = HelmholtzLodModel::build_adaptive(
+        config,
+        problem.hierarchy.coarse_mesh(),
+        problem.hierarchy.coarse_levels(),
+        problem.hierarchy.fine_mesh(),
+        problem.hierarchy.fine_element_levels());
+    const HelmholtzLodSolution solution = model.solve_source(problem.data.source);
+    LodAuditCandidate result;
+    result.values = problem.hierarchy.fine_to_cert_audit().cast<Complex>()
+        * solution.fine_values;
+    result.petrov_residual = solution.petrov_residual;
+    return result;
+}
+
 void verify_patch_constraints_and_solver_agreement() {
+    static_assert(std::is_copy_constructible_v<AuditKernelResidualEvidence>);
+    static_assert(!std::is_aggregate_v<AuditKernelResidualEvidence>);
+    const AuditKernelResidualEvidence uninitialized_evidence;
+    require(!uninitialized_evidence.verified(),
+            "default eta_H evidence was promoted to verified");
+    require(uninitialized_evidence.diagnostic_fingerprint().empty(),
+            "default eta_H evidence has a fabricated fingerprint");
+    AuditKernelResidualEstimate uninitialized_estimate;
+    require(!uninitialized_evidence.matches_result(uninitialized_estimate),
+            "default eta_H evidence matched an uninitialized result");
+
     AuditProblem problem(PaperCase::R1, 1, 3);
     const ComplexVector candidate = ComplexVector::Zero(problem.load.size());
     const AuditKernelResidualEstimate saddle = estimate_audit_kernel_residual(
@@ -75,6 +120,74 @@ void verify_patch_constraints_and_solver_agreement() {
     require(saddle.eta > 0.0, "nonzero audit residual produced a zero eta_H");
     require(saddle.marked_elements.size() > 0,
             "positive eta_H produced an empty Doerfler set");
+    require(!saddle.evidence.verified()
+                && saddle.evidence.level()
+                    == KernelResidualEvidenceLevel::Diagnostic,
+            "ordinary Eigen eta_H was promoted to verified");
+    require(saddle.evidence.backend().find("Eigen/") == 0,
+            "eta_H evidence does not identify the Eigen backend");
+    require(!saddle.evidence.source().empty()
+                && !saddle.evidence.failure_reason().empty(),
+            "unverified eta_H evidence has incomplete provenance");
+    require(!saddle.evidence.context_fingerprint().empty()
+                && !saddle.evidence.diagnostic_fingerprint().empty()
+                && !saddle.evidence.result_fingerprint().empty(),
+            "eta_H evidence fingerprints are empty");
+    require(saddle.evidence.matches_result(saddle),
+            "eta_H evidence does not match its estimator result");
+    AuditKernelResidualEstimate modified = saddle;
+    modified.eta = std::nextafter(modified.eta,
+                                  std::numeric_limits<double>::infinity());
+    require(!modified.evidence.matches_result(modified),
+            "eta_H evidence accepted a modified eta value");
+    modified = saddle;
+    modified.element_eta_squared.front() = std::nextafter(
+        modified.element_eta_squared.front(),
+        std::numeric_limits<double>::infinity());
+    require(!modified.evidence.matches_result(modified),
+            "eta_H evidence accepted a modified element allocation");
+    modified = saddle;
+    modified.local_results.front().eta = std::nextafter(
+        modified.local_results.front().eta,
+        std::numeric_limits<double>::infinity());
+    require(!modified.evidence.matches_result(modified),
+            "eta_H evidence accepted a modified local Riesz result");
+    modified = saddle;
+    ++modified.patches.front().coarse_node;
+    require(!modified.evidence.matches_result(modified),
+            "eta_H evidence accepted modified patch metadata");
+    require(saddle.evidence.context_fingerprint()
+                == basis.evidence.context_fingerprint(),
+            "eta_H context fingerprint depends on the diagnostic solver");
+    require(saddle.evidence.diagnostic_fingerprint()
+                != basis.evidence.diagnostic_fingerprint(),
+            "eta_H diagnostic fingerprint ignores the Riesz solver");
+
+    const AuditKernelResidualEstimate repeated = estimate_audit_kernel_residual(
+        problem.hierarchy,
+        problem.operators,
+        problem.load,
+        candidate,
+        0.5,
+        KernelRieszSolver::SaddlePoint);
+    require(repeated.evidence.diagnostic_fingerprint()
+                == saddle.evidence.diagnostic_fingerprint(),
+            "identical eta_H inputs produced a non-deterministic fingerprint");
+    ComplexVector perturbed_candidate = candidate;
+    perturbed_candidate(0) = Complex(1e-6, -2e-6);
+    const AuditKernelResidualEstimate perturbed = estimate_audit_kernel_residual(
+        problem.hierarchy,
+        problem.operators,
+        problem.load,
+        perturbed_candidate,
+        0.5,
+        KernelRieszSolver::SaddlePoint);
+    require(perturbed.evidence.context_fingerprint()
+                == saddle.evidence.context_fingerprint(),
+            "eta_H context fingerprint depends on the candidate solution");
+    require(perturbed.evidence.diagnostic_fingerprint()
+                != saddle.evidence.diagnostic_fingerprint(),
+            "eta_H diagnostic fingerprint ignores the candidate solution");
 
     for (int index = 0; index < static_cast<int>(saddle.patches.size()); ++index) {
         const AuditKernelPatch &patch = saddle.patches[index];
@@ -164,9 +277,17 @@ void verify_explicit_global_kernel_bounds() {
 
 void verify_effectivity_distribution(PaperCase id) {
     AuditProblem problem(id, 0, 2);
-    const ComplexVector candidate = ComplexVector::Zero(problem.load.size());
+    const LodAuditCandidate lod = solve_lod_candidate(problem);
+    const ComplexVector &candidate = lod.values;
     const ComplexVector certification = solve_helmholtz_fem(
         problem.operators, problem.load);
+    require(lod.petrov_residual <= 1e-10,
+            "paper-case LOD candidate has a large Petrov residual");
+    require(candidate.norm() > 1e-12,
+            "paper-case effectivity used a zero LOD candidate");
+    require(discrete_energy_norm(
+                problem.operators, certification - candidate) > 1e-12,
+            "paper-case effectivity did not use an independent LOD candidate");
     const AuditKernelResidualEstimate estimate = estimate_audit_kernel_residual(
         problem.hierarchy,
         problem.operators,
@@ -193,19 +314,21 @@ void verify_effectivity_distribution(PaperCase id) {
 
 void verify_equal_mesh_degeneracy() {
     AuditProblem problem(PaperCase::R1, 0, 0);
+    const LodAuditCandidate lod = solve_lod_candidate(problem);
+    const ComplexVector &candidate = lod.values;
     const ComplexVector certification = solve_helmholtz_fem(
         problem.operators, problem.load);
     const AuditKernelResidualEstimate estimate = estimate_audit_kernel_residual(
         problem.hierarchy,
         problem.operators,
         problem.load,
-        certification,
+        candidate,
         0.5);
     const HelmholtzError error = compute_discrete_helmholtz_error(
         problem.hierarchy.cert_audit_mesh(),
         problem.operators,
         certification,
-        certification);
+        candidate);
     const ExplicitGlobalKernelComparison comparison =
         compare_with_explicit_global_kernel(
             problem.hierarchy, problem.operators, estimate, 128);
@@ -213,8 +336,10 @@ void verify_equal_mesh_degeneracy() {
             "T_H=T_h=T_audit did not collapse ker(I_H)");
     require(estimate.eta <= 2e-11,
             "equal-space audit-kernel residual is not at machine precision");
-    require(error.energy <= 2e-14,
-            "equal-space certification error is not at machine precision");
+    require(lod.petrov_residual <= 1e-12,
+            "equal-space LOD solve has a large Petrov residual");
+    require(error.energy <= 2e-12,
+            "independent equal-space FEM and LOD solutions do not agree");
     // Strong/broken residuals are diagnostics and intentionally do not enter
     // this degeneracy gate.
 }

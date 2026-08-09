@@ -43,6 +43,33 @@ void verify_gaussian(PaperCase id, double expected_sigma) {
             "paper Gaussian is not L2-normalized on the unit square");
 }
 
+void verify_impedance_unit_square(PaperCase id) {
+    const PaperCaseData data = make_paper_case(id, 8.0);
+    require(!data.initial_mesh.boundary_edges.empty(),
+            "formal unit-square case has no explicit boundary-edge contract");
+    validate_boundary_tags(data.initial_mesh);
+    require(data.initial_mesh.boundary_edges.size() == 4,
+            "formal unit-square case has an incomplete boundary-edge contract");
+    require(boundary_edges_with_tag(
+                data.initial_mesh, BoundaryTag::Dirichlet).empty(),
+            "formal unit-square case unexpectedly has a Dirichlet edge");
+    require(boundary_edges_with_tag(
+                data.initial_mesh, BoundaryTag::Robin).size() == 4,
+            "formal unit-square case is not pure impedance");
+    require(std::abs(boundary_measure(
+                data.initial_mesh, BoundaryTag::Robin) - 4.0) < 1e-14,
+            "formal unit-square impedance measure is wrong");
+
+    // Explicit edge tags are authoritative.  Poisoning the compatibility node
+    // list must not switch a formal R1/R2 edge to the legacy classification.
+    TriMesh poisoned = data.initial_mesh;
+    poisoned.dirichlet = {0, 1, 2, 3};
+    for (const BoundaryEdge &entry : poisoned.boundary_edges) {
+        require(boundary_tag(poisoned, entry.nodes) == BoundaryTag::Robin,
+                "formal unit-square boundary depends on the legacy node fallback");
+    }
+}
+
 Complex finite_difference_laplacian(
     const ComplexFunction &value,
     const Point2 &point,
@@ -100,6 +127,9 @@ void verify_cutoff_jet() {
 
 int main() {
     try {
+        verify_impedance_unit_square(PaperCase::R1);
+        verify_impedance_unit_square(PaperCase::R2a);
+        verify_impedance_unit_square(PaperCase::R2b);
         verify_gaussian(PaperCase::R2a, 1.0 / 32.0);
         verify_gaussian(PaperCase::R2b, 1.0 / 64.0);
         verify_cutoff_jet();

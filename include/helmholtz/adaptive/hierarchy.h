@@ -128,6 +128,7 @@ private:
 
     void refresh_fine_embedding();
     void refresh_coarse_to_cert_audit();
+    void validate_current_embeddings() const;
 };
 
 NestedFineMesh complete_to_fine_level(

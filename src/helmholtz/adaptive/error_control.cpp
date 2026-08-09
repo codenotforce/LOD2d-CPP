@@ -1,5 +1,6 @@
 #include "helmholtz/adaptive/error_control.h"
 
+#include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/adaptive/hierarchy.h"
 
 #include <Eigen/SparseLU>
@@ -8,6 +9,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <numeric>
 #include <set>
 #include <stdexcept>
 #include <utility>
@@ -305,6 +307,117 @@ HelmholtzError compute_local_exact_helmholtz_error(
         }
     }
     return square_root_error(squared);
+}
+
+EmpiricalSaturationAuditEstimate estimate_empirical_saturation_audit_error(
+    const TriMesh &audit_mesh,
+    const ComplexVector &audit_solution,
+    const ComplexFunction &source,
+    double wavenumber,
+    const std::vector<int> &audit_parent_fine_elements,
+    int fine_element_count,
+    double saturation_factor,
+    double doerfler_theta,
+    const std::vector<double> &audit_diffusion,
+    const std::vector<double> &audit_refractive_index,
+    double boundary_beta,
+    const QuadraturePolicy &quadrature,
+    const QuadratureContext &quadrature_context) {
+    const int audit_node_count = static_cast<int>(audit_mesh.nodes.size());
+    const int audit_element_count = static_cast<int>(audit_mesh.elems.size());
+    if (audit_solution.size() != audit_node_count)
+        throw std::invalid_argument("audit solution does not match the audit mesh");
+    if (!source)
+        throw std::invalid_argument("empirical audit estimate requires a source");
+    if (!(wavenumber > 0.0) || !(boundary_beta >= 0.0))
+        throw std::invalid_argument("empirical audit PDE parameters are invalid");
+    if (!(saturation_factor >= 0.0 && saturation_factor < 1.0))
+        throw std::invalid_argument("audit saturation factor must lie in [0,1)");
+    if (!(doerfler_theta > 0.0 && doerfler_theta <= 1.0))
+        throw std::invalid_argument("audit Doerfler parameter must lie in (0,1]");
+    if (fine_element_count <= 0
+        || static_cast<int>(audit_parent_fine_elements.size())
+            != audit_element_count)
+        throw std::invalid_argument("audit-to-fine parent map is incompatible");
+    for (int parent : audit_parent_fine_elements) {
+        if (parent < 0 || parent >= fine_element_count)
+            throw std::out_of_range("audit-to-fine parent index is invalid");
+    }
+    const auto validate_coefficients = [&](const std::vector<double> &values,
+                                           const char *name) {
+        if (!values.empty()
+            && static_cast<int>(values.size()) != audit_element_count)
+            throw std::invalid_argument(std::string(name)
+                                        + " does not match audit elements");
+    };
+    validate_coefficients(audit_diffusion, "audit diffusion");
+    validate_coefficients(audit_refractive_index, "audit refractive index");
+
+    const RefineOutput probe = refine_nvb(audit_mesh);
+    const auto prolong_coefficients = [&](const std::vector<double> &values) {
+        if (values.empty()) return std::vector<double>{};
+        const Eigen::Map<const Eigen::VectorXd> parent_values(
+            values.data(), static_cast<Eigen::Index>(values.size()));
+        const Eigen::VectorXd child_values = probe.P_elem * parent_values;
+        return std::vector<double>(child_values.data(),
+                                   child_values.data() + child_values.size());
+    };
+    const std::vector<double> probe_diffusion =
+        prolong_coefficients(audit_diffusion);
+    const std::vector<double> probe_refractive_index =
+        prolong_coefficients(audit_refractive_index);
+    const HelmholtzOperators probe_operators = assemble_helmholtz_operators(
+        probe.mesh, wavenumber, probe_diffusion, probe_refractive_index,
+        boundary_beta);
+    const ComplexVector probe_load = assemble_helmholtz_load(
+        probe.mesh, source, quadrature, quadrature_context);
+    const ComplexVector probe_solution =
+        solve_helmholtz_fem(probe_operators, probe_load);
+    const ComplexVector prolonged_audit =
+        probe.P_node.cast<Complex>() * audit_solution;
+    const HelmholtzError two_level = compute_discrete_helmholtz_error(
+        probe.mesh, probe_operators, probe_solution, prolonged_audit);
+
+    EmpiricalSaturationAuditEstimate result;
+    result.saturation_factor = saturation_factor;
+    result.two_level_energy_error = two_level.energy;
+    result.audit_error_lower = two_level.energy / (1.0 + saturation_factor);
+    result.audit_error_upper = two_level.energy / (1.0 - saturation_factor);
+    result.audit_element_error_squared.assign(audit_element_count, 0.0);
+    result.fine_element_error_squared.assign(fine_element_count, 0.0);
+
+    std::vector<std::vector<int>> probe_children(audit_element_count);
+    for (int parent = 0; parent < probe.P_elem.outerSize(); ++parent) {
+        for (Eigen::SparseMatrix<double>::InnerIterator entry(
+                 probe.P_elem, parent);
+             entry; ++entry) {
+            if (std::abs(entry.value()) > 0.0)
+                probe_children[parent].push_back(entry.row());
+        }
+    }
+    for (int audit_element = 0; audit_element < audit_element_count;
+         ++audit_element) {
+        if (probe_children[audit_element].empty())
+            throw std::runtime_error("uniform audit probe lost a parent element");
+        const HelmholtzError local = compute_local_discrete_helmholtz_error(
+            probe.mesh, probe_operators, probe_solution, prolonged_audit,
+            probe_children[audit_element]);
+        const double squared = local.energy * local.energy;
+        result.audit_element_error_squared[audit_element] = squared;
+        result.fine_element_error_squared[
+            audit_parent_fine_elements[audit_element]] += squared;
+    }
+    const double allocated = std::accumulate(
+        result.audit_element_error_squared.begin(),
+        result.audit_element_error_squared.end(), 0.0);
+    const double expected = two_level.energy * two_level.energy;
+    result.allocation_relative_error = std::abs(allocated - expected)
+        / std::max(1.0, expected);
+    if (allocated > 0.0) {
+        result.marked_fine_elements = mark_doerfler(
+            result.fine_element_error_squared, doerfler_theta);
+    }
+    return result;
 }
 
 ErrorReference ErrorReference::exact(

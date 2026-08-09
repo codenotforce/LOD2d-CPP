@@ -6,7 +6,8 @@
   "additionalProperties": false,
   "required": [
     "schema_version", "run_id", "config_hash", "case", "method",
-    "repeat_index", "status", "stop_reason", "history_file", "metadata_file",
+    "repeat_index", "status", "certificate_status", "stop_reason",
+    "history_file", "metadata_file",
     "method_time_ms", "evaluation_reference_time_ms",
     "evaluation_reference_excluded_from_method_time", "values"
   ],
@@ -27,6 +28,12 @@
         "certificate_failure", "unavailable"
       ]
     },
+    "certificate_status": {
+      "enum": [
+        "implementation-study", "conditional", "audit-certified",
+        "continuous-certified", "empirical-reference"
+      ]
+    },
     "stop_reason": {"type": "string"},
     "history_file": {"type": "string", "minLength": 1},
     "metadata_file": {"type": "string", "minLength": 1},
@@ -35,7 +42,50 @@
     "evaluation_reference_excluded_from_method_time": {"const": true},
     "values": {
       "type": "object",
-      "additionalProperties": {"$ref": "#/$defs/typedNumericValue"}
+      "additionalProperties": false,
+      "required": [
+        "reference_energy_error", "reference_l2_error", "exact_energy_error",
+        "exact_l2_error", "cert_audit_error", "eta_H", "theta_total_lower",
+        "theta_total_upper", "theta_h_upper", "delta_total_lower",
+        "delta_total_upper", "delta_h_upper",
+        "delta_ell_lower", "delta_ell_upper", "q_total", "q_h", "q_ell",
+        "mu_H", "inf_sup_lower", "stability_margin", "lod_error_lower",
+        "lod_error_upper", "audit_error_lower", "audit_error_upper",
+        "true_error_lower", "true_error_upper", "upper_effectivity",
+        "certificate_gap", "patch_work_cumulative", "peak_memory_bytes"
+      ],
+      "properties": {
+        "reference_energy_error": {"$ref": "#/$defs/typedNumericValue"},
+        "reference_l2_error": {"$ref": "#/$defs/typedNumericValue"},
+        "exact_energy_error": {"$ref": "#/$defs/typedNumericValue"},
+        "exact_l2_error": {"$ref": "#/$defs/typedNumericValue"},
+        "cert_audit_error": {"$ref": "#/$defs/typedNumericValue"},
+        "eta_H": {"$ref": "#/$defs/typedNumericValue"},
+        "theta_total_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "theta_total_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "theta_h_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "delta_total_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "delta_total_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "delta_h_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "delta_ell_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "delta_ell_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "q_total": {"$ref": "#/$defs/typedNumericValue"},
+        "q_h": {"$ref": "#/$defs/typedNumericValue"},
+        "q_ell": {"$ref": "#/$defs/typedNumericValue"},
+        "mu_H": {"$ref": "#/$defs/typedNumericValue"},
+        "inf_sup_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "stability_margin": {"$ref": "#/$defs/typedNumericValue"},
+        "lod_error_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "lod_error_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "audit_error_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "audit_error_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "true_error_lower": {"$ref": "#/$defs/typedNumericValue"},
+        "true_error_upper": {"$ref": "#/$defs/typedNumericValue"},
+        "upper_effectivity": {"$ref": "#/$defs/typedNumericValue"},
+        "certificate_gap": {"$ref": "#/$defs/typedNumericValue"},
+        "patch_work_cumulative": {"$ref": "#/$defs/typedNumericValue"},
+        "peak_memory_bytes": {"$ref": "#/$defs/typedNumericValue"}
+      }
     }
   },
   "$defs": {

@@ -71,6 +71,19 @@ endif()
 add_executable(bench_helmholtz_adaptive bench_helmholtz_adaptive.cpp)
 target_link_libraries(bench_helmholtz_adaptive PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_certified bench_helmholtz_certified.cpp)
+target_link_libraries(bench_helmholtz_certified PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_certified_backend_strict_smoke
+        COMMAND bench_helmholtz_certified --evidence=strict --check)
+    add_test(NAME helmholtz_certified_backend_conditional_smoke
+        COMMAND bench_helmholtz_certified --evidence=conditional --check)
+    set_tests_properties(
+        helmholtz_certified_backend_strict_smoke
+        helmholtz_certified_backend_conditional_smoke
+        PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;conditional")
+endif()
+
 add_executable(bench_helmholtz_patch_solver bench_helmholtz_patch_solver.cpp)
 target_link_libraries(bench_helmholtz_patch_solver PRIVATE lod2d_core)
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "helmholtz/adaptive/certified_driver.h"
 #include "helmholtz/quadrature.h"
 
 #include <array>
@@ -48,6 +49,16 @@ enum class PaperValueStatus {
     EnclosureFailed
 };
 
+// Frozen claim labels from Section 1.2 of the paper plan.  In particular,
+// "certified" by itself is intentionally not a valid output status.
+enum class PaperCertificateStatus {
+    ImplementationStudy,
+    Conditional,
+    AuditCertified,
+    ContinuousCertified,
+    EmpiricalReference
+};
+
 struct CaseDefinition {
     PaperCase id;
     std::string name;
@@ -74,12 +85,55 @@ struct TolerancePolicy {
     double prolongation_composition = 1e-10;
 };
 
+// Algorithm-defining inputs consumed by NumericalCertifiedBackend.  Keeping
+// them in the immutable paper configuration prevents two numerically different
+// backend runs from sharing a run id.
+struct NumericalBackendPolicy {
+    int initial_coarse_level = 0;
+    int initial_fine_level = 1;
+    int initial_oversampling = 1;
+    double boundary_beta = 1.0;
+    HelmholtzPetrovMode petrov_mode = HelmholtzPetrovMode::TwoSided;
+    HelmholtzPatchSolverConfig patch_solver;
+    adaptive::CorrectorCertificateConfig certificate = [] {
+        adaptive::CorrectorCertificateConfig value;
+        value.q0 = 0.25;
+        return value;
+    }();
+    adaptive::KernelRieszSolver kernel_riesz_solver =
+        adaptive::KernelRieszSolver::SaddlePoint;
+    double audit_doerfler_theta = 0.5;
+    double audit_saturation_factor = 0.05;
+    // Content digest of the complete constant registry, not a caller-chosen
+    // label.  Reusing a human-readable name with different values must change
+    // the immutable run identity.
+    // SHA-256 digest of the frozen constant-set artifact.  The WP6 runner
+    // must recompute and compare it before constructing the registry.
+    std::string certificate_constant_set_hash;
+};
+
 struct PaperConfig {
     int schema_version = paper_schema_version;
     PaperCase case_id = PaperCase::R1;
     PaperMethod method_id = PaperMethod::Calod;
     double wavenumber = 8.0;
+    // Single source for both driver and numerical-backend coarse Doerfler
+    // marking; a second backend copy is intentionally forbidden.
     double theta_H = 0.5;
+    adaptive::CertifiedErrorTarget error_target =
+        adaptive::CertifiedErrorTarget::AuditSpace;
+    adaptive::CertifiedEvidencePolicy evidence_policy =
+        adaptive::CertifiedEvidencePolicy::RequireVerified;
+    double mu0 = 0.5;
+    double q0 = 0.25;
+    double tau = 0.5;
+    double theta_h = 0.5;
+    double rho_aud = 0.05;
+    double tolerance = 0.1;
+    NumericalBackendPolicy numerical_backend;
+    adaptive::CertifiedWorkLimits work_limits;
+    std::string hlod_prior_corrector_space_id;
+    int hlod_prior_oversampling = -1;
     int timing_repeats = 5;
     int repeat_index = 0;
     std::array<double, 4> relative_energy_targets{{0.1, 0.05, 0.02, 0.01}};
@@ -98,12 +152,22 @@ std::string_view to_string(PaperCase id);
 std::string_view to_string(PaperMethod id);
 std::string_view to_string(PaperRunStatus status);
 std::string_view to_string(PaperValueStatus status);
+std::string_view to_string(PaperCertificateStatus status);
 PaperCase parse_paper_case(std::string_view text);
 PaperMethod parse_paper_method(std::string_view text);
 PaperRunStatus parse_paper_run_status(std::string_view text);
 PaperValueStatus parse_paper_value_status(std::string_view text);
+PaperCertificateStatus parse_paper_certificate_status(std::string_view text);
+
+// The output schema accepts exactly this set of typed numeric metrics.
+const std::vector<std::string_view> &paper_output_metric_registry();
+void validate_paper_output_metric(std::string_view name);
 
 void validate_paper_config(const PaperConfig &config);
+// CALOD/HLOD consume the exact same values that are hashed in PaperConfig;
+// method and theta_H are derived rather than duplicated.
+adaptive::CertifiedDriverConfig make_certified_driver_config(
+    const PaperConfig &config);
 std::string canonical_json(const PaperConfig &config);
 PaperConfig parse_paper_config(std::string_view json);
 
@@ -112,6 +176,8 @@ std::string canonical_config_hash(const PaperConfig &config);
 std::string make_run_id(const PaperConfig &config);
 
 bool operator==(const TolerancePolicy &lhs, const TolerancePolicy &rhs);
+bool operator==(const NumericalBackendPolicy &lhs,
+                const NumericalBackendPolicy &rhs);
 bool operator==(const PaperConfig &lhs, const PaperConfig &rhs);
 
 } // namespace lod2d::helmholtz::experiments

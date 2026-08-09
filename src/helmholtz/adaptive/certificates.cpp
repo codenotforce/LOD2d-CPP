@@ -9,12 +9,17 @@
 #include <Eigen/LU>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <complex>
+#include <cstdint>
+#include <iomanip>
 #include <limits>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 
 namespace lod2d::helmholtz::adaptive {
@@ -39,6 +44,155 @@ struct FineAssemblyResult {
     RieszCertificateDiagnostics adjoint_diagnostics;
 };
 
+class FingerprintBuilder {
+  public:
+    void add_u64(std::uint64_t value) {
+        for (int shift = 0; shift < 64; shift += 8) {
+            state_ ^= static_cast<unsigned char>((value >> shift) & 0xffU);
+            state_ *= 1099511628211ULL;
+        }
+    }
+
+    void add_i64(std::int64_t value) {
+        add_u64(std::bit_cast<std::uint64_t>(value));
+    }
+
+    void add_bool(bool value) { add_u64(value ? 1U : 0U); }
+
+    void add_double(double value) {
+        add_u64(std::bit_cast<std::uint64_t>(value));
+    }
+
+    void add_complex(Complex value) {
+        add_double(value.real());
+        add_double(value.imag());
+    }
+
+    void add_string(std::string_view value) {
+        add_u64(static_cast<std::uint64_t>(value.size()));
+        for (unsigned char byte : value) {
+            state_ ^= byte;
+            state_ *= 1099511628211ULL;
+        }
+    }
+
+    std::string finish(std::string_view kind) const {
+        std::ostringstream encoded;
+        encoded << kind << ":fnv1a64:" << std::hex << std::setw(16)
+                << std::setfill('0') << state_;
+        return encoded.str();
+    }
+
+  private:
+    std::uint64_t state_ = 14695981039346656037ULL;
+};
+
+void add_mesh(FingerprintBuilder &builder, const TriMesh &mesh) {
+    builder.add_u64(mesh.nodes.size());
+    for (const Point2 &node : mesh.nodes) {
+        builder.add_double(node.x());
+        builder.add_double(node.y());
+    }
+    builder.add_u64(mesh.elems.size());
+    for (const Triangle &triangle : mesh.elems) {
+        for (int node : triangle) builder.add_i64(node);
+    }
+    builder.add_u64(mesh.dirichlet.size());
+    for (int node : mesh.dirichlet) builder.add_i64(node);
+    builder.add_u64(mesh.boundary_edges.size());
+    for (const BoundaryEdge &edge : mesh.boundary_edges) {
+        builder.add_i64(edge.nodes[0]);
+        builder.add_i64(edge.nodes[1]);
+        builder.add_u64(static_cast<std::uint64_t>(edge.tag));
+    }
+}
+
+template <class Scalar>
+void add_scalar(FingerprintBuilder &builder, const Scalar &value) {
+    if constexpr (std::is_same_v<Scalar, Complex>) {
+        builder.add_complex(value);
+    } else {
+        builder.add_double(static_cast<double>(value));
+    }
+}
+
+template <class Scalar, int Options, class StorageIndex>
+void add_sparse_matrix(
+    FingerprintBuilder &builder,
+    const Eigen::SparseMatrix<Scalar, Options, StorageIndex> &matrix) {
+    builder.add_i64(matrix.rows());
+    builder.add_i64(matrix.cols());
+    builder.add_i64(matrix.nonZeros());
+    builder.add_i64(matrix.outerSize());
+    for (int outer = 0; outer < matrix.outerSize(); ++outer) {
+        builder.add_i64(outer);
+        for (typename Eigen::SparseMatrix<Scalar, Options, StorageIndex>::InnerIterator
+                 entry(matrix, outer);
+             entry; ++entry) {
+            builder.add_i64(entry.row());
+            builder.add_i64(entry.col());
+            add_scalar(builder, entry.value());
+        }
+    }
+}
+
+void add_double_vector(FingerprintBuilder &builder,
+                       const std::vector<double> &values) {
+    builder.add_u64(values.size());
+    for (double value : values) builder.add_double(value);
+}
+
+void add_int_vector(FingerprintBuilder &builder,
+                    const std::vector<int> &values) {
+    builder.add_u64(values.size());
+    for (int value : values) builder.add_i64(value);
+}
+
+void add_u64_vector(FingerprintBuilder &builder,
+                    const std::vector<std::uint64_t> &values) {
+    builder.add_u64(values.size());
+    for (std::uint64_t value : values) builder.add_u64(value);
+}
+
+void add_operators(FingerprintBuilder &builder,
+                   const HelmholtzOperators &operators) {
+    builder.add_double(operators.wavenumber);
+    builder.add_double(operators.boundary_beta);
+    add_double_vector(builder, operators.diffusion);
+    add_double_vector(builder, operators.refractive_index);
+    add_int_vector(builder, operators.dirichlet_nodes);
+    builder.add_u64(operators.element_blocks.size());
+    for (const Eigen::Matrix3cd &block : operators.element_blocks) {
+        for (Eigen::Index column = 0; column < block.cols(); ++column) {
+            for (Eigen::Index row = 0; row < block.rows(); ++row)
+                builder.add_complex(block(row, column));
+        }
+    }
+    add_sparse_matrix(builder, operators.stiffness);
+    add_sparse_matrix(builder, operators.mass);
+    add_sparse_matrix(builder, operators.boundary_mass);
+    add_sparse_matrix(builder, operators.system);
+}
+
+bool constant_matches_context(
+    const CertificateConstant &constant,
+    const CertificateContextFingerprint &context) {
+    return context.complete()
+        && constant.mesh_fingerprint == context.mesh
+        && constant.pde_fingerprint == context.pde
+        && constant.patch_policy_hash == context.patch_policy
+        && constant.operator_fingerprint == context.operators;
+}
+
+void bind_constant_to_context(
+    CertificateConstant &constant,
+    const CertificateContextFingerprint &context) {
+    constant.mesh_fingerprint = context.mesh;
+    constant.pde_fingerprint = context.pde;
+    constant.patch_policy_hash = context.patch_policy;
+    constant.operator_fingerprint = context.operators;
+}
+
 bool direction_satisfies(CertificateBoundDirection supplied,
                          CertificateBoundDirection required) {
     return supplied == CertificateBoundDirection::Exact || supplied == required;
@@ -55,12 +209,14 @@ required_constants() {
         {"C_Fort", CertificateBoundDirection::Upper},
         {"c_W", CertificateBoundDirection::Lower},
         {"C_Pi", CertificateBoundDirection::Upper},
-        {"C_loc", CertificateBoundDirection::Upper},
-        {"C_ol(ell)", CertificateBoundDirection::Upper},
-        {"C_ol(ell+s)", CertificateBoundDirection::Upper},
-        {"beta", CertificateBoundDirection::Upper},
-        {"s", CertificateBoundDirection::Upper}};
+        {"C_ol(ell)", CertificateBoundDirection::Upper}};
     return values;
+}
+
+bool required_constant_name(const std::string &name) {
+    return std::any_of(
+        required_constants().begin(), required_constants().end(),
+        [&](const auto &required) { return required.first == name; });
 }
 
 double triangle_diameter(const TriMesh &mesh, const Triangle &triangle) {
@@ -108,7 +264,11 @@ double outward_nonnegative(double value) {
     return std::nextafter(value, kInfinity);
 }
 
-Enclosure point_enclosure(const ComplexMatrix &matrix) {
+// A point enclosure is sound only when the represented floating-point value is
+// itself the mathematical input. This is used for exact zero accumulators and
+// for a freely chosen residual-correction centre; it must never be used to
+// attest a numerically assembled operator or a computed corrector.
+Enclosure stored_value_point_enclosure(const ComplexMatrix &matrix) {
     Enclosure result;
     result.midpoint = matrix;
     result.radius = Eigen::MatrixXd::Zero(matrix.rows(), matrix.cols());
@@ -287,15 +447,16 @@ double vector_enclosure_norm_upper(const Enclosure &matrix, Eigen::Index column)
 
 RieszBlockResult solve_constrained_riesz(
     const Enclosure &energy,
-    const Eigen::MatrixXd &constraints,
+    const Enclosure &constraints,
     const Enclosure &rhs,
     int precision_bits) {
+    validate_enclosure_dimensions(constraints);
     if (energy.midpoint.rows() != energy.midpoint.cols() ||
         energy.midpoint.rows() != rhs.midpoint.rows() ||
-        constraints.cols() != energy.midpoint.rows())
+        constraints.midpoint.cols() != energy.midpoint.rows())
         throw std::invalid_argument("constrained Riesz dimensions are inconsistent");
     const int unknowns = static_cast<int>(energy.midpoint.rows());
-    const int constraint_count = static_cast<int>(constraints.rows());
+    const int constraint_count = static_cast<int>(constraints.midpoint.rows());
     const int columns = static_cast<int>(rhs.midpoint.cols());
     RieszBlockResult result;
     result.diagnostics.solve_count = 1;
@@ -309,11 +470,16 @@ RieszBlockResult solve_constrained_riesz(
     saddle.radius.topLeftCorner(unknowns, unknowns) = energy.radius;
     if (constraint_count > 0) {
         saddle.midpoint.topRightCorner(unknowns, constraint_count) =
-            constraints.transpose().cast<Complex>();
+            constraints.midpoint.adjoint();
+        saddle.radius.topRightCorner(unknowns, constraint_count) =
+            constraints.radius.transpose();
         saddle.midpoint.bottomLeftCorner(constraint_count, unknowns) =
-            constraints.cast<Complex>();
+            constraints.midpoint;
+        saddle.radius.bottomLeftCorner(constraint_count, unknowns) =
+            constraints.radius;
     }
-    saddle.entries_verified = energy.entries_verified;
+    saddle.entries_verified = energy.entries_verified
+        && constraints.entries_verified;
 
     Enclosure saddle_rhs;
     saddle_rhs.midpoint = ComplexMatrix::Zero(
@@ -331,7 +497,7 @@ RieszBlockResult solve_constrained_riesz(
     if (!approximate_solution.allFinite())
         throw std::runtime_error("constrained Riesz solve returned non-finite values");
 
-    const Enclosure approximate = point_enclosure(approximate_solution);
+    const Enclosure approximate = stored_value_point_enclosure(approximate_solution);
     const Enclosure residual = enclosure_add(
         saddle_rhs, enclosure_multiply(saddle, approximate), -1.0);
     const solver::VerifiedScalarResult singular =
@@ -341,18 +507,23 @@ RieszBlockResult solve_constrained_riesz(
         : singular.approximation;
 
     Enclosure enclosed_solution = approximate;
-    enclosed_solution.entries_verified = singular.metadata.verified
-        && saddle_rhs.entries_verified;
+    bool solution_verified = singular.metadata.verified
+        && saddle.entries_verified
+        && saddle_rhs.entries_verified
+        && residual.entries_verified
+        && std::isfinite(denominator) && denominator > 0.0;
     for (int column = 0; column < columns; ++column) {
         const double residual_bound = vector_enclosure_norm_upper(residual, column);
         const double error_bound = denominator > 0.0
             ? outward_nonnegative(residual_bound / denominator)
             : kInfinity;
+        solution_verified = solution_verified && std::isfinite(error_bound);
         result.diagnostics.max_solution_error_bound = std::max(
             result.diagnostics.max_solution_error_bound, error_bound);
         for (int row = 0; row < unknowns + constraint_count; ++row)
             enclosed_solution.radius(row, column) = error_bound;
     }
+    enclosed_solution.entries_verified = solution_verified;
     if (enclosed_solution.entries_verified)
         result.diagnostics.verified_solve_count = 1;
 
@@ -367,13 +538,14 @@ RieszBlockResult solve_constrained_riesz(
 
     const ComplexMatrix local_solution = approximate_solution.topRows(unknowns);
     const ComplexMatrix multipliers = approximate_solution.bottomRows(constraint_count);
-    const ComplexMatrix constraint_residual = constraints.cast<Complex>() * local_solution;
+    const ComplexMatrix constraint_residual =
+        constraints.midpoint * local_solution;
     ComplexMatrix stationarity = energy.midpoint * local_solution - rhs.midpoint;
     if (constraint_count > 0)
-        stationarity += constraints.transpose().cast<Complex>() * multipliers;
+        stationarity += constraints.midpoint.adjoint() * multipliers;
     result.diagnostics.max_constraint_relative_residual =
         constraint_residual.norm() /
-        std::max(1.0, constraints.norm() * local_solution.norm());
+        std::max(1.0, constraints.midpoint.norm() * local_solution.norm());
     result.diagnostics.max_stationarity_relative_residual =
         stationarity.norm() / std::max(1.0, rhs.midpoint.norm());
     const ComplexMatrix energy_gram =
@@ -427,7 +599,7 @@ std::vector<int> free_nodes(const TriMesh &mesh) {
 }
 
 Enclosure zero_square_enclosure(int size) {
-    return point_enclosure(ComplexMatrix::Zero(size, size));
+    return stored_value_point_enclosure(ComplexMatrix::Zero(size, size));
 }
 
 Enclosure expand_local_gram(
@@ -573,6 +745,8 @@ Enclosure assemble_total_gram(
     const Enclosure &energy,
     const Enclosure &rhs,
     const std::vector<AuditKernelPatch> &patches,
+    const CertificateAssemblyEvidence &evidence,
+    bool algebraic_verified,
     int precision_bits,
     RieszCertificateDiagnostics &diagnostics) {
     const int columns = static_cast<int>(rhs.midpoint.cols());
@@ -581,8 +755,12 @@ Enclosure assemble_total_gram(
         if (patch.audit_dofs.empty()) continue;
         const Enclosure local_energy = restrict_square(energy, patch.audit_dofs);
         const Enclosure local_rhs = restrict_rows(rhs, patch.audit_dofs);
+        const Enclosure constraints = uniform_enclosure(
+            patch.constraints.cast<Complex>(),
+            evidence.constraint_entry_radius,
+            algebraic_verified);
         const RieszBlockResult solved = solve_constrained_riesz(
-            local_energy, patch.constraints, local_rhs, precision_bits);
+            local_energy, constraints, local_rhs, precision_bits);
         gram = enclosure_add(gram, solved.gram);
         accumulate_riesz_diagnostics(solved.diagnostics, diagnostics);
     }
@@ -617,8 +795,10 @@ FineAssemblyResult assemble_fine_grams(
         no_prolongations,
         audit_operators);
 
-    const Enclosure fine_to_audit = point_enclosure(
-        ComplexMatrix(hierarchy.fine_to_cert_audit().cast<Complex>()));
+    const Enclosure fine_to_audit = uniform_enclosure(
+        ComplexMatrix(hierarchy.fine_to_cert_audit().cast<Complex>()),
+        evidence.prolongation_entry_radius,
+        algebraic_verified);
     FineAssemblyResult result;
     result.primal = zero_square_enclosure(free_count);
     result.adjoint = zero_square_enclosure(free_count);
@@ -645,8 +825,12 @@ FineAssemblyResult assemble_fine_grams(
              model.correctors().primal[target]) {
             corrector_fine(entry.row, entry.local_coarse_vertex) += entry.value;
         }
+        const Enclosure enclosed_corrector = uniform_enclosure(
+            corrector_fine,
+            evidence.corrector_entry_radius,
+            algebraic_verified);
         const Enclosure corrector_audit = enclosure_multiply(
-            fine_to_audit, point_enclosure(corrector_fine));
+            fine_to_audit, enclosed_corrector);
         const Enclosure corrector_local = restrict_rows(
             corrector_audit, system.local_vertices);
 
@@ -658,10 +842,14 @@ FineAssemblyResult assemble_fine_grams(
                 enclosure_adjoint(local_operator),
                 enclosure_conjugate(corrector_local)),
             -1.0);
+        const Enclosure constraints = uniform_enclosure(
+            system.constraints.cast<Complex>(),
+            evidence.constraint_entry_radius,
+            algebraic_verified);
         const RieszBlockResult primal = solve_constrained_riesz(
-            energy, system.constraints, primal_rhs, precision_bits);
+            energy, constraints, primal_rhs, precision_bits);
         const RieszBlockResult adjoint = solve_constrained_riesz(
-            energy, system.constraints, adjoint_rhs, precision_bits);
+            energy, constraints, adjoint_rhs, precision_bits);
         accumulate_riesz_diagnostics(
             primal.diagnostics, result.primal_diagnostics);
         accumulate_riesz_diagnostics(
@@ -691,6 +879,119 @@ double constant_value(const CertificateConstantRegistry &registry,
 void add_reason(std::vector<std::string> &reasons, std::string reason) {
     if (std::find(reasons.begin(), reasons.end(), reason) == reasons.end())
         reasons.push_back(std::move(reason));
+}
+
+bool identical_mesh(const TriMesh &left, const TriMesh &right) {
+    if (left.nodes.size() != right.nodes.size()
+        || left.elems != right.elems
+        || left.dirichlet != right.dirichlet
+        || left.boundary_edges.size() != right.boundary_edges.size()) {
+        return false;
+    }
+    for (std::size_t node = 0; node < left.nodes.size(); ++node) {
+        if (left.nodes[node].x() != right.nodes[node].x()
+            || left.nodes[node].y() != right.nodes[node].y()) {
+            return false;
+        }
+    }
+    for (std::size_t edge = 0; edge < left.boundary_edges.size(); ++edge) {
+        if (left.boundary_edges[edge].nodes
+                != right.boundary_edges[edge].nodes
+            || left.boundary_edges[edge].tag
+                != right.boundary_edges[edge].tag) {
+            return false;
+        }
+    }
+    return true;
+}
+
+template <class Scalar>
+bool identical_sparse(const Eigen::SparseMatrix<Scalar> &left,
+                      const Eigen::SparseMatrix<Scalar> &right) {
+    return left.rows() == right.rows() && left.cols() == right.cols()
+        && (left - right).norm() == 0.0;
+}
+
+bool identical_operators(const HelmholtzOperators &left,
+                         const HelmholtzOperators &right) {
+    if (left.wavenumber != right.wavenumber
+        || left.boundary_beta != right.boundary_beta
+        || left.diffusion != right.diffusion
+        || left.refractive_index != right.refractive_index
+        || left.dirichlet_nodes != right.dirichlet_nodes
+        || left.element_blocks.size() != right.element_blocks.size()
+        || !identical_sparse(left.stiffness, right.stiffness)
+        || !identical_sparse(left.mass, right.mass)
+        || !identical_sparse(left.boundary_mass, right.boundary_mass)
+        || !identical_sparse(left.system, right.system)) {
+        return false;
+    }
+    for (std::size_t element = 0; element < left.element_blocks.size(); ++element) {
+        if ((left.element_blocks[element] - right.element_blocks[element]).norm()
+            != 0.0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void validate_certificate_inputs(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzLodModel &model,
+    const HelmholtzOperators &audit_operators) {
+    const HelmholtzProblemData &problem = model.problem();
+    if (!identical_mesh(problem.coarse, hierarchy.coarse_mesh())
+        || !identical_mesh(problem.fine, hierarchy.fine_mesh())
+        || problem.coarse_element_levels != hierarchy.coarse_levels()
+        || problem.fine_element_levels != hierarchy.fine_element_levels()
+        || !identical_sparse(problem.coarse_to_fine,
+                             hierarchy.coarse_to_fine())
+        || !identical_sparse(problem.fine_element_prolongation,
+                             hierarchy.coarse_elements_to_fine())
+        || !identical_sparse(problem.fine_dg_prolongation,
+                             hierarchy.coarse_dg_to_fine())
+        || !identical_sparse(problem.quasi_interpolation,
+                             hierarchy.fine_quasi_interpolation())
+        || !identical_sparse(
+            problem.patches,
+            build_patches(hierarchy.coarse_mesh(), model.config().ell))) {
+        throw std::invalid_argument(
+            "LOD model is not built from the supplied adaptive hierarchy");
+    }
+
+    const HelmholtzOperators rebuilt_model = assemble_helmholtz_operators(
+        hierarchy.fine_mesh(), model.config().wavenumber,
+        model.operators().diffusion, model.operators().refractive_index,
+        model.config().boundary_beta);
+    const HelmholtzOperators rebuilt_audit = assemble_helmholtz_operators(
+        hierarchy.cert_audit_mesh(), audit_operators.wavenumber,
+        audit_operators.diffusion, audit_operators.refractive_index,
+        audit_operators.boundary_beta);
+    if (!identical_operators(model.operators(), rebuilt_model)
+        || !identical_operators(audit_operators, rebuilt_audit)
+        || model.config().wavenumber != audit_operators.wavenumber
+        || model.config().boundary_beta != audit_operators.boundary_beta) {
+        throw std::invalid_argument(
+            "LOD and audit operators do not represent the supplied PDE data");
+    }
+
+    const Eigen::VectorXd fine_diffusion = Eigen::Map<const Eigen::VectorXd>(
+        model.operators().diffusion.data(), model.operators().diffusion.size());
+    const Eigen::VectorXd fine_refractive = Eigen::Map<const Eigen::VectorXd>(
+        model.operators().refractive_index.data(),
+        model.operators().refractive_index.size());
+    const Eigen::VectorXd audit_diffusion = Eigen::Map<const Eigen::VectorXd>(
+        audit_operators.diffusion.data(), audit_operators.diffusion.size());
+    const Eigen::VectorXd audit_refractive = Eigen::Map<const Eigen::VectorXd>(
+        audit_operators.refractive_index.data(),
+        audit_operators.refractive_index.size());
+    if ((hierarchy.fine_elements_to_cert_audit() * fine_diffusion
+             - audit_diffusion).norm() != 0.0
+        || (hierarchy.fine_elements_to_cert_audit() * fine_refractive
+                - audit_refractive).norm() != 0.0) {
+        throw std::invalid_argument(
+            "LOD and audit coefficient fields are inconsistent across the hierarchy");
+    }
 }
 
 std::string join_reasons(const std::vector<std::string> &reasons) {
@@ -735,6 +1036,104 @@ std::vector<double> cluster_contributions(
 
 } // namespace
 
+bool CertificateContextFingerprint::complete() const {
+    return !mesh.empty() && !pde.empty() && !patch_policy.empty()
+        && !operators.empty();
+}
+
+CertificateContextFingerprint certificate_context_fingerprint(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzLodModel &model,
+    const HelmholtzOperators &audit_operators,
+    const KernelPatchPolicy &patch_policy) {
+    CertificateContextFingerprint result;
+
+    FingerprintBuilder mesh;
+    mesh.add_string("certificate-mesh-context-v1");
+    add_mesh(mesh, hierarchy.initial_mesh());
+    add_mesh(mesh, hierarchy.coarse_mesh());
+    add_mesh(mesh, hierarchy.fine_mesh());
+    add_mesh(mesh, hierarchy.cert_audit_mesh());
+    add_int_vector(mesh, hierarchy.coarse_levels());
+    add_int_vector(mesh, hierarchy.fine_element_levels());
+    add_int_vector(mesh, hierarchy.cert_audit_element_levels());
+    add_u64_vector(mesh, hierarchy.coarse_element_ids());
+    add_u64_vector(mesh, hierarchy.coarse_parent_ids());
+    mesh.add_i64(hierarchy.fine_level());
+    mesh.add_u64(hierarchy.coarse_mesh_version());
+    mesh.add_u64(hierarchy.fine_mesh_version());
+    mesh.add_u64(hierarchy.cert_audit_mesh_version());
+    mesh.add_u64(hierarchy.interpolation_version());
+    mesh.add_u64(hierarchy.boundary_version());
+    mesh.add_u64(hierarchy.corrector_space_version());
+    add_sparse_matrix(mesh, hierarchy.coarse_to_fine());
+    add_sparse_matrix(mesh, hierarchy.fine_to_cert_audit());
+    add_sparse_matrix(mesh, hierarchy.coarse_to_cert_audit());
+    add_sparse_matrix(mesh, hierarchy.fine_quasi_interpolation());
+    add_sparse_matrix(mesh, hierarchy.cert_audit_quasi_interpolation());
+    result.mesh = mesh.finish("mesh");
+
+    const HelmholtzProblemConfig &config = model.config();
+    FingerprintBuilder pde;
+    pde.add_string("certificate-pde-context-v1");
+    pde.add_double(config.wavenumber);
+    pde.add_double(config.boundary_beta);
+    pde.add_u64(static_cast<std::uint64_t>(config.mode));
+    add_double_vector(pde, config.diffusion);
+    add_double_vector(pde, config.refractive_index);
+    pde.add_i64(config.quadrature.base_triangle_order);
+    pde.add_i64(config.quadrature.gaussian_triangle_order);
+    pde.add_i64(config.quadrature.singular_triangle_order);
+    pde.add_i64(config.quadrature.max_recursive_subdivisions);
+    pde.add_u64(static_cast<std::uint64_t>(
+        config.quadrature_context.integrand_class));
+    pde.add_double(config.quadrature_context.feature_point.x());
+    pde.add_double(config.quadrature_context.feature_point.y());
+    pde.add_double(config.quadrature_context.feature_scale);
+    pde.add_u64(static_cast<std::uint64_t>(config.patch_solver.kind));
+    pde.add_i64(config.patch_solver.symbolic_cache_slots);
+    pde.add_bool(config.patch_solver.reuse_identical_factorization);
+    pde.add_i64(config.patch_solver.gmres.restart);
+    pde.add_i64(config.patch_solver.gmres.max_iterations);
+    pde.add_double(config.patch_solver.gmres.relative_tolerance);
+    pde.add_double(config.patch_solver.gmres.absolute_tolerance);
+    pde.add_bool(config.patch_solver.gmres.reorthogonalize);
+    pde.add_u64(static_cast<std::uint64_t>(config.patch_solver.shifted.rule));
+    pde.add_double(config.patch_solver.shifted.alpha);
+    pde.add_double(config.patch_solver.shifted.absolute_epsilon);
+    pde.add_u64(static_cast<std::uint64_t>(
+        config.patch_solver.shifted.inverse));
+    pde.add_i64(config.patch_solver.shifted.pre_smooth);
+    pde.add_i64(config.patch_solver.shifted.post_smooth);
+    pde.add_i64(config.patch_solver.shifted.coarse_max_dofs);
+    pde.add_double(config.patch_solver.shifted.jacobi_weight);
+    pde.add_bool(config.patch_solver.fallback_to_direct);
+    result.pde = pde.finish("pde");
+
+    result.patch_policy = patch_policy.hash;
+
+    FingerprintBuilder operators;
+    operators.add_string("certificate-operator-context-v1");
+    add_operators(operators, model.operators());
+    add_operators(operators, audit_operators);
+    add_sparse_matrix(operators, model.problem().coarse_to_fine);
+    add_sparse_matrix(operators, model.problem().fine_element_prolongation);
+    add_sparse_matrix(operators, model.problem().fine_dg_prolongation);
+    add_sparse_matrix(operators, model.problem().quasi_interpolation);
+    add_sparse_matrix(operators, model.problem().patches);
+    operators.add_u64(model.correctors().primal.size());
+    for (const HelmholtzElementCorrector &element : model.correctors().primal) {
+        operators.add_u64(element.size());
+        for (const HelmholtzCorrectorEntry &entry : element) {
+            operators.add_i64(entry.row);
+            operators.add_i64(entry.local_coarse_vertex);
+            operators.add_complex(entry.value);
+        }
+    }
+    result.operators = operators.finish("operators");
+    return result;
+}
+
 void CertificateConstantRegistry::set(CertificateConstant constant) {
     if (constant.name.empty())
         throw std::invalid_argument("certificate constant name must not be empty");
@@ -759,6 +1158,15 @@ bool CertificateConstantRegistry::has_verified(
         && !constant->mesh_class.empty();
 }
 
+bool CertificateConstantRegistry::has_verified(
+    const std::string &name,
+    CertificateBoundDirection required_direction,
+    const CertificateContextFingerprint &context) const {
+    const CertificateConstant *constant = find(name);
+    return constant && has_verified(name, required_direction)
+        && constant_matches_context(*constant, context);
+}
+
 std::vector<std::string>
 CertificateConstantRegistry::missing_or_unverified_required() const {
     std::vector<std::string> result;
@@ -768,13 +1176,39 @@ CertificateConstantRegistry::missing_or_unverified_required() const {
     return result;
 }
 
+std::vector<std::string>
+CertificateConstantRegistry::missing_or_unverified_required(
+    const CertificateContextFingerprint &context) const {
+    std::vector<std::string> result;
+    for (const auto &[name, direction] : required_constants()) {
+        if (!has_verified(name, direction, context)) result.push_back(name);
+    }
+    return result;
+}
+
 bool CertificateAssemblyEvidence::valid() const {
+    const auto positive_finite = [](double value) {
+        return std::isfinite(value) && value > 0.0;
+    };
     return verified
-        && std::isfinite(energy_entry_radius) && energy_entry_radius >= 0.0
-        && std::isfinite(system_entry_radius) && system_entry_radius >= 0.0
-        && std::isfinite(local_source_entry_radius)
-        && local_source_entry_radius >= 0.0
-        && !source.empty() && !hash.empty();
+        && positive_finite(energy_entry_radius)
+        && positive_finite(system_entry_radius)
+        && positive_finite(local_source_entry_radius)
+        && positive_finite(prolongation_entry_radius)
+        && positive_finite(corrector_entry_radius)
+        && positive_finite(constraint_entry_radius)
+        && !source.empty() && !hash.empty()
+        && !mesh_fingerprint.empty() && !pde_fingerprint.empty()
+        && !patch_policy_hash.empty() && !operator_fingerprint.empty();
+}
+
+bool CertificateAssemblyEvidence::valid_for(
+    const CertificateContextFingerprint &context) const {
+    return valid() && context.complete()
+        && mesh_fingerprint == context.mesh
+        && pde_fingerprint == context.pde
+        && patch_policy_hash == context.patch_policy
+        && operator_fingerprint == context.operators;
 }
 
 void derive_certificate_constants(
@@ -783,18 +1217,23 @@ void derive_certificate_constants(
     double wavenumber,
     int ell,
     int localization_shift,
-    const KernelPatchPolicy &patch_policy) {
+    const KernelPatchPolicy &patch_policy,
+    const CertificateContextFingerprint &context) {
     if (!(wavenumber > 0.0) || ell < 0 || localization_shift < 0)
         throw std::invalid_argument("constant derivation parameters are invalid");
     const std::string mesh_class = "current conforming NVB hierarchy";
     const std::string hash = patch_policy.hash;
-    registry.set({
+    const auto set_current = [&](CertificateConstant constant) {
+        bind_constant_to_context(constant, context);
+        registry.set(std::move(constant));
+    };
+    set_current({
         "C_ol(ell)", exact_patch_overlap(hierarchy.coarse_mesh(), ell),
         CertificateBoundDirection::Exact,
         "exact patch-incidence enumeration",
         "maximum number of ell-layer patches containing one coarse element",
         mesh_class, hash, true});
-    registry.set({
+    set_current({
         "C_ol(ell+s)",
         exact_patch_overlap(hierarchy.coarse_mesh(), ell + localization_shift),
         CertificateBoundDirection::Exact,
@@ -803,7 +1242,7 @@ void derive_certificate_constants(
         mesh_class, hash, true});
 
     if (!registry.find("s")) {
-        registry.set({
+        set_current({
             "s", static_cast<double>(localization_shift),
             CertificateBoundDirection::Exact,
             "caller-supplied localization shift",
@@ -820,43 +1259,30 @@ void derive_certificate_constants(
         const double mu = c_app->value * kappa_h;
         if (mu < 1.0) {
             const double c_w = (1.0 - mu * mu) / (1.0 + mu * mu);
-            registry.set({
+            set_current({
                 "c_W", c_w, CertificateBoundDirection::Lower,
                 "paper equation (kernel-coercivity-new)",
                 "(1-mu^2)/(1+mu^2), mu=C_app*kappa*max(H_T)",
-                mesh_class, hash,
-                c_app->verified
-                    && direction_satisfies(
-                        c_app->direction, CertificateBoundDirection::Upper)});
+                mesh_class, hash, false});
         }
     }
     if (c_app && c_st) {
         const double mu = c_app->value * kappa_h;
-        registry.set({
+        set_current({
             "C_Pi", 1.0 + c_st->value + mu,
             CertificateBoundDirection::Upper,
             "paper equation (Pi-kappa-new)",
             "1+C_st+C_app*kappa*max(H_T)",
-            mesh_class, hash,
-            c_app->verified && c_st->verified
-                && direction_satisfies(
-                    c_app->direction, CertificateBoundDirection::Upper)
-                && direction_satisfies(
-                    c_st->direction, CertificateBoundDirection::Upper)});
+            mesh_class, hash, false});
     }
     const CertificateConstant *c_w = registry.find("c_W");
     if (c_a && c_w && c_w->value > 0.0) {
-        registry.set({
+        set_current({
             "C_Fort", 1.0 + c_a->value / c_w->value,
             CertificateBoundDirection::Upper,
             "paper equation (CF-new)",
             "1+C_a/c_W",
-            mesh_class, hash,
-            c_a->verified && c_w->verified
-                && direction_satisfies(
-                    c_a->direction, CertificateBoundDirection::Upper)
-                && direction_satisfies(
-                    c_w->direction, CertificateBoundDirection::Lower)});
+            mesh_class, hash, false});
     }
 }
 
@@ -866,7 +1292,7 @@ CorrectorCertificateResult build_corrector_certificates(
     const HelmholtzOperators &audit_operators,
     CertificateConstantRegistry constants,
     double eta_H,
-    bool eta_H_verified,
+    const AuditKernelResidualEvidence &eta_H_evidence,
     const CertificateAssemblyEvidence &assembly_evidence,
     const CorrectorCertificateConfig &config) {
     if (!(eta_H >= 0.0)
@@ -876,29 +1302,71 @@ CorrectorCertificateResult build_corrector_certificates(
         || config.cluster_absolute_gap < 0.0
         || config.conjugation_tolerance < 0.0 || config.q0 < 0.0)
         throw std::invalid_argument("corrector certificate configuration is invalid");
-    if (model.problem().coarse.nodes.size() != hierarchy.coarse_mesh().nodes.size()
-        || model.problem().fine.nodes.size() != hierarchy.fine_mesh().nodes.size()
-        || audit_operators.system.rows()
-            != static_cast<int>(hierarchy.cert_audit_mesh().nodes.size()))
-        throw std::invalid_argument("model, hierarchy, and audit operator dimensions differ");
+    validate_certificate_inputs(hierarchy, model, audit_operators);
 
     CorrectorCertificateResult result;
     result.assembly_evidence = assembly_evidence;
     result.eta_H = eta_H;
-    result.eta_H_verified = eta_H_verified;
+    result.eta_H_evidence = eta_H_evidence;
     result.patch_policy = audit_kernel_patch_policy(hierarchy);
+    result.context_fingerprint = certificate_context_fingerprint(
+        hierarchy, model, audit_operators, result.patch_policy);
+    const std::string expected_eta_H_context =
+        audit_kernel_residual_context_fingerprint(
+            hierarchy, audit_operators, result.patch_policy);
+    const bool eta_H_evidence_matches_context =
+        !eta_H_evidence.context_fingerprint().empty()
+        && !eta_H_evidence.diagnostic_fingerprint().empty()
+        && eta_H_evidence.context_fingerprint() == expected_eta_H_context
+        && eta_H_evidence.matches_eta(eta_H);
+
+    CertificateConstantRegistry context_scoped_constants;
+    for (const auto &[name, supplied] : constants.entries()) {
+        CertificateConstant constant = supplied;
+        if (constant.verified
+            && !constant_matches_context(
+                constant, result.context_fingerprint)) {
+            constant.verified = false;
+            if (required_constant_name(name)) {
+                add_reason(result.conditional_reasons,
+                           "constant context fingerprint mismatch: " + name);
+            }
+        }
+        context_scoped_constants.set(std::move(constant));
+    }
+    constants = std::move(context_scoped_constants);
+
     int localization_shift = 0;
-    if (const CertificateConstant *shift = constants.find("s"))
+    if (constants.has_verified(
+            "s", CertificateBoundDirection::Upper,
+            result.context_fingerprint)) {
+        const CertificateConstant *shift = constants.find("s");
         localization_shift = std::max(0, static_cast<int>(std::ceil(shift->value)));
+    }
     derive_certificate_constants(
         constants, hierarchy, model.config().wavenumber,
-        model.config().ell, localization_shift, result.patch_policy);
+        model.config().ell, localization_shift, result.patch_policy,
+        result.context_fingerprint);
     result.constants = constants;
 
-    const bool algebraic_verified = assembly_evidence.valid();
-    if (!algebraic_verified) {
+    const bool assembly_evidence_matches_context = assembly_evidence.valid_for(
+        result.context_fingerprint);
+    // Input radii alone do not make the subsequent ordinary-double matrix
+    // additions and products rigorous.  The current code records useful
+    // diagnostic radii, but must not mark them verified until every radius
+    // accumulation is performed by a directed interval backend.
+    result.matrix_enclosure_arithmetic_verified = false;
+    const bool algebraic_verified = false;
+    if (!assembly_evidence.valid()) {
         add_reason(result.conditional_reasons,
-                   "finite-element assembly enclosure is not verified");
+                   "finite-element assembly enclosure is incomplete or unverified");
+    } else if (!assembly_evidence_matches_context) {
+        add_reason(result.conditional_reasons,
+                   "finite-element assembly evidence context fingerprint mismatch");
+    } else {
+        add_reason(
+            result.conditional_reasons,
+            "matrix enclosure propagation lacks directed interval arithmetic");
     }
     if (!solver::verified_spectrum_backend_available()) {
         add_reason(result.conditional_reasons,
@@ -908,20 +1376,26 @@ CorrectorCertificateResult build_corrector_certificates(
     const std::vector<int> free_coarse = free_nodes(hierarchy.coarse_mesh());
     if (free_coarse.empty())
         throw std::runtime_error("coarse certificate space has no free nodes");
-    const Enclosure coarse_to_audit_all = point_enclosure(
-        ComplexMatrix(hierarchy.coarse_to_cert_audit().cast<Complex>()));
+    const Enclosure coarse_to_audit_all = uniform_enclosure(
+        ComplexMatrix(hierarchy.coarse_to_cert_audit().cast<Complex>()),
+        assembly_evidence.prolongation_entry_radius,
+        algebraic_verified);
     const Enclosure coarse_to_audit = select_columns(
         coarse_to_audit_all, free_coarse);
-    const Enclosure fine_to_audit = point_enclosure(
-        ComplexMatrix(hierarchy.fine_to_cert_audit().cast<Complex>()));
+    const Enclosure fine_to_audit = uniform_enclosure(
+        ComplexMatrix(hierarchy.fine_to_cert_audit().cast<Complex>()),
+        assembly_evidence.prolongation_entry_radius,
+        algebraic_verified);
 
     const ComplexSparseMatrix full_corrector_sparse =
         build_helmholtz_corrector_matrix(
             model.problem().coarse,
             static_cast<int>(model.problem().fine.nodes.size()),
             model.correctors().primal);
-    const Enclosure full_corrector = point_enclosure(
-        ComplexMatrix(full_corrector_sparse));
+    const Enclosure full_corrector = uniform_enclosure(
+        ComplexMatrix(full_corrector_sparse),
+        assembly_evidence.corrector_entry_radius,
+        algebraic_verified);
     const Enclosure selected_corrector = select_columns(
         full_corrector, free_coarse);
     const Enclosure audit_corrector = enclosure_multiply(
@@ -955,9 +1429,11 @@ CorrectorCertificateResult build_corrector_certificates(
         build_audit_kernel_patches(hierarchy, result.patch_policy);
     const Enclosure total_primal = assemble_total_gram(
         audit_energy, total_primal_rhs, audit_patches,
+        assembly_evidence, algebraic_verified,
         config.precision_bits, result.total_primal_riesz);
     const Enclosure total_adjoint = assemble_total_gram(
         audit_energy, total_adjoint_rhs, audit_patches,
+        assembly_evidence, algebraic_verified,
         config.precision_bits, result.total_adjoint_riesz);
     result.matrices.total_primal = matrix_diagnostics(total_primal);
     result.matrices.total_adjoint = matrix_diagnostics(total_adjoint);
@@ -979,7 +1455,15 @@ CorrectorCertificateResult build_corrector_certificates(
     result.conjugation_passed =
         result.total_conjugation_relative_error <= config.conjugation_tolerance
         && result.fine_conjugation_relative_error <= config.conjugation_tolerance;
-    result.used_independent_worse_side = !result.conjugation_passed;
+    // The current model retains only a primal corrector. The adjoint objects
+    // above are conjugation-derived diagnostics, not an independently solved
+    // fallback, so a failed invariance gate must remain fail-closed.
+    result.used_independent_worse_side = false;
+    if (!result.conjugation_passed) {
+        add_reason(
+            result.conditional_reasons,
+            "conjugation invariance failed and no independently enclosed adjoint corrector is available");
+    }
 
     result.total_primal_spectrum = generalized_spectrum(
         total_primal, coarse_energy, config);
@@ -1043,7 +1527,21 @@ CorrectorCertificateResult build_corrector_certificates(
             0.0, result.delta_total_lower - result.delta_h_upper);
         result.delta_ell_upper =
             result.delta_total_upper + result.delta_h_upper;
-        if (std::isfinite(c_loc) && c_loc > 0.0
+        const bool localization_decay_verified =
+            constants.has_verified(
+                "C_loc", CertificateBoundDirection::Upper,
+                result.context_fingerprint)
+            && constants.has_verified(
+                "C_ol(ell+s)", CertificateBoundDirection::Upper,
+                result.context_fingerprint)
+            && constants.has_verified(
+                "beta", CertificateBoundDirection::Upper,
+                result.context_fingerprint)
+            && constants.has_verified(
+                "s", CertificateBoundDirection::Upper,
+                result.context_fingerprint);
+        if (localization_decay_verified
+            && std::isfinite(c_loc) && c_loc > 0.0
             && std::isfinite(c_ol_shift) && c_ol_shift > 0.0
             && std::isfinite(beta) && beta > 0.0 && beta < 1.0) {
             const double decay = c_loc * std::sqrt(c_ol_shift)
@@ -1085,12 +1583,10 @@ CorrectorCertificateResult build_corrector_certificates(
                         : result.matrices.fine_element_adjoint,
         result.eta_h_allocation_relative_error);
 
-    for (const std::string &name : constants.missing_or_unverified_required())
+    for (const std::string &name :
+         constants.missing_or_unverified_required(result.context_fingerprint))
         add_reason(result.conditional_reasons,
                    "missing or unverified constant: " + name);
-    if (!eta_H_verified)
-        add_reason(result.conditional_reasons,
-                   "coarse kernel residual eta_H is not verified");
     if (!result.total_spectrum.verified_lambda.metadata.verified)
         add_reason(result.conditional_reasons,
                    "total-corrector spectral enclosure is not verified");
@@ -1103,12 +1599,38 @@ CorrectorCertificateResult build_corrector_certificates(
     if (!(result.mu < 1.0))
         add_reason(result.conditional_reasons,
                    "coarse admissibility mu < 1 is not satisfied");
-    result.stability_verified = result.conditional_reasons.empty()
-        && std::isfinite(result.stability_margin)
-        && result.stability_margin >= 0.0;
     if (std::isfinite(result.stability_margin) && result.stability_margin < 0.0)
         add_reason(result.conditional_reasons,
                    "verified stability margin is negative");
+    // The current implementation rigorously encloses matrix and spectral
+    // stages, but combines theorem constants, delta/q values, stability, and
+    // LOD error endpoints with ordinary double arithmetic.  Until that
+    // scalar chain uses directed interval rounding, certification must stop
+    // here even in an MPFR-enabled matrix build.
+    result.scalar_formula_enclosures_verified = false;
+    add_reason(
+        result.conditional_reasons,
+        "scalar certificate formulas lack directed-rounding enclosures");
+
+    result.corrector_conditional_reasons = result.conditional_reasons;
+    result.corrector_status = result.corrector_conditional_reasons.empty()
+        ? CorrectorCertificateStatus::Certified
+        : CorrectorCertificateStatus::Conditional;
+    result.stability_verified =
+        result.corrector_status == CorrectorCertificateStatus::Certified
+        && std::isfinite(result.stability_margin)
+        && result.stability_margin >= 0.0;
+
+    if (!eta_H_evidence.verified()) {
+        std::string reason = "coarse kernel residual eta_H is not verified";
+        if (!eta_H_evidence.failure_reason().empty())
+            reason += ": " + eta_H_evidence.failure_reason();
+        add_reason(result.conditional_reasons, std::move(reason));
+    } else if (!eta_H_evidence_matches_context) {
+        add_reason(
+            result.conditional_reasons,
+            "coarse kernel residual eta_H evidence context fingerprint mismatch");
+    }
 
     result.status = result.conditional_reasons.empty()
         ? CorrectorCertificateStatus::Certified

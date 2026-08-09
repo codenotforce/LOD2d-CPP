@@ -486,6 +486,11 @@ void validate_checkpoint_shape(const CertifiedDriverCheckpoint &checkpoint) {
         throw std::invalid_argument("unsupported certified checkpoint version");
     if (checkpoint.config_fingerprint.empty())
         throw std::invalid_argument("checkpoint config fingerprint is empty");
+    if (!std::isfinite(checkpoint.cumulative_elapsed_seconds)
+        || checkpoint.cumulative_elapsed_seconds < 0.0) {
+        throw std::invalid_argument(
+            "checkpoint cumulative elapsed time is invalid");
+    }
     if (terminal_state(checkpoint.state) != checkpoint.termination.has_value())
         throw std::invalid_argument(
             "checkpoint terminal state and termination payload disagree");
@@ -541,13 +546,42 @@ void validate_checkpoint_shape(const CertifiedDriverCheckpoint &checkpoint) {
                 "checkpoint refinement mutation has an empty marking");
         }
     }
-    const std::optional<double> intervals[] = {
-        checkpoint.lod_error_lower, checkpoint.lod_error_upper,
-        checkpoint.audit_error_lower, checkpoint.audit_error_upper,
-        checkpoint.true_error_lower, checkpoint.true_error_upper};
-    for (const auto &value : intervals)
-        if (value && !std::isfinite(*value))
-            throw std::invalid_argument("checkpoint interval is not finite");
+    const auto validate_interval = [](
+        const std::optional<double> &lower,
+        const std::optional<double> &upper,
+        const char *name) {
+        if (lower.has_value() != upper.has_value()) {
+            throw std::invalid_argument(
+                std::string("checkpoint ") + name
+                + " interval has only one endpoint");
+        }
+        if (!lower) return;
+        if (!std::isfinite(*lower) || !std::isfinite(*upper)
+            || *lower < 0.0 || *upper < *lower) {
+            throw std::invalid_argument(
+                std::string("checkpoint ") + name
+                + " interval is invalid");
+        }
+    };
+    validate_interval(
+        checkpoint.lod_error_lower, checkpoint.lod_error_upper, "LOD");
+    validate_interval(
+        checkpoint.audit_error_lower, checkpoint.audit_error_upper, "audit");
+    validate_interval(
+        checkpoint.true_error_lower, checkpoint.true_error_upper, "true");
+    if (checkpoint.audit_error_lower && !checkpoint.lod_error_lower)
+        throw std::invalid_argument(
+            "checkpoint audit interval has no LOD interval");
+    if (checkpoint.true_error_lower
+        && (!checkpoint.lod_error_lower || !checkpoint.audit_error_lower)) {
+        throw std::invalid_argument(
+            "checkpoint true interval lacks a component interval");
+    }
+    if (checkpoint.state == CertifiedDriverState::AuditControl
+        && !checkpoint.lod_error_lower) {
+        throw std::invalid_argument(
+            "AuditControl checkpoint has no stored LOD interval");
+    }
 }
 
 } // namespace
@@ -582,6 +616,10 @@ std::string serialize_certified_checkpoint(
            << std::quoted(checkpoint.initial_problem_id) << '\n';
     output << "backend_fingerprint "
            << std::quoted(checkpoint.backend_fingerprint) << '\n';
+    output << "work_accounting "
+           << checkpoint.cumulative_backend_work_units << ' '
+           << checkpoint.cumulative_peak_memory_bytes << ' '
+           << checkpoint.cumulative_elapsed_seconds << '\n';
     output << "frozen_corrector_space_id "
            << std::quoted(checkpoint.frozen_corrector_space_id) << '\n';
     output << "frozen_oversampling "
@@ -632,6 +670,10 @@ CertifiedDriverCheckpoint deserialize_certified_checkpoint(
     expect_tag(input, "LOD2D_CERTIFIED_DRIVER_CHECKPOINT");
     CertifiedDriverCheckpoint checkpoint;
     checkpoint.schema_version = read_value<int>(input, "schema version");
+    if (checkpoint.schema_version != certified_driver_checkpoint_version) {
+        throw std::invalid_argument(
+            "unsupported certified checkpoint version; version 1 cannot be resumed because it has no cumulative resource accounting");
+    }
     expect_tag(input, "config_fingerprint");
     checkpoint.config_fingerprint = read_quoted(input, "config fingerprint");
     expect_tag(input, "state");
@@ -661,6 +703,13 @@ CertifiedDriverCheckpoint deserialize_certified_checkpoint(
     checkpoint.initial_problem_id = read_quoted(input, "initial problem id");
     expect_tag(input, "backend_fingerprint");
     checkpoint.backend_fingerprint = read_quoted(input, "backend fingerprint");
+    expect_tag(input, "work_accounting");
+    checkpoint.cumulative_backend_work_units =
+        read_value<std::uint64_t>(input, "cumulative backend work");
+    checkpoint.cumulative_peak_memory_bytes =
+        read_value<std::uint64_t>(input, "cumulative peak memory");
+    checkpoint.cumulative_elapsed_seconds =
+        read_value<double>(input, "cumulative elapsed seconds");
     expect_tag(input, "frozen_corrector_space_id");
     checkpoint.frozen_corrector_space_id =
         read_quoted(input, "frozen corrector-space id");
@@ -884,6 +933,24 @@ CertifiedAdaptiveDriver CertifiedAdaptiveDriver::resume(
         if (driver.checkpoint_.initial_problem_id.empty())
             driver.checkpoint_.initial_problem_id = restored.initial_problem_id;
         driver.checkpoint_.backend_fingerprint = restored.state_fingerprint;
+        // Replay establishes a fresh backend-local accounting epoch.  The
+        // replay/setup cost itself is outside the resumed algorithm budget;
+        // subsequent deltas continue from the persisted v2 cumulative values.
+        // Peak memory remains conservative across both epochs.
+        driver.backend_work_epoch_start_ = restored.backend_work_units;
+        driver.backend_work_epoch_offset_ =
+            driver.checkpoint_.cumulative_backend_work_units;
+        driver.peak_memory_floor_ =
+            driver.checkpoint_.cumulative_peak_memory_bytes;
+        driver.elapsed_epoch_start_ = restored.elapsed_seconds;
+        driver.elapsed_epoch_offset_ =
+            driver.checkpoint_.cumulative_elapsed_seconds;
+        if (const auto issue = driver.account_work_snapshot(restored)) {
+            record_checkpoint_failure(
+                driver.checkpoint_,
+                "restored backend work accounting is invalid: " + *issue);
+            return driver;
+        }
     } catch (const std::exception &error) {
         record_checkpoint_failure(
             driver.checkpoint_,
@@ -913,6 +980,45 @@ std::string_view CertifiedAdaptiveDriver::output_namespace() const {
     return config_.method == CertifiedMethod::Calod
         ? std::string_view("helmholtz/calod")
         : std::string_view("helmholtz/hlod");
+}
+
+std::optional<std::string> CertifiedAdaptiveDriver::account_work_snapshot(
+    CertifiedWorkSnapshot &snapshot) {
+    if (snapshot.backend_work_units < backend_work_epoch_start_)
+        return "backend work counter decreased within its accounting epoch";
+    if (!std::isfinite(snapshot.elapsed_seconds)
+        || snapshot.elapsed_seconds < elapsed_epoch_start_) {
+        return "backend elapsed time decreased within its accounting epoch";
+    }
+    const std::uint64_t work_delta =
+        snapshot.backend_work_units - backend_work_epoch_start_;
+    if (work_delta > std::numeric_limits<std::uint64_t>::max()
+                         - backend_work_epoch_offset_) {
+        return "cumulative backend work counter overflowed";
+    }
+    const double elapsed_delta =
+        snapshot.elapsed_seconds - elapsed_epoch_start_;
+    const double cumulative_elapsed = elapsed_epoch_offset_ + elapsed_delta;
+    if (!std::isfinite(cumulative_elapsed))
+        return "cumulative backend elapsed time overflowed";
+
+    const std::uint64_t cumulative_work =
+        backend_work_epoch_offset_ + work_delta;
+    if (cumulative_work < checkpoint_.cumulative_backend_work_units)
+        return "cumulative backend work counter decreased";
+    if (cumulative_elapsed < checkpoint_.cumulative_elapsed_seconds)
+        return "cumulative backend elapsed time decreased";
+
+    snapshot.backend_work_units = cumulative_work;
+    snapshot.peak_memory_bytes = std::max(
+        peak_memory_floor_, snapshot.peak_memory_bytes);
+    snapshot.elapsed_seconds = cumulative_elapsed;
+    checkpoint_.cumulative_backend_work_units = snapshot.backend_work_units;
+    checkpoint_.cumulative_peak_memory_bytes = std::max(
+        checkpoint_.cumulative_peak_memory_bytes,
+        snapshot.peak_memory_bytes);
+    checkpoint_.cumulative_elapsed_seconds = snapshot.elapsed_seconds;
+    return std::nullopt;
 }
 
 bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
@@ -962,6 +1068,13 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                 CertifiedStopCode::InvalidObservation,
                 CertifiedDriverAction::Fail,
                 "invalid backend work snapshot: " + *issue);
+        }
+        if (const auto issue = account_work_snapshot(snapshot)) {
+            return terminate(
+                CertifiedDriverState::Failure,
+                CertifiedStopCode::InvalidObservation,
+                CertifiedDriverAction::Fail,
+                "invalid backend work accounting: " + *issue);
         }
         if (checkpoint_.initial_problem_id.empty())
             checkpoint_.initial_problem_id = snapshot.initial_problem_id;
@@ -1022,6 +1135,8 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                     CertifiedStopCode::InvalidObservation,
                     std::string(context) + " has no verified evidence hash"};
             }
+            if (evidence.level == CertifiedEvidenceLevel::Conditional)
+                checkpoint_.claim = CertifiedEvidenceLevel::Conditional;
             if (evidence.level == CertifiedEvidenceLevel::Conditional
                 && config_.evidence_policy
                     == CertifiedEvidencePolicy::RequireVerified) {
@@ -1030,8 +1145,6 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                     std::string(context)
                         + " is conditional while verified evidence is required"};
             }
-            if (evidence.level == CertifiedEvidenceLevel::Conditional)
-                checkpoint_.claim = CertifiedEvidenceLevel::Conditional;
             return std::nullopt;
         };
 
@@ -1059,6 +1172,14 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                     CertifiedStopCode::InvalidObservation,
                     action,
                     "post-mutation backend snapshot is invalid: " + *issue);
+            }
+            if (const auto issue = account_work_snapshot(updated)) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::InvalidObservation,
+                    action,
+                    "post-mutation backend work accounting is invalid: "
+                        + *issue);
             }
             if (updated.initial_problem_id != checkpoint_.initial_problem_id) {
                 return terminate(
@@ -1089,10 +1210,75 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
             return commit(action, next, std::move(detail));
         };
 
+        // Observations may consume substantial work, memory, and elapsed
+        // time, but they are not allowed to mutate the numerical state.
+        // Re-snapshot after each observation so a backend cannot exceed a
+        // configured resource limit and then report a successful terminal
+        // state before the next driver step.
+        const auto finish_observation = [&](std::string_view context)
+            -> std::optional<bool> {
+            CertifiedWorkSnapshot updated = backend.work_snapshot();
+            if (const auto issue = validate_snapshot(updated)) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::InvalidObservation,
+                    CertifiedDriverAction::Fail,
+                    std::string(context)
+                        + " produced an invalid backend snapshot: " + *issue);
+            }
+            if (const auto issue = account_work_snapshot(updated)) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::InvalidObservation,
+                    CertifiedDriverAction::Fail,
+                    std::string(context)
+                        + " produced invalid backend work accounting: "
+                        + *issue);
+            }
+            if (updated.initial_problem_id != checkpoint_.initial_problem_id) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::CheckpointIncompatible,
+                    CertifiedDriverAction::Fail,
+                    std::string(context)
+                        + " changed the backend initial problem id");
+            }
+            if (updated.state_fingerprint != checkpoint_.backend_fingerprint) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::CheckpointIncompatible,
+                    CertifiedDriverAction::Fail,
+                    std::string(context)
+                        + " mutated numerical state outside the driver journal");
+            }
+            if (config_.method == CertifiedMethod::Hlod
+                && (updated.corrector_space_id
+                        != checkpoint_.frozen_corrector_space_id
+                    || updated.oversampling
+                        != checkpoint_.frozen_oversampling)) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::FrozenHlodPriorMismatch,
+                    CertifiedDriverAction::Fail,
+                    std::string(context) + " changed the frozen HLOD prior");
+            }
+            if (const auto limit = resource_limit(updated, config_.limits)) {
+                return terminate(
+                    CertifiedDriverState::WorkLimit,
+                    limit->first,
+                    CertifiedDriverAction::StopAtWorkLimit,
+                    std::string(context) + "; " + limit->second);
+            }
+            return std::nullopt;
+        };
+
         switch (checkpoint_.state) {
         case CertifiedDriverState::CoarseAdmissibility: {
             const CoarseAdmissibilityObservation observation =
                 backend.inspect_coarse_admissibility();
+            if (const auto stopped = finish_observation(
+                    "coarse admissibility inspection"))
+                return *stopped;
             if (const auto issue = evidence_issue(
                     observation.evidence, "coarse admissibility observation")) {
                 return terminate(
@@ -1151,6 +1337,9 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
         case CertifiedDriverState::CorrectorCertification: {
             const CorrectorCertificationObservation observation =
                 backend.inspect_corrector_certification();
+            if (const auto stopped = finish_observation(
+                    "corrector certificate inspection"))
+                return *stopped;
             if (const auto issue = evidence_issue(
                     observation.evidence, "corrector certificate")) {
                 return terminate(
@@ -1266,6 +1455,9 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
         case CertifiedDriverState::CoarseErrorControl: {
             const CoarseErrorObservation observation =
                 backend.solve_and_estimate_coarse_error();
+            if (const auto stopped = finish_observation(
+                    "coarse solve and residual estimate"))
+                return *stopped;
             if (const auto issue = evidence_issue(
                     observation.evidence, "coarse error certificate")) {
                 return terminate(
@@ -1314,21 +1506,25 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                     CertifiedDriverAction::CompleteAuditTolerance,
                     "audit-space upper bound reached the requested tolerance");
             }
-            if (!(allocated > 0.0)) {
+            if (!(allocated > 0.0)
+                && config_.error_target == CertifiedErrorTarget::AuditSpace) {
                 return terminate(
                     CertifiedDriverState::Failure,
                     CertifiedStopCode::EmptyMarking,
                     CertifiedDriverAction::Fail,
                     "coarse error is above tolerance but eta_H marking energy is zero");
             }
-            std::vector<int> marked = mark_doerfler(
-                observation.eta_H_element_squared, config_.theta_H);
-            if (marked.empty()) {
-                return terminate(
-                    CertifiedDriverState::Failure,
-                    CertifiedStopCode::EmptyMarking,
-                    CertifiedDriverAction::Fail,
-                    "eta_H Doerfler marking is empty");
+            std::vector<int> marked;
+            if (allocated > 0.0) {
+                marked = mark_doerfler(
+                    observation.eta_H_element_squared, config_.theta_H);
+                if (marked.empty()) {
+                    return terminate(
+                        CertifiedDriverState::Failure,
+                        CertifiedStopCode::EmptyMarking,
+                        CertifiedDriverAction::Fail,
+                        "eta_H Doerfler marking is empty");
+                }
             }
             checkpoint_.pending_coarse_marking = marked;
             checkpoint_.pending_coarse_refinement_available =
@@ -1337,11 +1533,14 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
             return commit(
                 CertifiedDriverAction::FormPendingCoarseMarking,
                 CertifiedDriverState::AuditControl,
-                "formed and postponed the eta_H coarse marking until audit control");
+                marked.empty()
+                    ? "eta_H is zero; entered continuous audit without a coarse marking"
+                    : "formed and postponed the eta_H coarse marking until audit control");
         }
 
         case CertifiedDriverState::AuditControl: {
-            if (checkpoint_.pending_coarse_marking.empty()) {
+            if (checkpoint_.pending_coarse_marking.empty()
+                && config_.error_target == CertifiedErrorTarget::AuditSpace) {
                 return terminate(
                     CertifiedDriverState::Failure,
                     CertifiedStopCode::InvalidObservation,
@@ -1376,6 +1575,9 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
 
             const AuditControlObservation observation =
                 backend.inspect_audit_control();
+            if (const auto stopped = finish_observation(
+                    "continuous audit inspection"))
+                return *stopped;
             if (observation.interval_kind == AuditIntervalKind::EmpiricalSaturation
                 && observation.evidence.level
                     == CertifiedEvidenceLevel::Verified) {
@@ -1410,8 +1612,14 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
             record.audit_error_upper = observation.audit_error_upper;
             checkpoint_.audit_error_lower = observation.audit_error_lower;
             checkpoint_.audit_error_upper = observation.audit_error_upper;
-            if (observation.audit_error_upper
-                > config_.rho_aud * *checkpoint_.lod_error_upper) {
+            const double audit_threshold_product =
+                config_.rho_aud * *checkpoint_.lod_error_upper;
+            const double audit_threshold_lower = audit_threshold_product > 0.0
+                ? std::nextafter(
+                      audit_threshold_product,
+                      -std::numeric_limits<double>::infinity())
+                : 0.0;
+            if (observation.audit_error_upper > audit_threshold_lower) {
                 if (!observation.refinement_available) {
                     return terminate(
                         CertifiedDriverState::Failure,
@@ -1457,14 +1665,37 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                     "audit error exceeds rho_aud times the LOD upper bound; returned to Step 2");
             }
 
-            const double true_lower = std::max({
-                0.0,
+            const double lower_from_lod = std::nextafter(
                 *checkpoint_.lod_error_lower
                     - observation.audit_error_upper,
+                -std::numeric_limits<double>::infinity());
+            const double lower_from_audit = std::nextafter(
                 observation.audit_error_lower
-                    - *checkpoint_.lod_error_upper});
-            const double true_upper = *checkpoint_.lod_error_upper
-                                    + observation.audit_error_upper;
+                    - *checkpoint_.lod_error_upper,
+                -std::numeric_limits<double>::infinity());
+            const double true_lower = std::max({
+                0.0, lower_from_lod, lower_from_audit});
+            const double upper_sum = *checkpoint_.lod_error_upper
+                + observation.audit_error_upper;
+            if (!std::isfinite(upper_sum)) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::InvalidObservation,
+                    CertifiedDriverAction::Fail,
+                    "continuous upper-bound addition overflowed");
+            }
+            const double true_upper = upper_sum > 0.0
+                ? std::nextafter(
+                      upper_sum,
+                      std::numeric_limits<double>::infinity())
+                : 0.0;
+            if (!std::isfinite(true_upper)) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::InvalidObservation,
+                    CertifiedDriverAction::Fail,
+                    "continuous upper-bound outward rounding overflowed");
+            }
             checkpoint_.true_error_lower = true_lower;
             checkpoint_.true_error_upper = true_upper;
             record.true_error_lower = true_lower;
@@ -1482,6 +1713,13 @@ bool CertifiedAdaptiveDriver::step(CertifiedDriverBackend &backend) {
                     CertifiedStopCode::CoarseRefinementUnavailable,
                     CertifiedDriverAction::Fail,
                     "continuous tolerance is unmet and coarse refinement is unavailable");
+            }
+            if (checkpoint_.pending_coarse_marking.empty()) {
+                return terminate(
+                    CertifiedDriverState::Failure,
+                    CertifiedStopCode::EmptyMarking,
+                    CertifiedDriverAction::Fail,
+                    "continuous tolerance is unmet but eta_H supplied no coarse marking");
             }
             if (const auto stopped = count_limit(
                     CertifiedMutationKind::RefineCoarse,
@@ -1567,15 +1805,13 @@ CoarseAdmissibilityObservation make_coarse_admissibility_observation(
         observation.evidence.invalid_reason = "coarse mesh has no elements";
         return observation;
     }
-    observation.evidence.level = constant->verified
-        ? CertifiedEvidenceLevel::Verified
-        : CertifiedEvidenceLevel::Conditional;
+    // Even a rigorously bounded C_app does not make the ordinary-double
+    // products below directed-rounding enclosures.  This context-free adapter
+    // therefore remains diagnostic and can never promote evidence.
+    observation.evidence.level = CertifiedEvidenceLevel::Conditional;
     observation.evidence.source = constant->source.empty()
         ? observation.evidence.source
         : constant->source;
-    observation.evidence.hash = !constant->patch_policy_hash.empty()
-        ? constant->patch_policy_hash
-        : "C_app:" + constant->mesh_class + ':' + constant->derivation;
     observation.mu_by_element.reserve(coarse_mesh.elems.size());
     for (const Triangle &triangle : coarse_mesh.elems) {
         observation.mu_by_element.push_back(
@@ -1585,13 +1821,61 @@ CoarseAdmissibilityObservation make_coarse_admissibility_observation(
     return observation;
 }
 
+CoarseAdmissibilityObservation make_coarse_admissibility_observation(
+    const AdaptiveMeshHierarchy &hierarchy,
+    const HelmholtzLodModel &model,
+    const HelmholtzOperators &audit_operators,
+    const CertificateConstantRegistry &constants) {
+    const KernelPatchPolicy policy = audit_kernel_patch_policy(hierarchy);
+    const CertificateContextFingerprint context =
+        certificate_context_fingerprint(
+            hierarchy, model, audit_operators, policy);
+    CoarseAdmissibilityObservation observation =
+        make_coarse_admissibility_observation(
+            hierarchy.coarse_mesh(), model.config().wavenumber, constants);
+    if (!observation.evidence.valid) return observation;
+
+    observation.evidence.hash = context.mesh + '|' + context.pde + '|'
+        + context.patch_policy + '|' + context.operators;
+    observation.evidence.level = CertifiedEvidenceLevel::Conditional;
+    const bool bound_to_current_context = constants.has_verified(
+        "C_app", CertificateBoundDirection::Upper, context);
+    observation.evidence.invalid_reason = bound_to_current_context
+        ? "C_app is context-verified, but mu_T uses ordinary floating-point multiplication without directed rounding"
+        : "C_app is not verified for the internally recomputed numerical context";
+    return observation;
+}
+
+namespace {
+
+bool complete_verified_corrector_chain(
+    const CorrectorCertificateResult &certificate) {
+    return certificate.corrector_status == CorrectorCertificateStatus::Certified
+        && certificate.verification_metadata.verified
+        && certificate.context_fingerprint.complete()
+        && certificate.assembly_evidence.valid_for(
+            certificate.context_fingerprint)
+        && certificate.matrix_enclosure_arithmetic_verified
+        && certificate.scalar_formula_enclosures_verified
+        && certificate.total_spectrum.verified_lambda.metadata.verified
+        && certificate.fine_spectrum.verified_lambda.metadata.verified
+        && certificate.audit_infsup.metadata.verified
+        && certificate.constants.missing_or_unverified_required(
+               certificate.context_fingerprint).empty()
+        && certificate.conjugation_passed
+        && certificate.stability_verified;
+}
+
+} // namespace
+
 CorrectorCertificationObservation make_corrector_certification_observation(
     const CorrectorCertificateResult &certificate) {
     CorrectorCertificationObservation observation;
     observation.evidence.valid =
-        certificate.status != CorrectorCertificateStatus::Invalid;
+        certificate.corrector_status != CorrectorCertificateStatus::Invalid;
+    const bool verified_chain = complete_verified_corrector_chain(certificate);
     observation.evidence.level =
-        certificate.status == CorrectorCertificateStatus::Certified
+        verified_chain
         ? CertifiedEvidenceLevel::Verified
         : CertifiedEvidenceLevel::Conditional;
     observation.evidence.source = "WP4 build_corrector_certificates";
@@ -1606,12 +1890,25 @@ CorrectorCertificationObservation make_corrector_certification_observation(
             certificate.verification_metadata.failure_reason.empty()
             ? "WP4 corrector certificate is invalid"
             : certificate.verification_metadata.failure_reason;
-    } else if (certificate.status == CorrectorCertificateStatus::Conditional
-               && !certificate.conditional_reasons.empty()) {
+    } else if (certificate.corrector_status
+                   == CorrectorCertificateStatus::Conditional
+               && !certificate.corrector_conditional_reasons.empty()) {
         observation.evidence.invalid_reason =
-            join_reasons(certificate.conditional_reasons);
+            join_reasons(certificate.corrector_conditional_reasons);
+    } else if (!verified_chain
+               && certificate.corrector_status
+                    == CorrectorCertificateStatus::Certified) {
+        observation.evidence.invalid_reason =
+            "WP4 corrector status is Certified but one or more verified-chain gates are absent";
     }
-    observation.stability_condition_holds = certificate.stability_verified;
+    // Whether the computed stability inequality holds is distinct from the
+    // evidence level used to justify it.  AllowConditional must be able to
+    // consume a finite nonnegative diagnostic margin without promoting the
+    // resulting run to Verified.
+    observation.stability_condition_holds = observation.evidence.valid
+        && certificate.conjugation_passed
+        && std::isfinite(certificate.stability_margin)
+        && certificate.stability_margin >= 0.0;
     observation.q_total_upper = certificate.q_total;
     observation.delta_total_lower = certificate.delta_total_lower;
     observation.delta_h_upper = certificate.delta_h_upper;
@@ -1625,23 +1922,45 @@ CoarseErrorObservation make_coarse_error_observation(
     CoarseErrorObservation observation;
     observation.evidence.valid =
         certificate.status != CorrectorCertificateStatus::Invalid;
-    observation.evidence.level =
-        certificate.status == CorrectorCertificateStatus::Certified
-            && certificate.eta_H_verified
+    const bool verified_chain = complete_verified_corrector_chain(certificate)
+        && certificate.status == CorrectorCertificateStatus::Certified
+        && certificate.verification_metadata.verified
+        && estimate.evidence.verified()
+        && certificate.eta_H_evidence.verified();
+    observation.evidence.level = verified_chain
         ? CertifiedEvidenceLevel::Verified
         : CertifiedEvidenceLevel::Conditional;
     observation.evidence.source =
         "WP3 audit kernel residual + WP4 error enclosure";
+    if (!estimate.evidence.backend().empty())
+        observation.evidence.source += ":" + estimate.evidence.backend();
     observation.evidence.hash = !certificate.assembly_evidence.hash.empty()
         ? certificate.assembly_evidence.hash
         : certificate.patch_policy.hash;
+    if (!estimate.evidence.diagnostic_fingerprint().empty())
+        observation.evidence.hash += '|'
+            + estimate.evidence.diagnostic_fingerprint();
     observation.eta_H = estimate.eta;
     observation.lod_error_lower = certificate.lod_error_lower;
     observation.lod_error_upper = certificate.lod_error_upper;
     observation.eta_H_element_squared = estimate.element_eta_squared;
     const double scale = std::max({1.0, std::abs(estimate.eta),
                                    std::abs(certificate.eta_H)});
-    if (std::abs(estimate.eta - certificate.eta_H) > 1e-10 * scale) {
+    const bool evidence_matches =
+        !estimate.evidence.context_fingerprint().empty()
+        && !estimate.evidence.diagnostic_fingerprint().empty()
+        && estimate.evidence.matches_result(estimate)
+        && certificate.eta_H_evidence.matches_result(estimate)
+        && certificate.eta_H_evidence.matches_eta(certificate.eta_H)
+        && estimate.evidence.context_fingerprint()
+            == certificate.eta_H_evidence.context_fingerprint()
+        && estimate.evidence.diagnostic_fingerprint()
+            == certificate.eta_H_evidence.diagnostic_fingerprint();
+    if (!evidence_matches) {
+        observation.evidence.valid = false;
+        observation.evidence.invalid_reason =
+            "WP3 eta_H evidence token does not match the WP4 enclosure";
+    } else if (std::abs(estimate.eta - certificate.eta_H) > 1e-10 * scale) {
         observation.evidence.valid = false;
         observation.evidence.invalid_reason =
             "WP3 eta_H does not match the eta_H used to build the WP4 enclosure";

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -50,14 +51,25 @@ CertifiedObservationEvidence evidence(bool conditional = false) {
     return result;
 }
 
+enum class ObservationWorkStage {
+    None,
+    CoarseSolve,
+    Audit
+};
+
 class ScriptedBackend final : public CertifiedDriverBackend {
 public:
     explicit ScriptedBackend(bool always_stable = false,
                              bool freeze_corrector = false,
-                             bool conditional = false)
+                             bool conditional = false,
+                             bool zero_indicator = false,
+                             ObservationWorkStage work_stage =
+                                 ObservationWorkStage::None)
         : always_stable_(always_stable),
           freeze_corrector_(freeze_corrector),
-          conditional_(conditional) {}
+          conditional_(conditional),
+          zero_indicator_(zero_indicator),
+          work_stage_(work_stage) {}
 
     CertifiedWorkSnapshot work_snapshot() const override {
         CertifiedWorkSnapshot snapshot;
@@ -66,7 +78,9 @@ public:
         snapshot.audit_dofs = 80 + 20 * audit_refinements_;
         snapshot.backend_work_units = static_cast<std::uint64_t>(
             coarse_refinements_ + corrector_refinements_
-            + audit_refinements_ + (ell_ - 1));
+            + audit_refinements_ + (ell_ - 1)
+            + observation_work_units_);
+        if (forced_work_units_) snapshot.backend_work_units = *forced_work_units_;
         snapshot.initial_problem_id = "scripted-problem-v1";
         snapshot.state_fingerprint = fingerprint();
         snapshot.corrector_space_id = freeze_corrector_
@@ -123,9 +137,16 @@ public:
     }
 
     CoarseErrorObservation solve_and_estimate_coarse_error() override {
+        if (work_stage_ == ObservationWorkStage::CoarseSolve)
+            ++observation_work_units_;
         CoarseErrorObservation result;
         result.evidence = evidence(conditional_);
-        if (coarse_refinements_ < 2) {
+        if (zero_indicator_) {
+            result.eta_H = 0.0;
+            result.lod_error_lower = 0.0;
+            result.lod_error_upper = 0.0;
+            result.eta_H_element_squared = {0.0, 0.0, 0.0};
+        } else if (coarse_refinements_ < 2) {
             result.eta_H = 1.0;
             result.lod_error_lower = 0.2;
             result.lod_error_upper = 0.4;
@@ -140,14 +161,24 @@ public:
     }
 
     AuditControlObservation inspect_audit_control() override {
+        if (work_stage_ == ObservationWorkStage::Audit)
+            ++observation_work_units_;
         AuditControlObservation result;
         result.evidence = evidence(conditional_);
         result.audit_error_lower = 0.0;
-        if (audit_refinements_ == 0) {
+        if (zero_indicator_) {
+            result.audit_error_upper = 0.0;
+        } else if (audit_refinements_ == 0) {
             result.audit_error_upper = 0.1;
             result.marked_fine_elements = {2, 0, 2};
         } else if (coarse_refinements_ < 2) {
-            result.audit_error_upper = 0.01;
+            // The first refined value lies exactly on the unrounded audit
+            // threshold.  Directed downward rounding must reject equality;
+            // the next refinement is strictly below it.
+            result.audit_error_upper = audit_refinements_ == 1
+                ? 0.05 * 0.4 : 0.01;
+            if (audit_refinements_ == 1)
+                result.marked_fine_elements = {1};
         } else {
             result.audit_error_upper = 0.005;
         }
@@ -165,6 +196,9 @@ public:
     int corrector_refinements() const { return corrector_refinements_; }
     int audit_refinements() const { return audit_refinements_; }
     int ell() const { return ell_; }
+    void force_work_units(std::optional<std::uint64_t> value) {
+        forced_work_units_ = value;
+    }
     const std::vector<std::string> &mutation_log() const {
         return mutation_log_;
     }
@@ -189,10 +223,14 @@ private:
     bool always_stable_ = false;
     bool freeze_corrector_ = false;
     bool conditional_ = false;
+    bool zero_indicator_ = false;
+    ObservationWorkStage work_stage_ = ObservationWorkStage::None;
     int coarse_refinements_ = 0;
     int corrector_refinements_ = 0;
     int audit_refinements_ = 0;
+    int observation_work_units_ = 0;
     int ell_ = 1;
+    std::optional<std::uint64_t> forced_work_units_;
     std::vector<std::string> mutation_log_;
 };
 
@@ -226,8 +264,11 @@ void verify_full_calod_order_and_branches() {
             "CALOD output namespace is wrong");
     driver.run(backend);
     require(driver.terminal(), "CALOD scripted run did not terminate");
-    require(driver.checkpoint().state == CertifiedDriverState::Done,
-            "CALOD scripted run did not succeed");
+    if (driver.checkpoint().state != CertifiedDriverState::Done) {
+        throw std::runtime_error(
+            "CALOD scripted run did not succeed: "
+            + driver.termination()->detail);
+    }
     require(driver.termination()->code
                 == CertifiedStopCode::ContinuousToleranceReached,
             "CALOD used the wrong success stop code");
@@ -239,14 +280,17 @@ void verify_full_calod_order_and_branches() {
             "CALOD did not execute exactly one corrector-h refinement");
     require(backend.ell() == 2,
             "CALOD did not execute the global reverse ell branch");
-    require(backend.audit_refinements() == 1,
-            "CALOD did not execute exactly one audit refinement");
+    require(backend.audit_refinements() == 2,
+            "CALOD did not conservatively refine the threshold-equality audit");
 
     const std::vector<CertifiedDriverAction> expected{
         CertifiedDriverAction::RefineCoarseAdmissibility,
         CertifiedDriverAction::AcceptCoarseAdmissibility,
         CertifiedDriverAction::RefineCorrectorFine,
         CertifiedDriverAction::IncreaseOversampling,
+        CertifiedDriverAction::AcceptCorrectorCertificate,
+        CertifiedDriverAction::FormPendingCoarseMarking,
+        CertifiedDriverAction::RefineAudit,
         CertifiedDriverAction::AcceptCorrectorCertificate,
         CertifiedDriverAction::FormPendingCoarseMarking,
         CertifiedDriverAction::RefineAudit,
@@ -263,6 +307,10 @@ void verify_full_calod_order_and_branches() {
                   "continuous upper interval was formed incorrectly");
     require_close(*driver.checkpoint().true_error_lower, 0.065, 1e-14,
                   "continuous lower interval was formed incorrectly");
+    require(*driver.checkpoint().true_error_upper > 0.155,
+            "asymmetric continuous upper endpoint was not rounded outward");
+    require(*driver.checkpoint().true_error_lower < 0.065,
+            "asymmetric continuous lower endpoint was not rounded outward");
 }
 
 void verify_checkpoint_resume_is_identical() {
@@ -283,6 +331,8 @@ void verify_checkpoint_resume_is_identical() {
             "checkpoint was not taken after the audit branch returned to Step 2");
     const std::string serialized =
         serialize_certified_checkpoint(interrupted.checkpoint());
+    require(interrupted.checkpoint().cumulative_backend_work_units > 0,
+            "checkpoint did not persist cumulative backend work");
     const CertifiedDriverCheckpoint parsed =
         deserialize_certified_checkpoint(serialized);
     require(serialize_certified_checkpoint(parsed) == serialized,
@@ -292,6 +342,9 @@ void verify_checkpoint_resume_is_identical() {
     CertifiedAdaptiveDriver resumed = CertifiedAdaptiveDriver::resume(
         config, serialized, resumed_backend);
     require(!resumed.terminal(), "valid checkpoint replay failed");
+    require(resumed.checkpoint().cumulative_backend_work_units
+                == interrupted.checkpoint().cumulative_backend_work_units,
+            "checkpoint replay reset or double-counted backend work");
     resumed.run(resumed_backend);
     require(serialize_certified_checkpoint(resumed.checkpoint())
                 == continuous_checkpoint,
@@ -299,6 +352,50 @@ void verify_checkpoint_resume_is_identical() {
     require(resumed_backend.mutation_log()
                 == continuous_backend.mutation_log(),
             "checkpoint mutation replay differs from continuous execution");
+    require(resumed.checkpoint().cumulative_backend_work_units
+                == continuous.checkpoint().cumulative_backend_work_units,
+            "resumed backend work differs from uninterrupted execution");
+
+    std::string legacy = serialized;
+    const std::string current_header =
+        "LOD2D_CERTIFIED_DRIVER_CHECKPOINT 2";
+    const std::size_t header = legacy.find(current_header);
+    require(header != std::string::npos,
+            "v2 checkpoint header is missing");
+    legacy.replace(header, current_header.size(),
+                   "LOD2D_CERTIFIED_DRIVER_CHECKPOINT 1");
+    bool rejected_v1 = false;
+    try {
+        (void)deserialize_certified_checkpoint(legacy);
+    } catch (const std::invalid_argument &) {
+        rejected_v1 = true;
+    }
+    require(rejected_v1,
+            "v1 checkpoint without resource accounting was accepted");
+
+    const auto replace_intervals = [&](const std::string &line) {
+        std::string tampered = serialized;
+        const std::size_t begin = tampered.find("intervals");
+        require(begin != std::string::npos,
+                "checkpoint intervals line is missing");
+        const std::size_t end = tampered.find('\n', begin);
+        require(end != std::string::npos,
+                "checkpoint intervals line is unterminated");
+        tampered.replace(begin, end - begin, line);
+        return tampered;
+    };
+    for (const std::string &tampered : {
+             replace_intervals("intervals 1 2 1 1 0 0 0 0"),
+             replace_intervals("intervals 1 0.2 0 0 0 0 0")}) {
+        bool rejected_interval = false;
+        try {
+            (void)deserialize_certified_checkpoint(tampered);
+        } catch (const std::invalid_argument &) {
+            rejected_interval = true;
+        }
+        require(rejected_interval,
+                "malformed checkpoint interval was accepted");
+    }
 
     CertifiedDriverConfig incompatible = config;
     incompatible.tolerance = 0.19;
@@ -370,6 +467,9 @@ void verify_conditional_and_work_limit_outcomes() {
     require(strict.termination()->code
                 == CertifiedStopCode::UnverifiedEvidence,
             "strict CALOD used the wrong conditional-evidence failure code");
+    require(strict.termination()->claim
+                == CertifiedEvidenceLevel::Conditional,
+            "strict CALOD failure retained a verified claim after observing conditional evidence");
 
     CertifiedDriverConfig conditional_config = calod_config();
     conditional_config.evidence_policy =
@@ -406,6 +506,96 @@ void verify_conditional_and_work_limit_outcomes() {
             "structured work-limit reason did not survive serialization");
 }
 
+void verify_backend_work_counter_cannot_regress() {
+    ScriptedBackend backend;
+    CertifiedAdaptiveDriver driver(calod_config());
+    require(driver.step(backend),
+            "scripted run stopped before work-regression fixture");
+    require(driver.checkpoint().cumulative_backend_work_units == 1,
+            "work-regression fixture has the wrong initial counter");
+    backend.force_work_units(0);
+    driver.run(backend);
+    require(driver.checkpoint().state == CertifiedDriverState::Failure,
+            "decreasing backend work counter was accepted");
+    require(driver.termination()->code
+                == CertifiedStopCode::InvalidObservation,
+            "decreasing backend work counter used the wrong failure code");
+}
+
+void verify_post_observation_limits_and_zero_continuous_case() {
+    CertifiedDriverConfig zero_config = calod_config();
+    ScriptedBackend zero_backend(
+        /*always_stable=*/true,
+        /*freeze_corrector=*/false,
+        /*conditional=*/false,
+        /*zero_indicator=*/true);
+    CertifiedAdaptiveDriver zero_driver(zero_config);
+    zero_driver.run(zero_backend);
+    require(zero_driver.checkpoint().state == CertifiedDriverState::Done,
+            "continuous zero-indicator case did not reach audit completion");
+    require(zero_driver.termination()->code
+                == CertifiedStopCode::ContinuousToleranceReached,
+            "continuous zero-indicator case used the wrong stop code");
+
+    for (ObservationWorkStage stage : {
+             ObservationWorkStage::CoarseSolve,
+             ObservationWorkStage::Audit}) {
+        CertifiedDriverConfig limited = calod_config();
+        limited.limits.max_backend_work_units = 1;
+        ScriptedBackend backend(
+            /*always_stable=*/true,
+            /*freeze_corrector=*/false,
+            /*conditional=*/false,
+            /*zero_indicator=*/stage == ObservationWorkStage::Audit,
+            stage);
+        CertifiedAdaptiveDriver driver(limited);
+        driver.run(backend);
+        require(driver.checkpoint().state == CertifiedDriverState::WorkLimit,
+                "post-observation backend work was not limited");
+        require(driver.termination()->code
+                    == CertifiedStopCode::BackendWorkLimit,
+                "post-observation work used the wrong stop code");
+    }
+}
+
+void verify_conditional_wp4_adapter_preserves_stability_condition() {
+    CorrectorCertificateResult certificate;
+    certificate.status = CorrectorCertificateStatus::Conditional;
+    certificate.conditional_reasons = {"diagnostic floating-point evidence"};
+    certificate.conjugation_passed = true;
+    certificate.stability_margin = 0.125;
+    certificate.q_total = 0.1;
+    certificate.delta_total_lower = 1.0;
+    certificate.delta_h_upper = 0.1;
+    certificate.eta_h_element_squared = {1.0};
+    const CorrectorCertificationObservation observation =
+        make_corrector_certification_observation(certificate);
+    require(observation.evidence.valid
+                && observation.evidence.level
+                    == CertifiedEvidenceLevel::Conditional,
+            "conditional WP4 certificate used the wrong evidence level");
+    require(observation.stability_condition_holds,
+            "conditional WP4 adapter discarded a satisfied stability inequality");
+
+    certificate.conjugation_passed = false;
+    const CorrectorCertificationObservation missing_adjoint =
+        make_corrector_certification_observation(certificate);
+    require(!missing_adjoint.stability_condition_holds,
+            "failed conjugation without an independent adjoint was accepted");
+
+    CorrectorCertificateResult forged;
+    forged.corrector_status = CorrectorCertificateStatus::Certified;
+    forged.status = CorrectorCertificateStatus::Certified;
+    forged.conjugation_passed = true;
+    forged.stability_verified = true;
+    forged.stability_margin = 0.125;
+    const CorrectorCertificationObservation rejected_forgery =
+        make_corrector_certification_observation(forged);
+    require(rejected_forgery.evidence.level
+                == CertifiedEvidenceLevel::Conditional,
+            "public Certified status bypassed the WP4 verified-chain gates");
+}
+
 void verify_wp4_coarse_adapter_and_proxy_identity() {
     TriMesh mesh;
     mesh.nodes = {Point2(0.0, 0.0), Point2(1.0, 0.0), Point2(0.0, 1.0)};
@@ -413,13 +603,15 @@ void verify_wp4_coarse_adapter_and_proxy_identity() {
     CertificateConstantRegistry constants;
     constants.set({"C_app", 0.25, CertificateBoundDirection::Upper,
                    "verified adapter test", "direct input", "unit triangle",
-                   "adapter-test-v1", true});
+                   "adapter-test-v1", true,
+                   "adapter-mesh-v1", "adapter-pde-v1",
+                   "adapter-operators-v1"});
     const CoarseAdmissibilityObservation observation =
         make_coarse_admissibility_observation(mesh, 2.0, constants);
     require(observation.evidence.valid
                 && observation.evidence.level
-                    == CertifiedEvidenceLevel::Verified,
-            "verified C_app did not produce verified coarse evidence");
+                    == CertifiedEvidenceLevel::Conditional,
+            "ordinary-double mu_T was promoted to verified evidence");
     require_close(observation.mu_by_element.at(0), std::sqrt(2.0) / 2.0,
                   1e-14, "coarse admissibility adapter computed the wrong mu_T");
 
@@ -436,8 +628,11 @@ int main() {
     try {
         verify_full_calod_order_and_branches();
         verify_checkpoint_resume_is_identical();
+        verify_backend_work_counter_cannot_regress();
         verify_hlod_freeze_and_shared_eta_marking();
         verify_conditional_and_work_limit_outcomes();
+        verify_post_observation_limits_and_zero_continuous_case();
+        verify_conditional_wp4_adapter_preserves_stability_condition();
         verify_wp4_coarse_adapter_and_proxy_identity();
         std::cout << "Certified CALOD/HLOD states, branches, isolation, and replay passed\n";
         return 0;

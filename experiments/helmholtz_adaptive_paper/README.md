@@ -26,13 +26,18 @@ case_method_kN_rN_hash
 
 The final component is the lowercase 16-digit FNV-1a 64-bit hash of the
 canonical JSON configuration. The canonical configuration includes the Git
-commit, build hash, and repeat index, so changing any provenance field creates
-a different immutable run ID.
+commit, build hash, repeat index, all controller/resource limits, and every
+numerical-backend discretization, solver, certificate, audit, and constant-set
+content hash. Changing any of these fields creates a different immutable run
+ID.
 
 Every formal run must retain the canonical configuration, Git revision, build
 hash, compiler and dependency metadata, host/thread information, and all
 method parameters. A resumed run must pass checkpoint schema, configuration
 fingerprint, problem identity, and state fingerprint checks.
+`certificate_constant_set_hash` is a lowercase SHA-256 content digest; the WP6
+runner must recompute it from the frozen constant artifact before building the
+registry. The schema alone cannot attest the artifact contents.
 
 ## Numeric And Terminal-State Rules
 
@@ -70,9 +75,10 @@ evidence policy, and preserve the complete transition and provenance record.
 | Paper case registry, mixed boundaries, sources, and quadrature | Implemented in WP1 |
 | Three-mesh hierarchy and error-reference isolation | Implemented in WP2 |
 | Audit-kernel `eta_H` | Implemented in WP3 |
-| Conditional/verified certificate machinery | Implemented in WP4 |
-| Checkpointable certified driver state machine | Implemented in WP5 |
-| Live numerical backend, frozen manifests, and formal runner | Pending in WP6 |
+| Fail-closed conditional certificate machinery | Partially implemented in WP4; verified chain remains open |
+| Checkpointable certified driver state machine | Controller implemented in WP5 |
+| Real floating-point numerical backend | Implemented for conditional integration smoke only |
+| Verified numerical backend, frozen manifests, and formal runner | Pending G3/WP6 |
 | Six-method production matrix and paper tables/figures | Not run |
 
 Do not create formal production manifests or publish paper-result claims from

@@ -437,6 +437,81 @@ void AdaptiveMeshHierarchy::refresh_coarse_to_cert_audit() {
         cg_to_dg(cert_audit_mesh_),
         static_cast<int>(cert_audit_mesh_.nodes.size()),
         static_cast<int>(coarse_mesh_.nodes.size()));
+    validate_current_embeddings();
+}
+
+void AdaptiveMeshHierarchy::validate_current_embeddings() const {
+    constexpr double composition_tolerance = 1e-10;
+    constexpr double right_inverse_tolerance = 1e-9;
+    constexpr double coordinate_tolerance = 2e-10;
+
+    validate_boundary_tags(coarse_mesh_);
+    validate_boundary_tags(fine_completion_.refinement.mesh);
+    validate_boundary_tags(cert_audit_mesh_);
+
+    const Eigen::SparseMatrix<double> composed_nodes =
+        fine_to_cert_audit_.P_node * fine_completion_.refinement.P_node;
+    const Eigen::SparseMatrix<double> composed_elements =
+        fine_to_cert_audit_.P_elem * fine_completion_.refinement.P_elem;
+    const Eigen::SparseMatrix<double> composed_dg =
+        fine_to_cert_audit_.P_dg * fine_completion_.refinement.P_dg;
+    if ((composed_nodes - coarse_to_cert_audit_).norm() > composition_tolerance
+        || (composed_elements - coarse_elements_to_cert_audit_).norm()
+               > composition_tolerance
+        || (composed_dg - coarse_dg_to_cert_audit_).norm()
+               > composition_tolerance) {
+        throw std::runtime_error(
+            "three-level prolongations fail the production composition check");
+    }
+
+    auto coordinates = [](const TriMesh &mesh) {
+        Eigen::MatrixXd result(mesh.nodes.size(), 2);
+        for (int node = 0; node < static_cast<int>(mesh.nodes.size()); ++node)
+            result.row(node) = mesh.nodes[node].transpose();
+        return result;
+    };
+    auto maximum_absolute_entry = [](const Eigen::MatrixXd &matrix) {
+        return matrix.size() == 0 ? 0.0 : matrix.cwiseAbs().maxCoeff();
+    };
+    const Eigen::MatrixXd coarse_coordinates = coordinates(coarse_mesh_);
+    const Eigen::MatrixXd fine_coordinates =
+        coordinates(fine_completion_.refinement.mesh);
+    const Eigen::MatrixXd audit_coordinates = coordinates(cert_audit_mesh_);
+    if (maximum_absolute_entry(
+            fine_completion_.refinement.P_node * coarse_coordinates
+            - fine_coordinates) > coordinate_tolerance
+        || maximum_absolute_entry(
+            fine_to_cert_audit_.P_node * fine_coordinates
+            - audit_coordinates) > coordinate_tolerance
+        || maximum_absolute_entry(
+            coarse_to_cert_audit_ * coarse_coordinates
+            - audit_coordinates) > coordinate_tolerance) {
+        throw std::runtime_error(
+            "three-level prolongations fail the production coordinate check");
+    }
+
+    std::vector<char> is_dirichlet(coarse_mesh_.nodes.size(), false);
+    for (int node : dirichlet_nodes(coarse_mesh_)) is_dirichlet[node] = true;
+    std::vector<Eigen::Triplet<double>> expected_triplets;
+    expected_triplets.reserve(coarse_mesh_.nodes.size());
+    for (int node = 0; node < static_cast<int>(coarse_mesh_.nodes.size()); ++node) {
+        if (!is_dirichlet[node]) expected_triplets.emplace_back(node, node, 1.0);
+    }
+    Eigen::SparseMatrix<double> expected_right_inverse(
+        coarse_mesh_.nodes.size(), coarse_mesh_.nodes.size());
+    expected_right_inverse.setFromTriplets(
+        expected_triplets.begin(), expected_triplets.end());
+    const Eigen::SparseMatrix<double> fine_right_inverse =
+        fine_quasi_interpolation_ * fine_completion_.refinement.P_node;
+    const Eigen::SparseMatrix<double> audit_right_inverse =
+        cert_audit_quasi_interpolation_ * coarse_to_cert_audit_;
+    if ((fine_right_inverse - expected_right_inverse).norm()
+            > right_inverse_tolerance
+        || (audit_right_inverse - expected_right_inverse).norm()
+            > right_inverse_tolerance) {
+        throw std::runtime_error(
+            "three-level interpolation fails the production right-inverse check");
+    }
 }
 
 void AdaptiveMeshHierarchy::refine(const std::vector<int> &marked_elements) {
@@ -452,15 +527,46 @@ void AdaptiveMeshHierarchy::refine(const std::vector<int> &marked_elements) {
     const std::vector<std::uint64_t> parent_parent_ids = coarse_parent_ids_;
     RefineOutput refinement = bisect_newest_vertex(parent_mesh, marked_elements);
     std::vector<int> new_levels = refinement_child_levels(parent_mesh, parent_levels, refinement);
-
-    // This is both a capacity check and a proof that a coarse update cannot
-    // invalidate the currently fixed/local corrector mesh.
-    RefineOutput coarse_to_existing_fine = build_nested_mesh_embedding(
-        refinement.mesh, fine_completion_.refinement.mesh);
     const std::vector<int> parents = fine_element_parents(
         refinement.P_elem,
         static_cast<int>(refinement.mesh.elems.size()),
         static_cast<int>(parent_mesh.elems.size()));
+
+    // Keep at least one local NVB generation between a changed coarse parent
+    // and all of its fine descendants.  Previously the old fine mesh was used
+    // as a hard capacity ceiling: once H caught h, the embedding rebuild threw
+    // and adaptive refinement stopped.  Extend the master fine mesh here;
+    // refine_fine_elements also advances the cert-audit mesh as needed.
+    std::vector<int> required_fine_level(parent_mesh.elems.size(), -1);
+    for (int child = 0; child < static_cast<int>(new_levels.size()); ++child) {
+        const int parent = parents[child];
+        if (new_levels[child] > parent_levels[parent]) {
+            required_fine_level[parent] = std::max(
+                required_fine_level[parent], new_levels[child] + 1);
+        }
+    }
+    for (int iteration = 0; iteration < 64; ++iteration) {
+        std::vector<int> marked_fine;
+        for (int fine = 0;
+             fine < static_cast<int>(fine_parent_coarse_elements_.size());
+             ++fine) {
+            const int parent = fine_parent_coarse_elements_[fine];
+            if (required_fine_level[parent] >= 0
+                && fine_completion_.element_levels[fine]
+                       < required_fine_level[parent]) {
+                marked_fine.push_back(fine);
+            }
+        }
+        if (marked_fine.empty()) break;
+        refine_fine_elements(marked_fine);
+        if (iteration == 63) {
+            throw std::runtime_error(
+                "master fine and cert-audit meshes failed to expand with H");
+        }
+    }
+
+    RefineOutput coarse_to_existing_fine = build_nested_mesh_embedding(
+        refinement.mesh, fine_completion_.refinement.mesh);
 
     std::uint64_t candidate_next_id = next_element_id_;
     std::vector<std::uint64_t> new_ids(new_levels.size());
