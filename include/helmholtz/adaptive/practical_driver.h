@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -97,6 +98,11 @@ struct PracticalIterationRecord {
     double eta_H = 0.0;
     double theta_loc = 0.0;
     double U_practical = 0.0;
+    std::optional<double> reference_energy_error;
+    std::optional<double> reference_L2_error;
+    // Reporting-only candidate exported to WP5 after MARK/STOP has completed.
+    // The driver never receives an evaluation reference solution.
+    ComplexVector evaluation_candidate;
     double time_mesh_seconds = 0.0;
     double time_corrector_seconds = 0.0;
     double time_certificate_seconds = 0.0;
@@ -115,8 +121,20 @@ struct PracticalDriverResult {
     double theta_loc = 0.0;
     double U_practical = 0.0;
     std::vector<int> final_marked_H;
+    std::vector<double> final_element_eta_squared;
     std::vector<PracticalIterationRecord> journal;
 };
+
+struct PracticalTargetHit {
+    double target = 0.0;
+    std::optional<std::size_t> journal_index;
+};
+
+// Post-processing only: extract the first empirical reference-energy hit for
+// every target from one already completed trajectory.
+std::vector<PracticalTargetHit> extract_practical_target_hits(
+    const std::vector<PracticalIterationRecord> &journal,
+    const std::vector<double> &targets);
 
 class PracticalAdaptiveDriver {
 public:

@@ -372,7 +372,9 @@ WP5 论文 runner、schema v2、多容差轨迹抽取和最终 CSV/JSON/VTU 输�
 
 ### WP5：统一论文 runner 和精简配置
 
-建议增加可执行文件 `bench_helmholtz_adaptive_paper`，复用：
+**状态：已完成（2026-08-11，PALOD runner 与 v2 合同）。**
+
+已增加可执行文件 `bench_helmholtz_adaptive_paper`，复用：
 
 - `include/helmholtz/benchmarks/paper_cases.h`
 - `src/helmholtz/benchmarks/paper_cases.cpp`
@@ -386,6 +388,26 @@ WP5 论文 runner、schema v2、多容差轨迹抽取和最终 CSV/JSON/VTU 输�
 
 runner 必须支持从一条轨迹提取多个容差首次命中点。不要为
 \(10^{-1},5\times10^{-2},2\times10^{-2},10^{-2}\) 各自重跑一次。
+
+执行状态：legacy certified schema v1 保持不变；新增独立
+`PracticalPaperConfig`、`schema-v2.json` 和 `output-schema-v2.json`。v2 显式冻结
+`reference_mesh/ambient_mesh/reference_epoch`、`rho_star`、`theta_loc`、
+`C0_usr/C1_usr`、单一 `theta_H=0.5`、solver、quadrature、容差、资源上限、
+Git/build provenance 和论文 SHA-256，并严格拒绝旧 `theta_h/q_h` 等字段。
+run ID 覆盖完整 canonical v2 配置。runner 在数值工作前核对版本化论文哈希，当前
+只允许真实 `PALOD` backend；`HLOD-fixed/SLOD/UFEM/AFEM` 名称已保留在 v2 合同，
+但在实际 backend 完成前会明确拒绝，不能由 legacy proxy 冒充。
+
+每条 PALOD 运行先独立计算一次 evaluation reference solution，driver 本身只导出
+已完成 MARK/STOP 后的候选解；reference error 在 driver 返回后计算，其时间与
+reference solve 一并单列并从 method time 排除。四个共同误差目标通过
+`extract_practical_target_hits` 从同一 journal 提取首次命中点，未命中写
+`not_reached`。每个 run 生成 `iterations.csv`、`summary.csv`、`run.json`、
+`ell_history.csv` 和带 `eta_H_T`/availability 字段的 `final_mesh.vtu`；输出 claim
+固定为 `implementation-study`。配置 round-trip/hash/legacy-field rejection、单轨迹
+多目标提取、reference 隔离、真实 PALOD chain 与五文件产物均有回归测试；启用
+benchmarks/smoke 的 Release 全量回归为 41/41。这里的 WP5 完成不表示 E1 五方法
+backend 或正式生产矩阵已经完成；它们仍按后续实验阶段推进。
 
 ## 5. 简化后的数值实验矩阵
 

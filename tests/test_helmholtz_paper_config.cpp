@@ -475,6 +475,98 @@ void verify_status_contract() {
                     "unknown paper output metric was accepted");
 }
 
+PracticalPaperConfig sample_practical_config() {
+    PracticalPaperConfig config;
+    config.case_id = PaperCase::S;
+    config.method_id = PracticalPaperMethod::Palod;
+    config.wavenumber = 16.0;
+    config.initial_coarse_level = 2;
+    config.reference_level = 6;
+    config.ell0 = 1;
+    config.ell_max = 5;
+    config.boundary_beta = 1.25;
+    config.c_H = 0.45;
+    config.theta_loc = 0.2;
+    config.C0_usr = 1.1;
+    config.C1_usr = 1.3;
+    config.rho_star = 0.2;
+    config.petrov_mode = lod2d::helmholtz::HelmholtzPetrovMode::CorrectedTestOnly;
+    config.patch_solver_kind =
+        lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
+    config.work_limits.maximum_iterations = 40;
+    config.work_limits.maximum_H_steps = 8;
+    config.work_limits.maximum_unknowns = 500000;
+    config.work_limits.maximum_coarse_elements = 50000;
+    config.work_limits.maximum_ambient_elements = 500000;
+    config.work_limits.maximum_wall_seconds = 120.0;
+    config.timing_repeats = 3;
+    config.repeat_index = 2;
+    config.git_commit = "4abdb3c4154579dbdc1887ae9ba8ff77d9e5a810";
+    config.build_hash = "gcc-release-wp5";
+    config.manuscript_sha256 =
+        "03d83e0eb7128aa5ef00002c6dac110f548351e52e92e56d7adf709880854d20";
+    return config;
+}
+
+void verify_practical_v2_contract() {
+    const PracticalPaperConfig original = sample_practical_config();
+    const std::string encoded = canonical_json(original);
+    const PracticalPaperConfig decoded = parse_practical_paper_config(encoded);
+    require(decoded == original, "practical v2 JSON round trip lost fields");
+    require(canonical_json(decoded) == encoded,
+            "practical v2 canonical JSON changed after round trip");
+    require(make_run_id(decoded) == make_run_id(original),
+            "practical v2 run ID is not deterministic");
+
+    const auto driver = make_practical_driver_config(original);
+    require(driver.initial_coarse_level == original.initial_coarse_level &&
+                driver.reference_level == original.reference_level &&
+                driver.ell0 == original.ell0 && driver.ell_max == original.ell_max &&
+                driver.theta_loc == original.theta_loc &&
+                driver.C0_usr == original.C0_usr &&
+                driver.C1_usr == original.C1_usr &&
+                driver.theta_H == original.theta_H &&
+                driver.rho_star == original.rho_star &&
+                driver.tolerance_reference == 0.01 &&
+                driver.limits.maximum_unknowns ==
+                    original.work_limits.maximum_unknowns,
+            "practical v2 fields drifted while making the driver config");
+
+    PracticalPaperConfig changed = original;
+    changed.reference_level += 1;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v2 identity ignores reference_mesh level");
+    changed = original;
+    changed.rho_star = 0.3;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v2 identity ignores ambient ratio policy");
+    changed = original;
+    changed.C1_usr += 0.1;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v2 identity ignores user localization constant");
+    changed = original;
+    changed.work_limits.maximum_unknowns += 1;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v2 identity ignores work limits");
+
+    std::string with_legacy_theta_h = encoded;
+    with_legacy_theta_h.insert(with_legacy_theta_h.size() - 1, ",\"theta_h\":0.5");
+    require_invalid(
+        [&] { (void)parse_practical_paper_config(with_legacy_theta_h); },
+        "practical v2 accepted legacy theta_h");
+    std::string with_legacy_q_h = encoded;
+    with_legacy_q_h.insert(with_legacy_q_h.size() - 1, ",\"q_h\":0.25");
+    require_invalid(
+        [&] { (void)parse_practical_paper_config(with_legacy_q_h); },
+        "practical v2 accepted legacy q_h");
+
+    changed = original;
+    changed.method_id = PracticalPaperMethod::HlodFixed;
+    validate_practical_paper_config(changed);
+    require_invalid([&] { (void)make_practical_driver_config(changed); },
+                    "WP5 silently relabelled PALOD as an unimplemented baseline");
+}
+
 } // namespace
 
 int main() {
@@ -485,6 +577,7 @@ int main() {
         verify_numerical_backend_config_is_part_of_identity();
         verify_strict_validation();
         verify_status_contract();
+        verify_practical_v2_contract();
         std::cout << "Helmholtz paper configuration protocol passed\n";
         return 0;
     } catch (const std::exception &error) {

@@ -75,7 +75,8 @@ const PracticalIterationRecord &first_action(
 }
 
 void verify_real_reference_chain_converges() {
-    PracticalAdaptiveDriver driver(r1_problem(), base_config());
+    const PracticalDriverConfig config = base_config();
+    PracticalAdaptiveDriver driver(r1_problem(), config);
     const std::uint64_t reference_version =
         driver.hierarchy().reference_mesh_version();
     const std::size_t reference_nodes =
@@ -94,6 +95,15 @@ void verify_real_reference_chain_converges() {
             "real chain returned an invalid reference residual estimator");
     require(std::isfinite(result.theta_loc) && result.theta_loc >= 0.0,
             "real chain returned an invalid localization certificate");
+    const PracticalIterationRecord &complete =
+        first_action(result, PracticalDriverAction::Complete);
+    require(complete.evaluation_candidate.size() ==
+                static_cast<int>(driver.hierarchy().reference_mesh().nodes.size()) &&
+                complete.evaluation_candidate.allFinite(),
+            "evaluation-only candidate was not exported after the decision");
+    require(result.final_element_eta_squared.size() ==
+                driver.hierarchy().coarse_mesh().elems.size(),
+            "final eta_H,T field was not exported on the final coarse mesh");
     require(driver.hierarchy().reference_mesh_version() == reference_version &&
                 driver.hierarchy().reference_mesh().nodes.size() == reference_nodes,
             "a practical iteration changed the frozen reference space");
@@ -197,6 +207,22 @@ void verify_reference_capacity_stops_transactionally() {
             "failed H refinement partially committed a coarse mesh");
 }
 
+void verify_one_trajectory_multiple_target_extraction() {
+    std::vector<PracticalIterationRecord> journal(4);
+    journal[0].reference_energy_error = 0.4;
+    journal[1].reference_energy_error = 0.08;
+    journal[2].reference_energy_error = 0.018;
+    journal[3].reference_energy_error = 0.009;
+    const std::vector<PracticalTargetHit> hits =
+        extract_practical_target_hits(
+            journal, {0.1, 0.05, 0.02, 0.01, 0.001});
+    require(hits.size() == 5, "multi-target extraction lost a target");
+    require(hits[0].journal_index == 1 && hits[1].journal_index == 2 &&
+                hits[2].journal_index == 2 && hits[3].journal_index == 3 &&
+                !hits[4].journal_index,
+            "multi-target extraction did not select first hits from one trajectory");
+}
+
 } // namespace
 
 int main() {
@@ -205,6 +231,7 @@ int main() {
         verify_g4_localization_only_increases_global_ell();
         verify_estimator_driven_H_refinement_preserves_epoch();
         verify_reference_capacity_stops_transactionally();
+        verify_one_trajectory_multiple_target_extraction();
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_practical_driver failed: "
                   << error.what() << '\n';

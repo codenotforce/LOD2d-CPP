@@ -142,10 +142,35 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
     throw_unknown_enum("practical driver action", action);
 }
 
+std::vector<PracticalTargetHit> extract_practical_target_hits(
+    const std::vector<PracticalIterationRecord> &journal,
+    const std::vector<double> &targets) {
+    std::vector<PracticalTargetHit> result;
+    result.reserve(targets.size());
+    for (const double target : targets) {
+        if (!std::isfinite(target) || !(target > 0.0)) {
+            throw std::invalid_argument(
+                "Practical empirical-error targets must be positive and finite.");
+        }
+        PracticalTargetHit hit;
+        hit.target = target;
+        for (std::size_t index = 0; index < journal.size(); ++index) {
+            const auto error = journal[index].reference_energy_error;
+            if (error && std::isfinite(*error) && *error <= target) {
+                hit.journal_index = index;
+                break;
+            }
+        }
+        result.push_back(hit);
+    }
+    return result;
+}
+
 PracticalAdaptiveDriver::PracticalAdaptiveDriver(
     PracticalDriverProblem problem,
     PracticalDriverConfig config)
     : problem_(std::move(problem)), config_(std::move(config)), ell_(config_.ell0) {
+    start_ = std::chrono::steady_clock::now();
     validate_config();
     hierarchy_ = std::make_unique<ReferenceEpochHierarchy>(
         problem_.initial_mesh,
@@ -260,7 +285,6 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
     if (!journal_.empty()) {
         throw std::logic_error("PracticalAdaptiveDriver::run may only be called once.");
     }
-    start_ = std::chrono::steady_clock::now();
     PracticalIterationRecord initialization;
     initialization.state_before = PracticalDriverState::CoarseAdmissibility;
     initialization.state_after = PracticalDriverState::CoarseAdmissibility;
@@ -489,6 +513,7 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 record.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
                 record.time_estimator_seconds =
                     elapsed_seconds(estimator_begin, estimator_end);
+                record.evaluation_candidate = candidate;
                 std::string operation_limit;
                 if (work_limit_exceeded(operation_limit)) {
                     stop_reason = operation_limit;
@@ -605,6 +630,10 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
     result.theta_loc = theta_loc_;
     result.U_practical = U_practical_;
     result.final_marked_H = pending_marking_;
+    if (estimator_ && estimator_->element_eta_squared.size() ==
+                          hierarchy_->coarse_mesh().elems.size()) {
+        result.final_element_eta_squared = estimator_->element_eta_squared;
+    }
     result.journal = journal_;
     return result;
 }

@@ -71,6 +71,21 @@ endif()
 add_executable(bench_helmholtz_adaptive bench_helmholtz_adaptive.cpp)
 target_link_libraries(bench_helmholtz_adaptive PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_adaptive_paper
+    bench_helmholtz_adaptive_paper.cpp)
+target_link_libraries(
+    bench_helmholtz_adaptive_paper PRIVATE lod2d_core lod2d_visualization_io)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_adaptive_paper_v2_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v2.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/adaptive-paper-v2-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    set_tests_properties(helmholtz_adaptive_paper_v2_smoke
+        PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v2")
+endif()
+
 add_executable(bench_helmholtz_certified bench_helmholtz_certified.cpp)
 target_link_libraries(bench_helmholtz_certified PRIVATE lod2d_core)
 if(LOD2D_BUILD_TESTS)
