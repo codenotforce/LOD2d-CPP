@@ -262,6 +262,10 @@ Riesz 恒等式、局部平方和、Gram Hermitian/半正定性和 reference 单
 
 ### WP3：实现 ambient-to-reference retraction 和新证书
 
+**状态：已完成（2026-08-11）。** 新增独立 `reference_retraction` 模块；普通
+浮点结果固定标记为 `ImplementationStudy`，不声称严格 verified certificate。旧
+`Theta_total/Theta_h/delta_h/q_h` 链未接入 practical 路径。
+
 建议新增：
 
 - `include/helmholtz/adaptive/reference_retraction.h`
@@ -305,6 +309,25 @@ J_{\mathrm{ref}}\big|_{W_{\mathrm{amb}}}.
    小矩阵直接算
    \(\|Q_{\infty,h}^*-Q_{\ell,h}^*\|\)，证书给出论文要求的一侧控制。
 4. 禁止退回旧 `Theta_total/Theta_h/delta_h/q_h` 链作为正式自适应输入。
+
+实现记录：`J_ref` 使用每个自由 reference 节点选定的单参考三角形及其局部 L2 对偶
+基函数装配，是 Scott--Zhang 型局部投影；Dirichlet 行显式归零。
+`ReferenceRetraction` 实施
+`(I_ref-P_H,ref I_H,ref) J_ref`，并检查 projector identity、reference-kernel
+identity、`I_H R_ref=0` 和齐次迹。回缩 defect RHS 按论文的复数内积约定装配为
+`R_ref^* A_ref^* Y_ell`，随后复用 WP2 的 `AmbientDefectRiesz` 构造 `G_loc`。
+最大广义特征值使用可 warm start 的迭代求解，小维数自动与稠密解交叉检查。
+
+G3 小矩阵检查使用 R1、κ=4（仅算法单元验证，不是 E0 的 κ=16 校准）：
+`ell=1,2,3` 得到的 `Theta_loc` 依次为约
+`1.26534, 0.113464, 0`；ideal reference corrector 的回缩 defect 达到机器精度。
+直接 corrector 扰动为 `0.240449`，有限维定理上界为 `0.378976`，一侧方向通过；
+同时得到 `C_J≈1.61411`、`C_ret≈1.66631`、`c_W≈0.838429`、
+`C_sd≈0.251115`。测试还拒绝与 localized basis 不匹配的陈旧证书。证书 builder
+会从当前两层网格和 PDE 系数重装 operators 并比对，且要求 ambient
+子单元继承对应 reference 父单元系数；陈旧/错配 operators 同样 fail closed。WP2/WP3
+及旧 certificates/driver/backend 的 Release 定向回归为 5/5 通过；启用 benchmarks/smoke
+的最终 Release 全量回归为 39/39。
 
 ### WP4：新增 practical driver，不强行复用旧 certified 状态机
 

@@ -160,9 +160,10 @@ struct AmbientDefectLocalRiesz {
 };
 
 // Ambient-space operator data needed by WP3 to form G_loc.  defect_rhs has
-// one column per coarse input basis function; the returned Gram matrix is the
-// sum of the local b_kappa Gram contributions.  It is deliberately not an
-// eta_H result and contains no coarse-element marking.
+// one column per selected coarse input basis function (normally the free
+// coarse nodes); the returned Gram matrix is the sum of the local b_kappa
+// Gram contributions.  It is deliberately not an eta_H result and contains
+// no coarse-element marking.
 struct AmbientDefectRiesz {
     KernelRieszSpace space = KernelRieszSpace::AmbientDefect;
     KernelPatchPolicy policy;

@@ -86,6 +86,7 @@ add_library(lod2d_core STATIC
     src/helmholtz/adaptive/hierarchy.cpp
     src/helmholtz/adaptive/error_control.cpp
     src/helmholtz/adaptive/kernel_residual.cpp
+    src/helmholtz/adaptive/reference_retraction.cpp
     src/helmholtz/adaptive/verified_spectrum.cpp
     src/helmholtz/adaptive/certificates.cpp
     src/helmholtz/adaptive/certified_driver.cpp

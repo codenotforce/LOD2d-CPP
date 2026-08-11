@@ -77,6 +77,12 @@ add_executable(test_helmholtz_kernel_residual test_helmholtz_kernel_residual.cpp
 target_link_libraries(test_helmholtz_kernel_residual PRIVATE lod2d_core)
 add_test(NAME helmholtz_kernel_residual COMMAND test_helmholtz_kernel_residual)
 
+add_executable(test_helmholtz_reference_retraction
+    test_helmholtz_reference_retraction.cpp)
+target_link_libraries(test_helmholtz_reference_retraction PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_retraction
+    COMMAND test_helmholtz_reference_retraction)
+
 add_executable(test_verified_spectrum test_verified_spectrum.cpp)
 target_link_libraries(test_verified_spectrum PRIVATE lod2d_core)
 add_test(NAME verified_spectrum COMMAND test_verified_spectrum)

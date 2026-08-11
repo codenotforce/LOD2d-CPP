@@ -1102,16 +1102,15 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     KernelRieszSolver solver) {
     const int ambient_nodes = static_cast<int>(
         hierarchy.ambient_mesh().nodes.size());
-    const int coarse_nodes = static_cast<int>(
-        hierarchy.coarse_mesh().nodes.size());
+    const int input_columns = static_cast<int>(defect_rhs.cols());
     if (ambient_operators.system.rows() != ambient_nodes
         || ambient_operators.system.cols() != ambient_nodes
         || ambient_operators.stiffness.rows() != ambient_nodes
         || ambient_operators.mass.rows() != ambient_nodes
         || defect_rhs.rows() != ambient_nodes
-        || defect_rhs.cols() != coarse_nodes) {
+        || input_columns <= 0) {
         throw std::invalid_argument(
-            "ambient defect Riesz inputs do not match ambient_mesh and V_H");
+            "ambient defect Riesz inputs do not match ambient_mesh");
     }
     if (!(ambient_operators.wavenumber > 0.0) || !defect_rhs.allFinite()) {
         throw std::invalid_argument("ambient defect Riesz inputs are invalid");
@@ -1123,8 +1122,8 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     result.solver = solver;
     result.patches = build_kernel_riesz_patches(
         hierarchy, KernelRieszSpace::AmbientDefect, result.policy);
-    result.gram = ComplexMatrix::Zero(coarse_nodes, coarse_nodes);
-    result.column_eta_squared = Eigen::VectorXd::Zero(coarse_nodes);
+    result.gram = ComplexMatrix::Zero(input_columns, input_columns);
+    result.column_eta_squared = Eigen::VectorXd::Zero(input_columns);
     result.local_results.reserve(result.patches.size());
     result.local_gram_contributions.reserve(result.patches.size());
 
@@ -1134,10 +1133,10 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
         const Eigen::SparseMatrix<double> local_energy =
             restrict_sparse_matrix(global_energy, patch.discrete_dofs);
         ComplexMatrix representatives = ComplexMatrix::Zero(
-            patch.discrete_dofs.size(), coarse_nodes);
+            patch.discrete_dofs.size(), input_columns);
         AmbientDefectLocalRiesz local_result;
-        local_result.columns.reserve(coarse_nodes);
-        for (int column = 0; column < coarse_nodes; ++column) {
+        local_result.columns.reserve(input_columns);
+        for (int column = 0; column < input_columns; ++column) {
             const ComplexVector local_rhs = restrict_vector(
                 defect_rhs.col(column), patch.discrete_dofs);
             LocalKernelRieszResult local = solve_local_riesz(
@@ -1157,13 +1156,13 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     }
 
     ComplexMatrix accumulated = ComplexMatrix::Zero(
-        coarse_nodes, coarse_nodes);
+        input_columns, input_columns);
     for (const ComplexMatrix &contribution : result.local_gram_contributions)
         accumulated += contribution;
     result.gram_accumulation_relative_error =
         (result.gram - accumulated).norm()
         / std::max(1.0, result.gram.norm());
-    for (int column = 0; column < coarse_nodes; ++column) {
+    for (int column = 0; column < input_columns; ++column) {
         const double gram_diagonal = std::real(result.gram(column, column));
         result.local_square_sum_relative_error = std::max(
             result.local_square_sum_relative_error,
