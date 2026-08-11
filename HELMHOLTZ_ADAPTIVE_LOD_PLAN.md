@@ -266,7 +266,7 @@ Riesz 恒等式、局部平方和、Gram Hermitian/半正定性和 reference 单
 浮点结果固定标记为 `ImplementationStudy`，不声称严格 verified certificate。旧
 `Theta_total/Theta_h/delta_h/q_h` 链未接入 practical 路径。
 
-建议新增：
+已新增：
 
 - `include/helmholtz/adaptive/reference_retraction.h`
 - `src/helmholtz/adaptive/reference_retraction.cpp`
@@ -331,7 +331,9 @@ G3 小矩阵检查使用 R1、κ=4（仅算法单元验证，不是 E0 的 κ=16
 
 ### WP4：新增 practical driver，不强行复用旧 certified 状态机
 
-建议新增：
+**状态：已完成（2026-08-11）。**
+
+已新增：
 
 - `include/helmholtz/adaptive/practical_driver.h`
 - `src/helmholtz/adaptive/practical_driver.cpp`
@@ -353,6 +355,20 @@ Failed
 旧 `certified_driver.*` 和 `numerical_backend.*` 可保留做历史回归，但不应继续
 扩展成论文默认 runner。首版每次网格变化允许 full rebuild，以正确性优先；通过
 等价性测试后再加入 patch cache。
+
+执行状态（2026-08-11）：WP4/G4 已完成。独立的 `PracticalAdaptiveDriver` 已将
+`ReferenceEpochHierarchy`、reference residual Riesz、ambient-to-reference
+localization certificate 和 Petrov--Galerkin LOD solve 接成真实数值链；每次
+$H$-变化或 global \(\ell\) 变化均执行 full rebuild。状态与上列合同一致，动作
+枚举中不存在 corrector/reference fine-refinement；非退化的 `H4/reference6`
+回归锁定 `Theta_loc` 超阈值后的下一动作只能为 `IncreaseGlobalEll`。reference
+residual 的 Dörfler 标记会事务性加密 $H$ 并恢复 ambient ratio；固定 reference
+容量不足时返回 `ReferenceRefreshRequired`，不提交部分粗网格且不隐式刷新 epoch。
+工作步数、网格规模、$H$-步数和 wall time 均有结构化 `WorkLimitReached` 终止。
+新增测试同时覆盖正常收敛、G4、真实 estimator 驱动的 $H$-加密和 reference
+capacity exhaustion；启用 benchmarks/smoke 的 Release 全量回归为 40/40。
+WP5 论文 runner、schema v2、多容差轨迹抽取和最终 CSV/JSON/VTU 输出尚未开始，
+因此这里的完成只表示 practical 算法合同与状态机完成，不表示生产实验完成。
 
 ### WP5：统一论文 runner 和精简配置
 

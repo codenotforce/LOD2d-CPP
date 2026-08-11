@@ -83,6 +83,12 @@ target_link_libraries(test_helmholtz_reference_retraction PRIVATE lod2d_core)
 add_test(NAME helmholtz_reference_retraction
     COMMAND test_helmholtz_reference_retraction)
 
+add_executable(test_helmholtz_practical_driver
+    test_helmholtz_practical_driver.cpp)
+target_link_libraries(test_helmholtz_practical_driver PRIVATE lod2d_core)
+add_test(NAME helmholtz_practical_driver
+    COMMAND test_helmholtz_practical_driver)
+
 add_executable(test_verified_spectrum test_verified_spectrum.cpp)
 target_link_libraries(test_verified_spectrum PRIVATE lod2d_core)
 add_test(NAME verified_spectrum COMMAND test_verified_spectrum)
