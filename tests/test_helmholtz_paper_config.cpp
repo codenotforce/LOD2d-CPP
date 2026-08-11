@@ -576,6 +576,23 @@ void verify_practical_v2_contract() {
     validate_practical_paper_config(changed);
     require_invalid([&] { (void)make_practical_driver_config(changed); },
                     "UFEM was silently relabelled as a LOD backend");
+
+    require(standard_lod_prior_ell(8.0) == 3
+                && standard_lod_prior_ell(16.0) == 4
+                && standard_lod_prior_ell(32.0) == 5,
+            "frozen SLOD c_prior=1 policy drifted");
+    changed = original;
+    changed.method_id = PracticalPaperMethod::Slod;
+    changed.ell0 = standard_lod_prior_ell(changed.wavenumber);
+    changed.ell_max = changed.ell0;
+    validate_practical_paper_config(changed);
+    require_invalid([&] { (void)make_practical_driver_config(changed); },
+                    "SLOD was silently relabelled as the adaptive LOD backend");
+    changed.ell_max += 1;
+    require_invalid([&] { validate_practical_paper_config(changed); },
+                    "SLOD accepted an ell that differs from ceil(log2(kappa))");
+    require_invalid([&] { (void)standard_lod_prior_ell(0.0); },
+                    "SLOD accepted a nonpositive wavenumber");
 }
 
 } // namespace

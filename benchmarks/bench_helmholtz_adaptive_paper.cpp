@@ -263,6 +263,146 @@ PaperExecution run_uniform_fem_trajectory(
     return execution;
 }
 
+PaperExecution run_standard_lod_trajectory(
+    const PracticalPaperConfig &config,
+    const PaperCaseData &data) {
+    const int prior_ell = standard_lod_prior_ell(config.wavenumber);
+    ReferenceEpochHierarchy hierarchy(
+        data.initial_mesh, config.initial_coarse_level, config.reference_level);
+    const ComplexVector reference_load = assemble_helmholtz_load(
+        hierarchy.reference_mesh(), data.source, config.quadrature,
+        data.quadrature_context);
+    PaperExecution execution;
+    const auto start = std::chrono::steady_clock::now();
+    auto cumulative_seconds = [&] {
+        return elapsed_seconds(start, std::chrono::steady_clock::now());
+    };
+    auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
+        record.reference_epoch = hierarchy.reference_epoch();
+        record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
+        record.reference_nodes = hierarchy.reference_mesh().nodes.size();
+        record.coarse_elements = hierarchy.coarse_mesh().elems.size();
+        record.ell = prior_ell;
+        record.kappa_H_max = config.wavenumber
+            * max_element_diameter(hierarchy.coarse_mesh());
+        record.time_total_cumulative_seconds = cumulative_seconds();
+    };
+
+    PracticalIterationRecord initialization;
+    initialization.sequence = execution.result.journal.size();
+    initialization.state_before = PracticalDriverState::CoarseAdmissibility;
+    initialization.state_after = PracticalDriverState::SolveAndEstimate;
+    initialization.action = PracticalDriverAction::InitializeReferenceEpoch;
+    initialization.detail =
+        "initialized fixed evaluation-reference epoch for uniform standard LOD";
+    fill_mesh_fields(initialization);
+    execution.result.journal.push_back(std::move(initialization));
+
+    std::size_t refinements = 0;
+    while (true) {
+        const double wall_seconds = cumulative_seconds();
+        const bool wall_limited = config.work_limits.maximum_wall_seconds > 0.0
+            && wall_seconds >= config.work_limits.maximum_wall_seconds;
+        if (execution.result.journal.size()
+                >= config.work_limits.maximum_iterations
+            || hierarchy.reference_mesh().nodes.size()
+                > config.work_limits.maximum_unknowns
+            || hierarchy.coarse_mesh().elems.size()
+                > config.work_limits.maximum_coarse_elements
+            || wall_limited) {
+            execution.result.state = PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason =
+                "standard LOD trajectory reached a configured work limit";
+            break;
+        }
+
+        HelmholtzProblemConfig model_config;
+        model_config.H = *std::min_element(
+            hierarchy.coarse_levels().begin(), hierarchy.coarse_levels().end());
+        model_config.h = config.reference_level;
+        model_config.ell = prior_ell;
+        model_config.wavenumber = config.wavenumber;
+        model_config.boundary_beta = config.boundary_beta;
+        model_config.mode = config.petrov_mode;
+        model_config.initial_mesh = data.initial_mesh;
+        model_config.patch_solver.kind = config.patch_solver_kind;
+        model_config.patch_solver.gmres.relative_tolerance =
+            config.tolerances.linear_relative_residual;
+        model_config.quadrature = config.quadrature;
+        model_config.quadrature_context = data.quadrature_context;
+        const auto build_begin = std::chrono::steady_clock::now();
+        HelmholtzLodModel model = HelmholtzLodModel::build_adaptive(
+            model_config,
+            hierarchy.coarse_mesh(), hierarchy.coarse_levels(),
+            hierarchy.reference_mesh(), hierarchy.reference_element_levels());
+        const auto build_end = std::chrono::steady_clock::now();
+
+        const auto solve_begin = std::chrono::steady_clock::now();
+        const ComplexVector candidate = model.solve_load(reference_load).fine_values;
+        const auto solve_end = std::chrono::steady_clock::now();
+
+        PracticalIterationRecord solved;
+        solved.sequence = execution.result.journal.size();
+        solved.state_before = PracticalDriverState::SolveAndEstimate;
+        solved.state_after = refinements >= config.work_limits.maximum_H_steps
+            ? PracticalDriverState::WorkLimitReached
+            : PracticalDriverState::RefineCoarse;
+        solved.action = PracticalDriverAction::SolveStandardLod;
+        solved.evaluation_candidate = candidate;
+        solved.rebuilt_correctors = model.correctors().primal.size();
+        solved.time_corrector_seconds =
+            model.build_timings().correctors_ms / 1000.0;
+        solved.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
+        solved.detail =
+            "rebuilt and solved standard LOD on the current uniform coarse mesh"
+            "; full model build seconds="
+            + numeric(elapsed_seconds(build_begin, build_end));
+        fill_mesh_fields(solved);
+        execution.result.journal.push_back(std::move(solved));
+
+        if (refinements >= config.work_limits.maximum_H_steps) {
+            execution.result.state = PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason =
+                "completed configured standard LOD refinement trajectory";
+            break;
+        }
+
+        std::vector<int> marked(hierarchy.coarse_mesh().elems.size());
+        std::iota(marked.begin(), marked.end(), 0);
+        const auto mesh_begin = std::chrono::steady_clock::now();
+        const ReferenceEpochRefinementResult refined =
+            hierarchy.refine_coarse_preserving_reference(marked);
+        const auto mesh_end = std::chrono::steady_clock::now();
+        if (refined.status
+            == ReferenceEpochRefinementStatus::ReferenceRefreshRequired) {
+            execution.result.state =
+                PracticalDriverState::ReferenceRefreshRequired;
+            execution.result.stop_reason = refined.detail;
+            break;
+        }
+        if (!refined.changed()) {
+            throw std::runtime_error(
+                "standard LOD uniform marking produced no coarse refinement");
+        }
+        ++refinements;
+        PracticalIterationRecord refined_record;
+        refined_record.sequence = execution.result.journal.size();
+        refined_record.state_before = PracticalDriverState::RefineCoarse;
+        refined_record.state_after = PracticalDriverState::SolveAndEstimate;
+        refined_record.action = PracticalDriverAction::RefineUniformLod;
+        refined_record.marked_H = marked.size();
+        refined_record.time_mesh_seconds = elapsed_seconds(mesh_begin, mesh_end);
+        refined_record.detail =
+            "uniformly refined every standard LOD coarse element";
+        fill_mesh_fields(refined_record);
+        execution.result.journal.push_back(std::move(refined_record));
+    }
+    execution.result.ell = prior_ell;
+    execution.result.H_steps = refinements;
+    execution.final_mesh = hierarchy.coarse_mesh();
+    return execution;
+}
+
 std::pair<double, double> relative_reference_errors(
     const HelmholtzOperators &operators,
     const ComplexVector &reference,
@@ -322,7 +462,11 @@ void write_iterations(
            "reference_energy_error,reference_L2_error,marked_H,rebuilt_correctors,"
            "ambient_refined_elements,time_mesh,time_corrector,time_certificate,time_solve,"
            "time_estimator,time_total_cumulative,peak_memory_mb\n";
-    const bool lod_method = config.method_id == PracticalPaperMethod::Palod
+    const bool ell_method = config.method_id == PracticalPaperMethod::Palod
+        || config.method_id == PracticalPaperMethod::HlodFixed
+        || config.method_id == PracticalPaperMethod::Slod;
+    const bool adaptive_lod_method =
+        config.method_id == PracticalPaperMethod::Palod
         || config.method_id == PracticalPaperMethod::HlodFixed;
     const bool localization_method =
         config.method_id == PracticalPaperMethod::Palod;
@@ -334,12 +478,12 @@ void write_iterations(
             << csv_string(record.detail) << ',' << record.coarse_nodes << ','
             << record.reference_nodes << ','
             << (localization_method ? std::to_string(record.ambient_nodes) : "")
-            << ',' << (lod_method ? std::to_string(record.ell) : "") << ','
+            << ',' << (ell_method ? std::to_string(record.ell) : "") << ','
             << numeric(record.kappa_H_max) << ",,"
             << (localization_method ? numeric(record.rho_ambient) : "") << ','
-            << (lod_method ? numeric(record.eta_H) : "") << ','
+            << (adaptive_lod_method ? numeric(record.eta_H) : "") << ','
             << (localization_method ? numeric(record.theta_loc) : "") << ','
-            << (lod_method ? numeric(record.U_practical) : "") << ','
+            << (adaptive_lod_method ? numeric(record.U_practical) : "") << ','
             << optional_numeric(record.reference_energy_error) << ','
             << optional_numeric(record.reference_L2_error) << ','
             << record.marked_H << ',' << record.rebuilt_correctors << ','
@@ -380,14 +524,16 @@ void write_summary(
                 rebuilt += record->rebuilt_correctors;
                 ambient_refined += record->ambient_refined_elements;
             }
-            const bool lod_method =
+            const bool adaptive_lod_method =
                 config.method_id == PracticalPaperMethod::Palod
                 || config.method_id == PracticalPaperMethod::HlodFixed;
+            const bool ell_method = adaptive_lod_method
+                || config.method_id == PracticalPaperMethod::Slod;
             out << "reached," << hit->sequence << ','
                 << numeric(*hit->reference_energy_error) << ','
-                << (lod_method ? numeric(hit->U_practical) : "") << ','
+                << (adaptive_lod_method ? numeric(hit->U_practical) : "") << ','
                 << hit->coarse_nodes << ','
-                << (lod_method ? std::to_string(hit->ell) : "") << ','
+                << (ell_method ? std::to_string(hit->ell) : "") << ','
                 << rebuilt << ',' << ambient_refined << ','
                 << numeric(hit->time_total_cumulative_seconds)
                 << '\n';
@@ -403,7 +549,10 @@ void write_ell_history(
     if (!out) throw std::runtime_error("cannot write " + path.string());
     out << "iteration,action,ell,Theta_loc,rebuilt_correctors,time_corrector,time_certificate\n";
     for (const PracticalIterationRecord &record : result.journal) {
-        if (record.state_before != PracticalDriverState::LocalizationCheck) continue;
+        if (record.state_before != PracticalDriverState::LocalizationCheck
+            && record.action != PracticalDriverAction::SolveStandardLod) {
+            continue;
+        }
         out << record.sequence << ',' << practical_driver_action_name(record.action) << ','
             << record.ell << ','
             << (config.method_id == PracticalPaperMethod::Palod
@@ -478,9 +627,10 @@ int main(const int argc, char **argv) {
             parse_practical_paper_config(read_text(arguments.config));
         if (config.method_id != PracticalPaperMethod::Palod
             && config.method_id != PracticalPaperMethod::HlodFixed
+            && config.method_id != PracticalPaperMethod::Slod
             && config.method_id != PracticalPaperMethod::Ufem) {
             throw std::invalid_argument(
-                "paper runner currently executes PALOD, HLOD-fixed, and UFEM; other baselines remain pending");
+                "paper runner currently executes PALOD, HLOD-fixed, SLOD, and UFEM; AFEM remains pending");
         }
         const std::string frozen_hash = first_token(read_text(arguments.manuscript_baseline));
         if (frozen_hash != config.manuscript_sha256) {
@@ -506,6 +656,8 @@ int main(const int argc, char **argv) {
         PaperExecution execution;
         if (config.method_id == PracticalPaperMethod::Ufem) {
             execution = run_uniform_fem_trajectory(config, data);
+        } else if (config.method_id == PracticalPaperMethod::Slod) {
+            execution = run_standard_lod_trajectory(config, data);
         } else {
             PracticalDriverProblem problem;
             problem.initial_mesh = data.initial_mesh;
@@ -530,7 +682,10 @@ int main(const int argc, char **argv) {
             record.evaluation_candidate.resize(0);
         }
         const auto evaluation_end = std::chrono::steady_clock::now();
-        if (config.method_id == PracticalPaperMethod::Ufem
+        const bool fixed_empirical_trajectory =
+            config.method_id == PracticalPaperMethod::Ufem
+            || config.method_id == PracticalPaperMethod::Slod;
+        if (fixed_empirical_trajectory
             && result.state == PracticalDriverState::WorkLimitReached) {
             const double smallest_target = config.relative_energy_targets.back();
             const bool reached = std::any_of(
@@ -566,14 +721,16 @@ int main(const int argc, char **argv) {
         if (arguments.check) {
             const bool acceptable_state =
                 result.state == PracticalDriverState::Converged
-                || (config.method_id == PracticalPaperMethod::Ufem
+                || (fixed_empirical_trajectory
                     && result.state == PracticalDriverState::WorkLimitReached);
             if (!acceptable_state ||
                 std::none_of(result.journal.begin(), result.journal.end(),
                              [](const PracticalIterationRecord &record) {
                                  return record.action == PracticalDriverAction::Complete
                                      || record.action
-                                         == PracticalDriverAction::SolveUniformFem;
+                                         == PracticalDriverAction::SolveUniformFem
+                                     || record.action
+                                         == PracticalDriverAction::SolveStandardLod;
                              })) {
                 throw std::runtime_error(
                     "paper smoke did not complete a real method chain");
@@ -622,6 +779,33 @@ int main(const int argc, char **argv) {
                     || has_action(PracticalDriverAction::FormCoarseMarking))) {
                 throw std::runtime_error(
                     "UFEM smoke did not remain on the uniform conforming FEM path");
+            }
+            if (config.method_id == PracticalPaperMethod::Slod) {
+                const int expected_ell =
+                    standard_lod_prior_ell(config.wavenumber);
+                const bool wrong_ell = std::any_of(
+                    result.journal.begin(), result.journal.end(),
+                    [expected_ell](const PracticalIterationRecord &record) {
+                        return record.action
+                                   == PracticalDriverAction::SolveStandardLod
+                            && record.ell != expected_ell;
+                    });
+                const bool paid_adaptive_cost = std::any_of(
+                    result.journal.begin(), result.journal.end(),
+                    [](const PracticalIterationRecord &record) {
+                        return record.time_certificate_seconds != 0.0
+                            || record.time_estimator_seconds != 0.0
+                            || record.ambient_refined_elements != 0;
+                    });
+                if (!has_action(PracticalDriverAction::SolveStandardLod)
+                    || !has_action(PracticalDriverAction::RefineUniformLod)
+                    || has_action(PracticalDriverAction::AcceptLocalization)
+                    || has_action(PracticalDriverAction::AcceptFixedEll)
+                    || has_action(PracticalDriverAction::FormCoarseMarking)
+                    || wrong_ell || paid_adaptive_cost) {
+                    throw std::runtime_error(
+                        "SLOD smoke did not remain on the frozen-prior uniform LOD path");
+                }
             }
             for (const char *file : {
                      "iterations.csv", "summary.csv", "ell_history.csv",

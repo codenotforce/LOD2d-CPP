@@ -145,6 +145,9 @@ in [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md).
 - two-sided Petrov-Galerkin LOD;
 - direct saddle, explicit Schur, and experimental shifted-GMRES patch solvers;
 - experimental two-level hybrid Schwarz solvers;
+- a practical-paper runner with real PALOD, fixed-global-ell HLOD, uniform
+  standard LOD (`SLOD`, frozen `ell=ceil(log2(kappa))`), and uniform P1 FEM
+  trajectories on one evaluation-reference epoch;
 - a legacy fixed-fine-space H-only calibration driver retained as
   `HLOD-proxy` for diagnostics;
 - certified-adaptive WP0-WP5 library infrastructure described below.

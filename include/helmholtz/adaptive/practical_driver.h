@@ -31,6 +31,8 @@ enum class PracticalDriverAction {
     IncreaseGlobalEll,
     AcceptLocalization,
     AcceptFixedEll,
+    SolveStandardLod,
+    RefineUniformLod,
     SolveUniformFem,
     RefineUniformFem,
     FormCoarseMarking,

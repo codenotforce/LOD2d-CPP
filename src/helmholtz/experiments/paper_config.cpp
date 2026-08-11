@@ -1177,6 +1177,17 @@ PracticalPaperMethod parse_practical_paper_method(const std::string_view text) {
         "unknown practical paper method: " + std::string(text));
 }
 
+int standard_lod_prior_ell(const double wavenumber) {
+    if (!std::isfinite(wavenumber) || !(wavenumber > 0.0)) {
+        throw std::invalid_argument(
+            "standard LOD prior requires a positive finite wavenumber");
+    }
+    constexpr double prior_coefficient = 1.0;
+    return std::max(
+        1, static_cast<int>(std::ceil(
+               prior_coefficient * std::log2(wavenumber))));
+}
+
 void validate_practical_paper_config(const PracticalPaperConfig &config) {
     if (config.schema_version != practical_paper_schema_version) {
         throw std::invalid_argument("unsupported practical paper schema version");
@@ -1202,6 +1213,13 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         && config.ell0 != config.ell_max) {
         throw std::invalid_argument(
             "HLOD-fixed requires one frozen ell value (ell0 == ell_max)");
+    }
+    if (config.method_id == PracticalPaperMethod::Slod) {
+        const int expected_ell = standard_lod_prior_ell(config.wavenumber);
+        if (config.ell0 != expected_ell || config.ell_max != expected_ell) {
+            throw std::invalid_argument(
+                "SLOD requires ell0 == ell_max == ceil(log2(kappa))");
+        }
     }
     if (config.method_id == PracticalPaperMethod::Ufem
         && (config.ell0 != 0 || config.ell_max != 0)) {

@@ -224,6 +224,8 @@ struct PracticalPaperConfig {
 
 std::string_view to_string(PracticalPaperMethod id);
 PracticalPaperMethod parse_practical_paper_method(std::string_view text);
+// Frozen E1 protocol: c_prior = 1 in ell = ceil(c_prior * log2(kappa)).
+int standard_lod_prior_ell(double wavenumber);
 void validate_practical_paper_config(const PracticalPaperConfig &config);
 adaptive::PracticalDriverConfig make_practical_driver_config(
     const PracticalPaperConfig &config);

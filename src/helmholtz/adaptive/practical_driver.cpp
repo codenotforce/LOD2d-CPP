@@ -128,6 +128,10 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
         return "AcceptLocalization";
     case PracticalDriverAction::AcceptFixedEll:
         return "AcceptFixedEll";
+    case PracticalDriverAction::SolveStandardLod:
+        return "SolveStandardLod";
+    case PracticalDriverAction::RefineUniformLod:
+        return "RefineUniformLod";
     case PracticalDriverAction::SolveUniformFem:
         return "SolveUniformFem";
     case PracticalDriverAction::RefineUniformFem:
