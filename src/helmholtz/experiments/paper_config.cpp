@@ -1198,6 +1198,16 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         config.ell0 < 0 || config.ell_max < config.ell0) {
         throw std::invalid_argument("practical mesh levels or ell limits are invalid");
     }
+    if (config.method_id == PracticalPaperMethod::HlodFixed
+        && config.ell0 != config.ell_max) {
+        throw std::invalid_argument(
+            "HLOD-fixed requires one frozen ell value (ell0 == ell_max)");
+    }
+    if (config.method_id == PracticalPaperMethod::Ufem
+        && (config.ell0 != 0 || config.ell_max != 0)) {
+        throw std::invalid_argument(
+            "UFEM requires ell0 == ell_max == 0");
+    }
     const std::array<double, 7> positive{
         config.boundary_beta, config.c_H, config.theta_loc,
         config.C0_usr, config.C1_usr, config.theta_H, config.rho_star};
@@ -1267,9 +1277,10 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
 adaptive::PracticalDriverConfig make_practical_driver_config(
     const PracticalPaperConfig &config) {
     validate_practical_paper_config(config);
-    if (config.method_id != PracticalPaperMethod::Palod) {
+    if (config.method_id != PracticalPaperMethod::Palod
+        && config.method_id != PracticalPaperMethod::HlodFixed) {
         throw std::invalid_argument(
-            "only PALOD is executable in the WP5 practical driver");
+            "the practical LOD driver executes only PALOD and HLOD-fixed");
     }
     adaptive::PracticalDriverConfig result;
     result.initial_coarse_level = config.initial_coarse_level;
@@ -1285,6 +1296,10 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
     result.theta_H = config.theta_H;
     result.rho_star = config.rho_star;
     result.tolerance_reference = config.relative_energy_targets.back();
+    result.localization_policy = config.method_id
+            == PracticalPaperMethod::HlodFixed
+        ? adaptive::PracticalLocalizationPolicy::FixedGlobalEll
+        : adaptive::PracticalLocalizationPolicy::AdaptiveGlobalEll;
     result.mode = config.petrov_mode;
     result.patch_solver.kind = config.patch_solver_kind;
     result.patch_solver.gmres.relative_tolerance =

@@ -30,6 +30,9 @@ enum class PracticalDriverAction {
     AcceptCoarse,
     IncreaseGlobalEll,
     AcceptLocalization,
+    AcceptFixedEll,
+    SolveUniformFem,
+    RefineUniformFem,
     FormCoarseMarking,
     RefineCoarse,
     Complete,
@@ -54,6 +57,11 @@ struct PracticalWorkLimits {
     double maximum_wall_seconds = 0.0;
 };
 
+enum class PracticalLocalizationPolicy {
+    AdaptiveGlobalEll,
+    FixedGlobalEll,
+};
+
 struct PracticalDriverConfig {
     int initial_coarse_level = 1;
     int reference_level = 5;
@@ -68,6 +76,8 @@ struct PracticalDriverConfig {
     double theta_H = 0.5;
     double rho_star = 0.25;
     double tolerance_reference = 1e-2;
+    PracticalLocalizationPolicy localization_policy =
+        PracticalLocalizationPolicy::AdaptiveGlobalEll;
     HelmholtzPetrovMode mode = HelmholtzPetrovMode::TwoSided;
     HelmholtzPatchSolverConfig patch_solver;
     KernelRieszSolver riesz_solver = KernelRieszSolver::SaddlePoint;

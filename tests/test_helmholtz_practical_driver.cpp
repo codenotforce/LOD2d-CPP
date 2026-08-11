@@ -147,6 +147,38 @@ void verify_g4_localization_only_increases_global_ell() {
             "the action after a failed localization observation was not another localization check");
 }
 
+void verify_fixed_ell_skips_localization_certificate() {
+    PracticalDriverConfig config = base_config();
+    config.localization_policy = PracticalLocalizationPolicy::FixedGlobalEll;
+    config.ell0 = 2;
+    config.ell_max = 2;
+    config.theta_loc = 1e-30;
+    PracticalAdaptiveDriver driver(r1_problem(), config);
+    const PracticalDriverResult result = driver.run();
+
+    require(result.state == PracticalDriverState::Converged,
+            "fixed-ell HLOD chain did not complete");
+    require(result.ell == 2,
+            "fixed-ell HLOD changed the calibrated oversampling level");
+    require(count_action(result, PracticalDriverAction::IncreaseGlobalEll) == 0,
+            "fixed-ell HLOD entered the PALOD localization branch");
+    const PracticalIterationRecord &accepted =
+        first_action(result, PracticalDriverAction::AcceptFixedEll);
+    require(count_action(result, PracticalDriverAction::AcceptLocalization) == 0,
+            "fixed-ell HLOD falsely recorded localization acceptance");
+    require(accepted.theta_loc == 0.0
+                && accepted.time_certificate_seconds <= 1e-12,
+            "fixed-ell HLOD computed a localization certificate");
+    require(driver.hierarchy().ambient_mesh().nodes.size()
+                == driver.hierarchy().reference_mesh().nodes.size()
+                && std::all_of(
+                    result.journal.begin(), result.journal.end(),
+                    [](const PracticalIterationRecord &record) {
+                        return record.ambient_refined_elements == 0;
+                    }),
+            "fixed-ell HLOD paid for an unused ambient shadow refinement");
+}
+
 void verify_estimator_driven_H_refinement_preserves_epoch() {
     PracticalDriverConfig config = base_config();
     config.reference_level = 5;
@@ -229,6 +261,7 @@ int main() {
     try {
         verify_real_reference_chain_converges();
         verify_g4_localization_only_increases_global_ell();
+        verify_fixed_ell_skips_localization_certificate();
         verify_estimator_driven_H_refinement_preserves_epoch();
         verify_reference_capacity_stops_transactionally();
         verify_one_trajectory_multiple_target_extraction();

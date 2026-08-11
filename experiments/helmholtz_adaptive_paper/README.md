@@ -65,9 +65,13 @@ structured stop codes and never silently fall back to the legacy H-only proxy.
 `HLOD-proxy` is intentionally a legacy diagnostic method only. It is not a v2
 paper comparator and must not be relabelled as PALOD or HLOD-fixed.
 
-WP5 executes PALOD only. `HLOD-fixed`, `SLOD`, `UFEM`, and `AFEM` are reserved
-v2 method names, but the runner rejects them until their real backends share
-the same reference/error/timing contract. It never relabels an old proxy.
+The v2 runner now executes real `PALOD`, `HLOD-fixed`, and `UFEM` paths.
+`HLOD-fixed` reuses the reference-kernel estimator and H marking with one
+frozen global ell, while skipping the PALOD localization certificate and
+ambient-shadow work. `UFEM` performs uniform conforming P1 refinements and
+solves, then prolongs every candidate to the same fixed reference space for
+post-processing. `SLOD` and `AFEM` remain reserved until their real backends
+share this contract. The runner never relabels an old proxy.
 
 ## Current Implementation Boundary
 
@@ -81,7 +85,9 @@ the same reference/error/timing contract. It never relabels an old proxy.
 | Ambient-to-reference retraction and localization certificate | Implemented in WP3 |
 | Independent practical driver state machine | Implemented in WP4 |
 | PALOD paper runner and five-file artifact contract | Implemented in WP5 |
-| HLOD-fixed/SLOD/UFEM/AFEM paper backends | Pending production experiment work |
+| HLOD-fixed paper backend without localization/certificate cost | Implemented |
+| UFEM uniform conforming P1 trajectory backend | Implemented |
+| SLOD/AFEM paper backends | Pending production experiment work |
 | Six-method production matrix and paper tables/figures | Not run |
 
 Do not publish paper-result claims from the development smoke configuration.
@@ -106,8 +112,10 @@ ctest --test-dir build \
   --output-on-failure
 ```
 
-The v2 end-to-end smoke is registered as
-`helmholtz_adaptive_paper_v2_smoke`. A direct run has the form:
+The three implemented v2 paths have end-to-end smoke tests:
+`helmholtz_adaptive_paper_v2_smoke`,
+`helmholtz_hlod_fixed_paper_v2_smoke`, and
+`helmholtz_ufem_paper_v2_smoke`. A direct PALOD run has the form:
 
 ```bash
 benchmarks/bench_helmholtz_adaptive_paper \

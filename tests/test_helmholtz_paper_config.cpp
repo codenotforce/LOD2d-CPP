@@ -562,9 +562,20 @@ void verify_practical_v2_contract() {
 
     changed = original;
     changed.method_id = PracticalPaperMethod::HlodFixed;
+    changed.ell_max = changed.ell0;
+    validate_practical_paper_config(changed);
+    const auto hlod_driver = make_practical_driver_config(changed);
+    require(hlod_driver.localization_policy
+                == lod2d::helmholtz::adaptive::
+                    PracticalLocalizationPolicy::FixedGlobalEll
+                && hlod_driver.ell0 == hlod_driver.ell_max,
+            "HLOD-fixed did not map to the real fixed-ell backend");
+    changed.method_id = PracticalPaperMethod::Ufem;
+    changed.ell0 = 0;
+    changed.ell_max = 0;
     validate_practical_paper_config(changed);
     require_invalid([&] { (void)make_practical_driver_config(changed); },
-                    "WP5 silently relabelled PALOD as an unimplemented baseline");
+                    "UFEM was silently relabelled as a LOD backend");
 }
 
 } // namespace

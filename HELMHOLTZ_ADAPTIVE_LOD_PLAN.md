@@ -395,8 +395,11 @@ runner 必须支持从一条轨迹提取多个容差首次命中点。不要为
 `C0_usr/C1_usr`、单一 `theta_H=0.5`、solver、quadrature、容差、资源上限、
 Git/build provenance 和论文 SHA-256，并严格拒绝旧 `theta_h/q_h` 等字段。
 run ID 覆盖完整 canonical v2 配置。runner 在数值工作前核对版本化论文哈希，当前
-只允许真实 `PALOD` backend；`HLOD-fixed/SLOD/UFEM/AFEM` 名称已保留在 v2 合同，
-但在实际 backend 完成前会明确拒绝，不能由 legacy proxy 冒充。
+允许真实 `PALOD`、`HLOD-fixed` 和 `UFEM` backend；`SLOD/AFEM` 名称保留在 v2
+合同，但在实际 backend 完成前会明确拒绝，不能由 legacy proxy 冒充。
+`HLOD-fixed` 与 PALOD 共用 reference-kernel `eta_H` 和 H 标记，但固定全局 ell，且
+不计算 `Theta_loc`、ambient certificate 或 ambient shadow refinement；`UFEM` 只做
+一致 conforming P1 加密/求解，并把候选解延拓到同一固定 reference 空间后事后计算误差。
 
 每条 PALOD 运行先独立计算一次 evaluation reference solution，driver 本身只导出
 已完成 MARK/STOP 后的候选解；reference error 在 driver 返回后计算，其时间与
@@ -443,6 +446,14 @@ ambient-to-reference 一侧上界控制。局部 constraint、Riesz stationarity
 `ell=1 -> IncreaseGlobalEll -> ell=2 -> Complete`，未发生 H 加密或 reference refresh。
 新增 `helmholtz_e0_R1_k16_calibration` Release gate 后，完整回归为 42/42；该 gate
 独立重建 CSV/JSON 和 driver smoke，当前耗时约 150 秒。
+
+E1 backend 准备状态（2026-08-12）：真实 `HLOD-fixed` 与 `UFEM` 已接入同一 v2
+paper runner。前者强制 `ell0==ell_max`，复用 `eta_H`/H 标记但完全跳过 PALOD 的
+localization certificate 和 ambient refinement；后者执行一致 conforming P1 加密/求解，
+只在运行后将候选解与同一 reference solution 比较。两条路径都有方法专属 action、
+fail-closed smoke 和五文件输出；不适用的 `Theta_loc/eta_H/U_prac/ell/ambient` 字段留空，
+不得写成伪零值。加入两条 smoke 后完整 Release 回归为 44/44。`SLOD` 与 `AFEM`
+仍未实现，故此状态只表示 E1 基线基础设施推进，不表示 R2a/S 五方法生产实验已开始。
 
 ### E1：核心主实验
 
@@ -565,6 +576,14 @@ practical 主表中造成“仍有 h 分支”的误解。
 6. **输出节流**：日志写标量，场数据只保存代表性快照。
 
 不建议为节省时间降低到单精度；Helmholtz 稳定性和证书比较统一使用 double。
+
+当前性能实现边界（2026-08-11）：已完成 reference 解复用、单轨迹多容差事后抽取、
+`Theta_loc` warm start、E0 dense hierarchy 常数去重，以及 HLOD-fixed 对 PALOD
+localization/ambient 工作的完全跳过。practical driver 当前每次 H 或 ell 改变后仍以
+full rebuild 为正确性基线，尚未启用 production corrector/patch cache，也未根据单个
+development smoke 调整求解器容差。只有 SLOD/AFEM 合同闭合并取得 R2a、κ=16 的代表性
+profile 后，才从上述第 2 项开始做缓存与局部重建优化；每项必须与当前 full rebuild 输出
+逐步对照后才能保留。
 
 ## 9. 验收门槛
 

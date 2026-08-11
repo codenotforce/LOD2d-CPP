@@ -82,7 +82,22 @@ if(LOD2D_BUILD_TESTS)
             --output-dir=${CMAKE_CURRENT_BINARY_DIR}/adaptive-paper-v2-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
-    set_tests_properties(helmholtz_adaptive_paper_v2_smoke
+    add_test(NAME helmholtz_hlod_fixed_paper_v2_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v2.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/hlod-fixed-paper-v2-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_ufem_paper_v2_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v2.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/ufem-paper-v2-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    set_tests_properties(
+        helmholtz_adaptive_paper_v2_smoke
+        helmholtz_hlod_fixed_paper_v2_smoke
+        helmholtz_ufem_paper_v2_smoke
         PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v2")
 endif()
 

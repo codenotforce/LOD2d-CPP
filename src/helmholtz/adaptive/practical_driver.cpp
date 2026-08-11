@@ -126,6 +126,12 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
         return "IncreaseGlobalEll";
     case PracticalDriverAction::AcceptLocalization:
         return "AcceptLocalization";
+    case PracticalDriverAction::AcceptFixedEll:
+        return "AcceptFixedEll";
+    case PracticalDriverAction::SolveUniformFem:
+        return "SolveUniformFem";
+    case PracticalDriverAction::RefineUniformFem:
+        return "RefineUniformFem";
     case PracticalDriverAction::FormCoarseMarking:
         return "FormCoarseMarking";
     case PracticalDriverAction::RefineCoarse:
@@ -197,6 +203,12 @@ void PracticalAdaptiveDriver::validate_config() const {
     }
     if (config_.ell0 < 0 || config_.ell_max < config_.ell0) {
         throw std::invalid_argument("Practical driver requires 0 <= ell0 <= ell_max.");
+    }
+    if (config_.localization_policy
+            == PracticalLocalizationPolicy::FixedGlobalEll
+        && config_.ell0 != config_.ell_max) {
+        throw std::invalid_argument(
+            "Fixed-ell practical driver requires ell0 == ell_max.");
     }
     const auto positive_finite = [](const double value) {
         return std::isfinite(value) && value > 0.0;
@@ -349,8 +361,12 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                             "Nonempty admissibility marking produced no H refinement.");
                     }
                     ++H_steps_;
-                    const AmbientRatioEnforcementResult ambient =
-                        hierarchy_->enforce_ambient_ratio(config_.rho_star);
+                    AmbientRatioEnforcementResult ambient;
+                    if (config_.localization_policy
+                        == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
+                        ambient = hierarchy_->enforce_ambient_ratio(
+                            config_.rho_star);
+                    }
                     invalidate_discrete_cache();
                     localization_warm_start_.resize(0);
                     PracticalIterationRecord record;
@@ -367,8 +383,12 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 }
 
                 const auto begin = std::chrono::steady_clock::now();
-                const AmbientRatioEnforcementResult ambient =
-                    hierarchy_->enforce_ambient_ratio(config_.rho_star);
+                AmbientRatioEnforcementResult ambient;
+                if (config_.localization_policy
+                    == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
+                    ambient = hierarchy_->enforce_ambient_ratio(
+                        config_.rho_star);
+                }
                 state_ = PracticalDriverState::LocalizationCheck;
                 PracticalIterationRecord record;
                 record.state_before = PracticalDriverState::CoarseAdmissibility;
@@ -406,42 +426,54 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         hierarchy_->reference_element_levels()));
                 const auto corrector_end = std::chrono::steady_clock::now();
 
-                const HelmholtzOperators ambient_operators =
-                    assemble_helmholtz_operators(
-                        hierarchy_->ambient_mesh(),
-                        config_.wavenumber,
-                        pull_element_values(
-                            model_->operators().diffusion,
-                            hierarchy_->ambient_parent_reference_elements()),
-                        pull_element_values(
-                            model_->operators().refractive_index,
-                            hierarchy_->ambient_parent_reference_elements()),
-                        config_.boundary_beta);
                 const auto certificate_begin = std::chrono::steady_clock::now();
-                localization_ = std::make_unique<ReferenceLocalizationCertificate>(
-                    compute_reference_localization_certificate(
-                        *hierarchy_,
-                        model_->operators(),
-                        ambient_operators,
-                        model_->corrected_test_basis(),
-                        free_coarse_nodes(hierarchy_->coarse_mesh()),
-                        config_.riesz_solver,
-                        [&] {
-                            LocalizationEigenConfig eigen = config_.localization_eigen;
-                            if (localization_warm_start_.size() > 0) {
-                                eigen.warm_start = localization_warm_start_;
-                            }
-                            return eigen;
-                        }()));
+                if (config_.localization_policy
+                    == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
+                    const HelmholtzOperators ambient_operators =
+                        assemble_helmholtz_operators(
+                            hierarchy_->ambient_mesh(),
+                            config_.wavenumber,
+                            pull_element_values(
+                                model_->operators().diffusion,
+                                hierarchy_->ambient_parent_reference_elements()),
+                            pull_element_values(
+                                model_->operators().refractive_index,
+                                hierarchy_->ambient_parent_reference_elements()),
+                            config_.boundary_beta);
+                    localization_ =
+                        std::make_unique<ReferenceLocalizationCertificate>(
+                            compute_reference_localization_certificate(
+                                *hierarchy_,
+                                model_->operators(),
+                                ambient_operators,
+                                model_->corrected_test_basis(),
+                                free_coarse_nodes(hierarchy_->coarse_mesh()),
+                                config_.riesz_solver,
+                                [&] {
+                                    LocalizationEigenConfig eigen =
+                                        config_.localization_eigen;
+                                    if (localization_warm_start_.size() > 0) {
+                                        eigen.warm_start =
+                                            localization_warm_start_;
+                                    }
+                                    return eigen;
+                                }()));
+                    theta_loc_ = localization_->theta_loc;
+                } else {
+                    localization_.reset();
+                    theta_loc_ = 0.0;
+                }
                 const auto certificate_end = std::chrono::steady_clock::now();
-                theta_loc_ = localization_->theta_loc;
 
                 PracticalIterationRecord record;
                 record.state_before = PracticalDriverState::LocalizationCheck;
                 record.time_corrector_seconds =
                     elapsed_seconds(corrector_begin, corrector_end);
                 record.time_certificate_seconds =
-                    elapsed_seconds(certificate_begin, certificate_end);
+                    config_.localization_policy
+                            == PracticalLocalizationPolicy::AdaptiveGlobalEll
+                        ? elapsed_seconds(certificate_begin, certificate_end)
+                        : 0.0;
                 record.rebuilt_correctors = model_->correctors().primal.size();
                 std::string operation_limit;
                 if (work_limit_exceeded(operation_limit)) {
@@ -453,7 +485,9 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     append_record(std::move(record));
                     break;
                 }
-                if (theta_loc_ > config_.theta_loc) {
+                if (config_.localization_policy
+                        == PracticalLocalizationPolicy::AdaptiveGlobalEll
+                    && theta_loc_ > config_.theta_loc) {
                     if (ell_ >= config_.ell_max) {
                         stop_reason = "localization threshold failed at ell_max";
                         state_ = PracticalDriverState::WorkLimitReached;
@@ -473,17 +507,31 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     append_record(std::move(record));
                     continue;
                 }
-                localization_warm_start_ = localization_->spectrum.dominant_vector;
+                if (localization_) {
+                    localization_warm_start_ =
+                        localization_->spectrum.dominant_vector;
+                }
                 state_ = PracticalDriverState::SolveAndEstimate;
                 record.state_after = state_;
-                record.action = PracticalDriverAction::AcceptLocalization;
-                record.detail = "reference localization certificate accepted";
+                if (config_.localization_policy
+                    == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
+                    record.action = PracticalDriverAction::AcceptLocalization;
+                    record.detail =
+                        "reference localization certificate accepted";
+                } else {
+                    record.action = PracticalDriverAction::AcceptFixedEll;
+                    record.detail =
+                        "fixed global ell accepted without localization certification";
+                }
                 append_record(std::move(record));
                 continue;
             }
 
             if (state_ == PracticalDriverState::SolveAndEstimate) {
-                if (!model_ || !localization_) {
+                if (!model_ ||
+                    (config_.localization_policy
+                         == PracticalLocalizationPolicy::AdaptiveGlobalEll
+                     && !localization_)) {
                     throw std::logic_error(
                         "SolveAndEstimate requires the accepted current LOD model and localization certificate.");
                 }
@@ -583,8 +631,12 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         "Nonempty residual marking produced no H refinement.");
                 }
                 ++H_steps_;
-                const AmbientRatioEnforcementResult ambient =
-                    hierarchy_->enforce_ambient_ratio(config_.rho_star);
+                AmbientRatioEnforcementResult ambient;
+                if (config_.localization_policy
+                    == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
+                    ambient = hierarchy_->enforce_ambient_ratio(
+                        config_.rho_star);
+                }
                 pending_marking_.clear();
                 invalidate_discrete_cache();
                 localization_warm_start_.resize(0);
