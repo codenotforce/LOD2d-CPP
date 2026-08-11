@@ -63,6 +63,12 @@ add_executable(test_helmholtz_adaptive test_helmholtz_adaptive.cpp)
 target_link_libraries(test_helmholtz_adaptive PRIVATE lod2d_core)
 add_test(NAME helmholtz_adaptive COMMAND test_helmholtz_adaptive)
 
+add_executable(test_helmholtz_reference_epoch_hierarchy
+    test_helmholtz_reference_epoch_hierarchy.cpp)
+target_link_libraries(test_helmholtz_reference_epoch_hierarchy PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_epoch_hierarchy
+    COMMAND test_helmholtz_reference_epoch_hierarchy)
+
 add_executable(test_helmholtz_error_control test_helmholtz_error_control.cpp)
 target_link_libraries(test_helmholtz_error_control PRIVATE lod2d_core)
 add_test(NAME helmholtz_error_control COMMAND test_helmholtz_error_control)

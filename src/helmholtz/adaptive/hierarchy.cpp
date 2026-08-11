@@ -92,6 +92,13 @@ double total_area(const TriMesh &mesh) {
     return result;
 }
 
+double triangle_diameter(const TriMesh &mesh, const Triangle &triangle) {
+    return std::max({
+        (mesh.nodes[triangle[0]] - mesh.nodes[triangle[1]]).norm(),
+        (mesh.nodes[triangle[1]] - mesh.nodes[triangle[2]]).norm(),
+        (mesh.nodes[triangle[2]] - mesh.nodes[triangle[0]]).norm()});
+}
+
 void validate_indices(
     const std::vector<int> &indices,
     int upper_bound,
@@ -766,6 +773,319 @@ Eigen::SparseMatrix<double> AdaptiveMeshHierarchy::fine_kernel_constraints(
 Eigen::SparseMatrix<double> AdaptiveMeshHierarchy::cert_audit_kernel_constraints(
     const std::vector<int> &cert_audit_dofs) const {
     return restrict_constraint_columns(cert_audit_quasi_interpolation_, cert_audit_dofs);
+}
+
+ReferenceEpochHierarchy::ReferenceEpochHierarchy(
+    const TriMesh &initial_mesh,
+    int initial_coarse_level,
+    int reference_level)
+    : initial_mesh_(initial_mesh), reference_level_(reference_level) {
+    if (initial_mesh.nodes.empty() || initial_mesh.elems.empty()) {
+        throw std::invalid_argument(
+            "reference-epoch hierarchy initial mesh must not be empty");
+    }
+    if (initial_coarse_level < 0 || reference_level < initial_coarse_level) {
+        throw std::invalid_argument(
+            "reference-epoch levels must satisfy 0 <= H_initial <= h_ref");
+    }
+
+    RefineOutput initial_coarse =
+        refine_mesh_nvb(initial_mesh_, initial_coarse_level);
+    coarse_mesh_ = std::move(initial_coarse.mesh);
+    coarse_levels_.assign(coarse_mesh_.elems.size(), initial_coarse_level);
+    reference_completion_ = complete_to_fine_level(
+        coarse_mesh_, coarse_levels_, reference_level_);
+    reference_to_ambient_.mesh = reference_completion_.refinement.mesh;
+    ambient_element_levels_ = reference_completion_.element_levels;
+    refresh_embeddings();
+}
+
+void ReferenceEpochHierarchy::refresh_embeddings() {
+    const TriMesh reference = reference_completion_.refinement.mesh;
+    const TriMesh ambient = reference_to_ambient_.mesh;
+    reference_completion_.refinement = build_nested_mesh_embedding(
+        coarse_mesh_, reference);
+    reference_to_ambient_ = build_nested_mesh_embedding(reference, ambient);
+    coarse_to_ambient_ = build_nested_mesh_embedding(coarse_mesh_, ambient);
+
+    reference_parent_coarse_elements_ = fine_element_parents(
+        reference_completion_.refinement.P_elem,
+        static_cast<int>(reference.elems.size()),
+        static_cast<int>(coarse_mesh_.elems.size()));
+    ambient_parent_coarse_elements_ = fine_element_parents(
+        coarse_to_ambient_.P_elem,
+        static_cast<int>(ambient.elems.size()),
+        static_cast<int>(coarse_mesh_.elems.size()));
+    ambient_parent_reference_elements_ = fine_element_parents(
+        reference_to_ambient_.P_elem,
+        static_cast<int>(ambient.elems.size()),
+        static_cast<int>(reference.elems.size()));
+
+    reference_quasi_interpolation_ = build_quasi_interp(
+        coarse_mesh_, reference,
+        reference_completion_.refinement.P_dg,
+        cg_to_dg(reference),
+        static_cast<int>(reference.nodes.size()),
+        static_cast<int>(coarse_mesh_.nodes.size()));
+    ambient_quasi_interpolation_ = build_quasi_interp(
+        coarse_mesh_, ambient,
+        coarse_to_ambient_.P_dg,
+        cg_to_dg(ambient),
+        static_cast<int>(ambient.nodes.size()),
+        static_cast<int>(coarse_mesh_.nodes.size()));
+    validate_current_embeddings();
+}
+
+void ReferenceEpochHierarchy::validate_current_embeddings() const {
+    constexpr double composition_tolerance = 1e-10;
+    constexpr double coordinate_tolerance = 2e-10;
+    constexpr double right_inverse_tolerance = 1e-9;
+
+    validate_boundary_tags(coarse_mesh_);
+    validate_boundary_tags(reference_mesh());
+    validate_boundary_tags(ambient_mesh());
+    if (reference_completion_.element_levels.size()
+            != reference_mesh().elems.size()
+        || ambient_element_levels_.size() != ambient_mesh().elems.size()) {
+        throw std::runtime_error(
+            "reference-epoch element levels do not match their meshes");
+    }
+
+    const Eigen::SparseMatrix<double> composed_nodes =
+        reference_to_ambient_.P_node
+        * reference_completion_.refinement.P_node;
+    const Eigen::SparseMatrix<double> composed_elements =
+        reference_to_ambient_.P_elem
+        * reference_completion_.refinement.P_elem;
+    const Eigen::SparseMatrix<double> composed_dg =
+        reference_to_ambient_.P_dg
+        * reference_completion_.refinement.P_dg;
+    if ((composed_nodes - coarse_to_ambient_.P_node).norm()
+            > composition_tolerance
+        || (composed_elements - coarse_to_ambient_.P_elem).norm()
+            > composition_tolerance
+        || (composed_dg - coarse_to_ambient_.P_dg).norm()
+            > composition_tolerance) {
+        throw std::runtime_error(
+            "reference-epoch prolongations fail the composition check");
+    }
+
+    const auto coordinates = [](const TriMesh &mesh) {
+        Eigen::MatrixXd result(mesh.nodes.size(), 2);
+        for (int node = 0; node < static_cast<int>(mesh.nodes.size()); ++node)
+            result.row(node) = mesh.nodes[node].transpose();
+        return result;
+    };
+    const auto maximum_absolute_entry = [](const Eigen::MatrixXd &matrix) {
+        return matrix.size() == 0 ? 0.0 : matrix.cwiseAbs().maxCoeff();
+    };
+    const Eigen::MatrixXd coarse_coordinates = coordinates(coarse_mesh_);
+    const Eigen::MatrixXd reference_coordinates = coordinates(reference_mesh());
+    const Eigen::MatrixXd ambient_coordinates = coordinates(ambient_mesh());
+    if (maximum_absolute_entry(
+            coarse_to_reference() * coarse_coordinates
+            - reference_coordinates) > coordinate_tolerance
+        || maximum_absolute_entry(
+            reference_to_ambient() * reference_coordinates
+            - ambient_coordinates) > coordinate_tolerance
+        || maximum_absolute_entry(
+            coarse_to_ambient() * coarse_coordinates
+            - ambient_coordinates) > coordinate_tolerance) {
+        throw std::runtime_error(
+            "reference-epoch prolongations fail the coordinate check");
+    }
+
+    std::vector<char> is_dirichlet(coarse_mesh_.nodes.size(), false);
+    for (int node : dirichlet_nodes(coarse_mesh_)) is_dirichlet[node] = true;
+    std::vector<Eigen::Triplet<double>> expected_triplets;
+    expected_triplets.reserve(coarse_mesh_.nodes.size());
+    for (int node = 0; node < static_cast<int>(coarse_mesh_.nodes.size()); ++node) {
+        if (!is_dirichlet[node])
+            expected_triplets.emplace_back(node, node, 1.0);
+    }
+    Eigen::SparseMatrix<double> expected_right_inverse(
+        coarse_mesh_.nodes.size(), coarse_mesh_.nodes.size());
+    expected_right_inverse.setFromTriplets(
+        expected_triplets.begin(), expected_triplets.end());
+    const Eigen::SparseMatrix<double> reference_right_inverse =
+        reference_quasi_interpolation_ * coarse_to_reference();
+    const Eigen::SparseMatrix<double> ambient_right_inverse =
+        ambient_quasi_interpolation_ * coarse_to_ambient();
+    if ((reference_right_inverse - expected_right_inverse).norm()
+            > right_inverse_tolerance
+        || (ambient_right_inverse - expected_right_inverse).norm()
+            > right_inverse_tolerance) {
+        throw std::runtime_error(
+            "reference-epoch interpolation fails the right-inverse check");
+    }
+}
+
+ReferenceEpochRefinementResult
+ReferenceEpochHierarchy::refine_coarse_preserving_reference(
+    const std::vector<int> &marked_elements) {
+    ReferenceEpochRefinementResult result;
+    result.previous_element_count = coarse_mesh_.elems.size();
+    result.current_element_count = coarse_mesh_.elems.size();
+    if (marked_elements.empty()) {
+        result.detail = "no coarse elements were marked";
+        return result;
+    }
+    validate_indices(
+        marked_elements,
+        static_cast<int>(coarse_mesh_.elems.size()),
+        "reference-epoch marked coarse element");
+
+    const TriMesh parent_mesh = coarse_mesh_;
+    const std::vector<int> parent_levels = coarse_levels_;
+    RefineOutput candidate = bisect_newest_vertex(parent_mesh, marked_elements);
+    std::vector<int> candidate_levels = refinement_child_levels(
+        parent_mesh, parent_levels, candidate);
+    RefineOutput candidate_to_reference;
+    try {
+        candidate_to_reference = build_nested_mesh_embedding(
+            candidate.mesh, reference_mesh());
+    } catch (const std::invalid_argument &error) {
+        result.status =
+            ReferenceEpochRefinementStatus::ReferenceRefreshRequired;
+        result.detail = std::string(
+            "candidate coarse mesh is not contained in the fixed reference mesh: ")
+            + error.what();
+        return result;
+    }
+
+    coarse_mesh_ = std::move(candidate.mesh);
+    coarse_levels_ = std::move(candidate_levels);
+    reference_completion_.refinement = std::move(candidate_to_reference);
+    ++coarse_mesh_version_;
+    ++interpolation_version_;
+    ++boundary_version_;
+    ++corrector_space_version_;
+    refresh_embeddings();
+
+    result.status = ReferenceEpochRefinementStatus::Refined;
+    result.current_element_count = coarse_mesh_.elems.size();
+    result.detail = "coarse mesh refined while preserving the reference epoch";
+    return result;
+}
+
+bool ReferenceEpochHierarchy::reference_embedding_holds() const {
+    try {
+        (void)build_nested_mesh_embedding(coarse_mesh_, reference_mesh());
+        return true;
+    } catch (const std::invalid_argument &) {
+        return false;
+    }
+}
+
+double ReferenceEpochHierarchy::ambient_ratio() const {
+    if (ambient_parent_coarse_elements_.size()
+        != ambient_mesh().elems.size()) {
+        throw std::runtime_error(
+            "ambient/coarse parent map is stale or incomplete");
+    }
+    std::vector<double> coarse_diameters(coarse_mesh_.elems.size());
+    for (int element = 0;
+         element < static_cast<int>(coarse_mesh_.elems.size()); ++element) {
+        coarse_diameters[element] = triangle_diameter(
+            coarse_mesh_, coarse_mesh_.elems[element]);
+        if (!(coarse_diameters[element] > 0.0))
+            throw std::runtime_error("coarse mesh contains a degenerate element");
+    }
+    double result = 0.0;
+    for (int element = 0;
+         element < static_cast<int>(ambient_mesh().elems.size()); ++element) {
+        const int parent = ambient_parent_coarse_elements_[element];
+        const double diameter = triangle_diameter(
+            ambient_mesh(), ambient_mesh().elems[element]);
+        result = std::max(result, diameter / coarse_diameters[parent]);
+    }
+    return result;
+}
+
+AmbientRatioEnforcementResult
+ReferenceEpochHierarchy::enforce_ambient_ratio(double rho_star) {
+    if (!std::isfinite(rho_star) || !(rho_star > 0.0) || !(rho_star < 1.0)) {
+        throw std::invalid_argument(
+            "ambient ratio target must be finite and lie in (0,1)");
+    }
+    AmbientRatioEnforcementResult result;
+    const std::size_t initial_elements = ambient_mesh().elems.size();
+    TriMesh candidate_ambient = ambient_mesh();
+    std::vector<int> candidate_levels = ambient_element_levels_;
+    constexpr int maximum_refinement_steps = 128;
+    const double tolerance = 1e-12 * std::max(1.0, rho_star);
+    for (int iteration = 0; iteration < maximum_refinement_steps; ++iteration) {
+        const RefineOutput coarse_to_candidate = build_nested_mesh_embedding(
+            coarse_mesh_, candidate_ambient);
+        const std::vector<int> candidate_parents = fine_element_parents(
+            coarse_to_candidate.P_elem,
+            static_cast<int>(candidate_ambient.elems.size()),
+            static_cast<int>(coarse_mesh_.elems.size()));
+        std::vector<double> coarse_diameters(coarse_mesh_.elems.size());
+        for (int element = 0;
+             element < static_cast<int>(coarse_mesh_.elems.size()); ++element) {
+            coarse_diameters[element] = triangle_diameter(
+                coarse_mesh_, coarse_mesh_.elems[element]);
+        }
+        double maximum_ratio = 0.0;
+        std::vector<int> marked_ambient;
+        for (int element = 0;
+             element < static_cast<int>(candidate_ambient.elems.size()); ++element) {
+            const int parent = candidate_parents[element];
+            const double ratio = triangle_diameter(
+                candidate_ambient, candidate_ambient.elems[element])
+                / coarse_diameters[parent];
+            maximum_ratio = std::max(maximum_ratio, ratio);
+            if (ratio > rho_star + tolerance)
+                marked_ambient.push_back(element);
+        }
+        if (maximum_ratio <= rho_star + tolerance) {
+            result.maximum_ratio = maximum_ratio;
+            result.refined_elements =
+                candidate_ambient.elems.size() - initial_elements;
+            if (result.changed) {
+                reference_to_ambient_.mesh = std::move(candidate_ambient);
+                ambient_element_levels_ = std::move(candidate_levels);
+                ++ambient_mesh_version_;
+                ++interpolation_version_;
+                ++boundary_version_;
+                refresh_embeddings();
+            }
+            return result;
+        }
+        if (marked_ambient.empty()) {
+            throw std::runtime_error(
+                "ambient ratio exceeds the target but no violating element was found");
+        }
+
+        const TriMesh parent_mesh = candidate_ambient;
+        const std::vector<int> parent_levels = candidate_levels;
+        RefineOutput step = bisect_newest_vertex(parent_mesh, marked_ambient);
+        candidate_levels = refinement_child_levels(
+            parent_mesh, parent_levels, step);
+        candidate_ambient = std::move(step.mesh);
+        result.changed = true;
+        ++result.refinement_steps;
+    }
+    throw std::runtime_error(
+        "ambient shadow failed to satisfy the mesh-ratio target");
+}
+
+void ReferenceEpochHierarchy::refresh_reference_from_ambient() {
+    reference_completion_.refinement.mesh = ambient_mesh();
+    reference_completion_.element_levels = ambient_element_levels_;
+    reference_to_ambient_.mesh = reference_completion_.refinement.mesh;
+    if (!ambient_element_levels_.empty()) {
+        reference_level_ = *std::min_element(
+            ambient_element_levels_.begin(), ambient_element_levels_.end());
+    }
+    ++reference_epoch_;
+    ++reference_mesh_version_;
+    ++ambient_mesh_version_;
+    ++interpolation_version_;
+    ++boundary_version_;
+    ++corrector_space_version_;
+    refresh_embeddings();
 }
 
 } // namespace lod2d::helmholtz::adaptive
