@@ -127,9 +127,9 @@ V_h^{\mathrm{ref}}\leftarrow V_{\mathrm{amb}}.
 | 参数 | 建议初值 | 含义 |
 |---|---:|---|
 | `c_H` | `0.5` | 初始粗分辨率条件 \(\kappa H_T\le c_H\) |
-| `theta_loc` | 由 R1 校准 | corrector 局部化证书阈值 |
-| `C0_usr` | 由 R1 校准 | practical 指示子基础系数 |
-| `C1_usr` | 由 R1 校准 | corrector 扰动附加系数 |
+| `theta_loc` | `0.19985934547160381` | R1 校准后的 corrector 局部化证书阈值 |
+| `C0_usr` | `0.49135072057990814` | R1 observed effectivity 的 practical 基础系数 |
+| `C1_usr` | `0.059576473311033412` | R1 corrector 扰动的 practical 附加系数 |
 | `theta_H` | `0.5` | \(\eta_{H,T}\) 的 Dörfler 参数 |
 | `rho_star` | `0.25` | ambient/coarse 最大直径比 |
 | `ell0` | `2` | 初始全局 oversampling 层数 |
@@ -415,6 +415,12 @@ backend 或正式生产矩阵已经完成；它们仍按后续实验阶段推进
 
 ### E0：小规模单元验证和参数校准
 
+**状态：已完成（2026-08-11）。** 冻结参数与原始证据位于
+`experiments/helmholtz_adaptive_paper/calibration/R1-k16-v1/`，可由
+`experiments/helmholtz_adaptive_paper/run_e0_calibration.sh` 在 Release 构建中重建。
+层级 4/6 因 κ=16 时 ambient kernel 不具 Helmholtz coercivity 被 fail closed；最终采用
+固定 coarse/reference 层级 6/8，并把 ambient ratio 控制到 0.25。
+
 使用 R1，主波数 \(\kappa=16\)。只做以下工作：
 
 1. 在一个小的固定 \(H/h\) 层级上取 \(\ell=1,2,3,4\)，检查
@@ -425,6 +431,18 @@ backend 或正式生产矩阵已经完成；它们仍按后续实验阶段推进
    `theta_loc/C0_usr/C1_usr`；不计算全部理论常数。
 
 E0 是调试和校准，不作为主性能结果。参数一旦冻结，后续不再逐案例调优。
+
+实现记录：\(\ell=1,2,3,4\) 的 `Theta_loc` 分别约为
+1.83348、0.181690、0.0436981、0.00270569；direct corrector perturbation 均被
+ambient-to-reference 一侧上界控制。局部 constraint、Riesz stationarity、能量恒等式和
+单元分配残差均在约 \(10^{-15}\) 或更小，smooth R1 的局部 effectivity 分布无异常长尾。
+冻结 `ell=2`、`theta_loc=0.19985934547160381`、
+`C0_usr=0.49135072057990814`、`C1_usr=0.059576473311033412` 和
+`rho_star=0.25`；常数来自 observed multiplier 加 1.25 安全系数，不是理论常数。
+真实 practical driver smoke 记录 5 个 journal 项，严格执行
+`ell=1 -> IncreaseGlobalEll -> ell=2 -> Complete`，未发生 H 加密或 reference refresh。
+新增 `helmholtz_e0_R1_k16_calibration` Release gate 后，完整回归为 42/42；该 gate
+独立重建 CSV/JSON 和 driver smoke，当前耗时约 150 秒。
 
 ### E1：核心主实验
 

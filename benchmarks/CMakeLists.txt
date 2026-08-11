@@ -86,6 +86,18 @@ if(LOD2D_BUILD_TESTS)
         PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v2")
 endif()
 
+add_executable(bench_helmholtz_e0_calibration
+    bench_helmholtz_e0_calibration.cpp)
+target_link_libraries(bench_helmholtz_e0_calibration PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_e0_R1_k16_calibration
+        COMMAND bench_helmholtz_e0_calibration
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/e0-R1-k16-calibration
+            --check)
+    set_tests_properties(helmholtz_e0_R1_k16_calibration
+        PROPERTIES TIMEOUT 420 LABELS "calibration;helmholtz;practical-paper-v2")
+endif()
+
 add_executable(bench_helmholtz_certified bench_helmholtz_certified.cpp)
 target_link_libraries(bench_helmholtz_certified PRIVATE lod2d_core)
 if(LOD2D_BUILD_TESTS)

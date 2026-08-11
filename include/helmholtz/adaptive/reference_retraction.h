@@ -112,6 +112,17 @@ struct SmallMatrixLocalizationValidation {
     bool one_sided_control_holds = false;
 };
 
+// Lightweight E0 diagnostic for an ell sweep.  Unlike the full validation
+// below, this computes only the direct ideal/localized reference-space
+// perturbation and therefore does not repeat hierarchy-only dense constants.
+double compute_reference_localization_direct_delta(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &localized_adjoint_basis,
+    const ComplexSparseMatrix &ideal_adjoint_basis,
+    const std::vector<int> &coarse_basis_nodes,
+    const ReferenceLocalizationCertificate &certificate);
+
 SmallMatrixLocalizationValidation
 validate_reference_localization_certificate_small_matrix(
     const ReferenceEpochHierarchy &hierarchy,

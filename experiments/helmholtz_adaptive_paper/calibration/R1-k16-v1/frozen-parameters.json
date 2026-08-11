@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "scope": "E0-R1-k16-calibration",
+  "claim": "implementation-study",
+  "status": "passed",
+  "calibration": {"case": "R1", "kappa": 16, "coarse_level": 6, "reference_level": 8, "ell_sweep": [1, 2, 3, 4], "safety_factor": 1.25},
+  "frozen_parameters": {
+    "ell": 2,
+    "theta_loc": 0.19985934547160381,
+    "C0_usr": 0.49135072057990814,
+    "C1_usr": 0.059576473311033412,
+    "rho_star": 0.25
+  },
+  "observed_rho_ambient": 0.25,
+  "driver_smoke": {
+    "status": "passed",
+    "journal_size": 5,
+    "final_ell": 2,
+    "diagnostic_c_H": 2.8567113959936523,
+    "diagnostic_tolerance": 2.007249320376137,
+    "increase_global_ell": true,
+    "accept_localization": true,
+    "complete": true
+  },
+  "raw_data": "e0-calibration.csv",
+  "notes": [
+    "Constants are conservative observed-effectivity parameters, not theorem constants.",
+    "Reference errors are post-processing diagnostics and do not enter marking or stopping."
+  ]
+}

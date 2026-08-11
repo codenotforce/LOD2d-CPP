@@ -572,18 +572,13 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     return result;
 }
 
-SmallMatrixLocalizationValidation
-validate_reference_localization_certificate_small_matrix(
+double compute_reference_localization_direct_delta(
     const ReferenceEpochHierarchy &hierarchy,
     const HelmholtzOperators &reference_operators,
-    const HelmholtzOperators &ambient_operators,
     const ComplexSparseMatrix &localized_adjoint_basis,
     const ComplexSparseMatrix &ideal_adjoint_basis,
     const std::vector<int> &coarse_basis_nodes,
-    const ReferenceLocalizationCertificate &certificate,
-    int maximum_free_dofs) {
-    if (maximum_free_dofs <= 0)
-        throw std::invalid_argument("small-matrix DOF limit must be positive");
+    const ReferenceLocalizationCertificate &certificate) {
     if (localized_adjoint_basis.rows() != ideal_adjoint_basis.rows()
         || localized_adjoint_basis.cols() != ideal_adjoint_basis.cols()
         || localized_adjoint_basis.cols()
@@ -592,7 +587,6 @@ validate_reference_localization_certificate_small_matrix(
             "ideal/localized reference basis dimensions disagree");
     }
 
-    SmallMatrixLocalizationValidation result;
     const Eigen::SparseMatrix<double> reference_energy =
         energy_matrix(reference_operators);
     const ComplexMatrix localized_dense(localized_adjoint_basis);
@@ -618,8 +612,27 @@ validate_reference_localization_certificate_small_matrix(
         - localized_dense;
     const ComplexMatrix direct_gram = difference.adjoint()
         * reference_energy.cast<Complex>() * difference;
-    result.direct_delta = std::sqrt(dense_largest_generalized_eigenvalue(
+    return std::sqrt(dense_largest_generalized_eigenvalue(
         direct_gram, certificate.coarse_energy));
+}
+
+SmallMatrixLocalizationValidation
+validate_reference_localization_certificate_small_matrix(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const HelmholtzOperators &ambient_operators,
+    const ComplexSparseMatrix &localized_adjoint_basis,
+    const ComplexSparseMatrix &ideal_adjoint_basis,
+    const std::vector<int> &coarse_basis_nodes,
+    const ReferenceLocalizationCertificate &certificate,
+    int maximum_free_dofs) {
+    if (maximum_free_dofs <= 0)
+        throw std::invalid_argument("small-matrix DOF limit must be positive");
+
+    SmallMatrixLocalizationValidation result;
+    result.direct_delta = compute_reference_localization_direct_delta(
+        hierarchy, reference_operators, localized_adjoint_basis,
+        ideal_adjoint_basis, coarse_basis_nodes, certificate);
 
     const int ambient_nodes = static_cast<int>(
         hierarchy.ambient_mesh().nodes.size());
