@@ -5,6 +5,7 @@
 #include "mesh/refine.h"
 
 #include <Eigen/Dense>
+#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
@@ -130,6 +131,26 @@ void verify_mixed_lod_chain() {
                     "Dirichlet edge was assembled as a Robin residual edge");
         }
     }
+    const ComplexVector conforming = model.solve_fine_reference(lod_load);
+    const adaptive::diagnostics::HelmholtzP1ResidualEstimate afem =
+        adaptive::diagnostics::estimate_conforming_p1_residual(
+            model.problem().fine, model.operators(), conforming,
+            lod_load, source);
+    require(afem.element_squared.size() == model.problem().fine.elems.size()
+                && afem.eta > 0.0
+                && afem.algebraic_relative_difference < 1e-10,
+            "mixed-boundary conforming P1 AFEM estimate is invalid");
+    require(*std::max_element(
+                afem.body_squared.begin(), afem.body_squared.end()) > 0.0
+                && *std::max_element(
+                    afem.interior_jump_squared.begin(),
+                    afem.interior_jump_squared.end()) > 0.0
+                && *std::max_element(
+                    afem.robin_boundary_squared.begin(),
+                    afem.robin_boundary_squared.end()) > 0.0,
+            "AFEM estimate omitted body, interior-jump, or impedance terms");
+    require(!adaptive::mark_doerfler(afem.element_squared, 0.5).empty(),
+            "AFEM residual did not produce a Doerfler marking");
     const ComplexVector load = assemble_helmholtz_load(
         model.problem().fine,
         [](const Point2 &) { return Complex(1.0, 0.0); });

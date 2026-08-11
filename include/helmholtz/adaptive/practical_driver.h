@@ -35,6 +35,8 @@ enum class PracticalDriverAction {
     RefineUniformLod,
     SolveUniformFem,
     RefineUniformFem,
+    SolveAdaptiveFem,
+    RefineAdaptiveFem,
     FormCoarseMarking,
     RefineCoarse,
     Complete,

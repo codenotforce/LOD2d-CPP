@@ -136,6 +136,10 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
         return "SolveUniformFem";
     case PracticalDriverAction::RefineUniformFem:
         return "RefineUniformFem";
+    case PracticalDriverAction::SolveAdaptiveFem:
+        return "SolveAdaptiveFem";
+    case PracticalDriverAction::RefineAdaptiveFem:
+        return "RefineAdaptiveFem";
     case PracticalDriverAction::FormCoarseMarking:
         return "FormCoarseMarking";
     case PracticalDriverAction::RefineCoarse:

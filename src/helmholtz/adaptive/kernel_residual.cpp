@@ -719,87 +719,20 @@ Eigen::MatrixXd kernel_basis(const Eigen::MatrixXd &constraints) {
     return svd.matrixV().rightCols(ambient_dimension - rank);
 }
 
-ComplexVector constraint_multiplier(
-    const Eigen::MatrixXd &constraints,
-    const ComplexVector &unbalanced_stationarity) {
-    if (constraints.rows() == 0) return ComplexVector(0);
-    const Eigen::MatrixXd transpose = constraints.transpose();
-    Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(transpose);
-    ComplexVector multiplier(constraints.rows());
-    multiplier.real() = qr.solve(unbalanced_stationarity.real());
-    multiplier.imag() = qr.solve(unbalanced_stationarity.imag());
-    return multiplier;
-}
-
-LocalKernelRieszResult solve_local_riesz(
+LocalKernelRieszResult finalize_local_riesz(
     const Eigen::SparseMatrix<double> &energy,
     const Eigen::MatrixXd &constraints,
     const ComplexVector &rhs,
-    KernelRieszSolver solver) {
-    if (energy.rows() != energy.cols() || energy.rows() != rhs.size()
-        || constraints.cols() != rhs.size()) {
-        throw std::invalid_argument("local Riesz dimensions are inconsistent");
-    }
+    const ComplexVector &local_values,
+    const ComplexVector &lagrange_multipliers,
+    const int kernel_dimension) {
     LocalKernelRieszResult result;
     const int unknowns = rhs.size();
     const int constraint_count = constraints.rows();
-    result.kernel_dimension = unknowns - constraint_count;
+    result.kernel_dimension = kernel_dimension;
     result.saddle_unknowns = unknowns + constraint_count;
-    result.local_values = ComplexVector::Zero(unknowns);
-    result.lagrange_multipliers = ComplexVector::Zero(constraint_count);
-    if (unknowns == 0) return result;
-
-    if (solver == KernelRieszSolver::KernelBasisReference) {
-        const Eigen::MatrixXd dense_energy(energy);
-        const Eigen::MatrixXd basis = kernel_basis(constraints);
-        result.kernel_dimension = basis.cols();
-        if (basis.cols() > 0) {
-            const Eigen::MatrixXd reduced_energy = basis.transpose() * dense_energy * basis;
-            Eigen::LLT<Eigen::MatrixXd> factorization(reduced_energy);
-            if (factorization.info() != Eigen::Success)
-                throw std::runtime_error("kernel-basis Riesz factorization failed");
-            const ComplexVector reduced_rhs = basis.transpose().cast<Complex>() * rhs;
-            ComplexVector coefficients(basis.cols());
-            coefficients.real() = factorization.solve(reduced_rhs.real());
-            coefficients.imag() = factorization.solve(reduced_rhs.imag());
-            if (factorization.info() != Eigen::Success || !coefficients.allFinite())
-                throw std::runtime_error("kernel-basis Riesz solve failed");
-            result.local_values = basis.cast<Complex>() * coefficients;
-        }
-        const ComplexVector imbalance = rhs
-            - energy.cast<Complex>() * result.local_values;
-        result.lagrange_multipliers = constraint_multiplier(constraints, imbalance);
-    } else {
-        std::vector<ComplexTriplet> triplets;
-        triplets.reserve(static_cast<std::size_t>(
-            energy.nonZeros() + 2 * constraints.size()));
-        for (int column = 0; column < energy.outerSize(); ++column) {
-            for (Eigen::SparseMatrix<double>::InnerIterator it(energy, column); it; ++it)
-                triplets.emplace_back(it.row(), it.col(), it.value());
-        }
-        for (int row = 0; row < constraint_count; ++row) {
-            for (int column = 0; column < unknowns; ++column) {
-                if (constraints(row, column) == 0.0) continue;
-                triplets.emplace_back(unknowns + row, column, constraints(row, column));
-                triplets.emplace_back(column, unknowns + row, constraints(row, column));
-            }
-        }
-        ComplexSparseMatrix saddle(unknowns + constraint_count, unknowns + constraint_count);
-        saddle.setFromTriplets(triplets.begin(), triplets.end());
-        saddle.makeCompressed();
-        Eigen::SparseLU<ComplexSparseMatrix> factorization;
-        factorization.analyzePattern(saddle);
-        factorization.factorize(saddle);
-        if (factorization.info() != Eigen::Success)
-            throw std::runtime_error("kernel Riesz saddle factorization failed");
-        ComplexVector saddle_rhs = ComplexVector::Zero(unknowns + constraint_count);
-        saddle_rhs.head(unknowns) = rhs;
-        const ComplexVector saddle_solution = factorization.solve(saddle_rhs);
-        if (factorization.info() != Eigen::Success || !saddle_solution.allFinite())
-            throw std::runtime_error("kernel Riesz saddle solve failed");
-        result.local_values = saddle_solution.head(unknowns);
-        result.lagrange_multipliers = saddle_solution.tail(constraint_count);
-    }
+    result.local_values = local_values;
+    result.lagrange_multipliers = lagrange_multipliers;
 
     const ComplexVector constraint_residual =
         constraints.cast<Complex>() * result.local_values;
@@ -823,6 +756,105 @@ LocalKernelRieszResult solve_local_riesz(
     result.energy_identity_relative_error = std::abs(energy_squared - residual_action)
         / std::max({1.0, std::abs(energy_squared), std::abs(residual_action)});
     return result;
+}
+
+std::vector<LocalKernelRieszResult> solve_local_riesz_columns(
+    const Eigen::SparseMatrix<double> &energy,
+    const Eigen::MatrixXd &constraints,
+    const ComplexMatrix &right_hand_sides,
+    const KernelRieszSolver solver) {
+    if (energy.rows() != energy.cols()
+        || energy.rows() != right_hand_sides.rows()
+        || constraints.cols() != right_hand_sides.rows()) {
+        throw std::invalid_argument("local Riesz dimensions are inconsistent");
+    }
+    const int unknowns = right_hand_sides.rows();
+    const int constraint_count = constraints.rows();
+    const int column_count = right_hand_sides.cols();
+    ComplexMatrix local_values = ComplexMatrix::Zero(unknowns, column_count);
+    ComplexMatrix multipliers = ComplexMatrix::Zero(
+        constraint_count, column_count);
+    int kernel_dimension = unknowns - constraint_count;
+
+    if (unknowns > 0 && solver == KernelRieszSolver::KernelBasisReference) {
+        const Eigen::MatrixXd dense_energy(energy);
+        const Eigen::MatrixXd basis = kernel_basis(constraints);
+        kernel_dimension = basis.cols();
+        if (basis.cols() > 0) {
+            const Eigen::MatrixXd reduced_energy = basis.transpose() * dense_energy * basis;
+            Eigen::LLT<Eigen::MatrixXd> factorization(reduced_energy);
+            if (factorization.info() != Eigen::Success)
+                throw std::runtime_error("kernel-basis Riesz factorization failed");
+            const ComplexMatrix reduced_rhs =
+                basis.transpose().cast<Complex>() * right_hand_sides;
+            ComplexMatrix coefficients(basis.cols(), column_count);
+            coefficients.real() = factorization.solve(reduced_rhs.real());
+            coefficients.imag() = factorization.solve(reduced_rhs.imag());
+            if (factorization.info() != Eigen::Success || !coefficients.allFinite())
+                throw std::runtime_error("kernel-basis Riesz solve failed");
+            local_values = basis.cast<Complex>() * coefficients;
+        }
+        if (constraint_count > 0) {
+            const ComplexMatrix imbalance = right_hand_sides
+                - energy.cast<Complex>() * local_values;
+            Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(
+                constraints.transpose());
+            multipliers.real() = qr.solve(imbalance.real());
+            multipliers.imag() = qr.solve(imbalance.imag());
+        }
+    } else if (unknowns > 0) {
+        std::vector<ComplexTriplet> triplets;
+        triplets.reserve(static_cast<std::size_t>(
+            energy.nonZeros() + 2 * constraints.size()));
+        for (int column = 0; column < energy.outerSize(); ++column) {
+            for (Eigen::SparseMatrix<double>::InnerIterator it(energy, column); it; ++it)
+                triplets.emplace_back(it.row(), it.col(), it.value());
+        }
+        for (int row = 0; row < constraint_count; ++row) {
+            for (int column = 0; column < unknowns; ++column) {
+                if (constraints(row, column) == 0.0) continue;
+                triplets.emplace_back(unknowns + row, column, constraints(row, column));
+                triplets.emplace_back(column, unknowns + row, constraints(row, column));
+            }
+        }
+        ComplexSparseMatrix saddle(unknowns + constraint_count, unknowns + constraint_count);
+        saddle.setFromTriplets(triplets.begin(), triplets.end());
+        saddle.makeCompressed();
+        Eigen::SparseLU<ComplexSparseMatrix> factorization;
+        factorization.analyzePattern(saddle);
+        factorization.factorize(saddle);
+        if (factorization.info() != Eigen::Success)
+            throw std::runtime_error("kernel Riesz saddle factorization failed");
+        ComplexMatrix saddle_rhs = ComplexMatrix::Zero(
+            unknowns + constraint_count, column_count);
+        saddle_rhs.topRows(unknowns) = right_hand_sides;
+        const ComplexMatrix saddle_solution = factorization.solve(saddle_rhs);
+        if (factorization.info() != Eigen::Success || !saddle_solution.allFinite())
+            throw std::runtime_error("kernel Riesz saddle solve failed");
+        local_values = saddle_solution.topRows(unknowns);
+        multipliers = saddle_solution.bottomRows(constraint_count);
+    }
+
+    std::vector<LocalKernelRieszResult> result;
+    result.reserve(column_count);
+    for (int column = 0; column < column_count; ++column) {
+        result.push_back(finalize_local_riesz(
+            energy, constraints, right_hand_sides.col(column),
+            local_values.col(column), multipliers.col(column),
+            kernel_dimension));
+    }
+    return result;
+}
+
+LocalKernelRieszResult solve_local_riesz(
+    const Eigen::SparseMatrix<double> &energy,
+    const Eigen::MatrixXd &constraints,
+    const ComplexVector &rhs,
+    const KernelRieszSolver solver) {
+    ComplexMatrix right_hand_sides(rhs.size(), 1);
+    right_hand_sides.col(0) = rhs;
+    return solve_local_riesz_columns(
+        energy, constraints, right_hand_sides, solver).front();
 }
 
 double quantile(const std::vector<double> &sorted, double probability) {
@@ -1132,15 +1164,24 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     for (const KernelRieszPatch &patch : result.patches) {
         const Eigen::SparseMatrix<double> local_energy =
             restrict_sparse_matrix(global_energy, patch.discrete_dofs);
+        ComplexMatrix local_right_hand_sides(
+            patch.discrete_dofs.size(), input_columns);
+        for (int column = 0; column < input_columns; ++column) {
+            local_right_hand_sides.col(column) = restrict_vector(
+                defect_rhs.col(column), patch.discrete_dofs);
+        }
+        std::vector<LocalKernelRieszResult> columns =
+            solve_local_riesz_columns(
+                local_energy, patch.constraints,
+                local_right_hand_sides, solver);
+        ++result.patch_factorizations;
+        result.right_hand_side_solves += input_columns;
         ComplexMatrix representatives = ComplexMatrix::Zero(
             patch.discrete_dofs.size(), input_columns);
         AmbientDefectLocalRiesz local_result;
         local_result.columns.reserve(input_columns);
         for (int column = 0; column < input_columns; ++column) {
-            const ComplexVector local_rhs = restrict_vector(
-                defect_rhs.col(column), patch.discrete_dofs);
-            LocalKernelRieszResult local = solve_local_riesz(
-                local_energy, patch.constraints, local_rhs, solver);
+            LocalKernelRieszResult local = std::move(columns[column]);
             representatives.col(column) = local.local_values;
             result.column_eta_squared(column) += local.eta_squared;
             local_result.columns.push_back(std::move(local));

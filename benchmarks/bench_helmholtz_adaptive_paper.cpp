@@ -1,4 +1,5 @@
 #include "helmholtz/adaptive/practical_driver.h"
+#include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/benchmarks/paper_cases.h"
 #include "helmholtz/experiments/paper_config.h"
 #include "helmholtz/operators.h"
@@ -263,6 +264,146 @@ PaperExecution run_uniform_fem_trajectory(
     return execution;
 }
 
+PaperExecution run_adaptive_fem_trajectory(
+    const PracticalPaperConfig &config,
+    const PaperCaseData &data) {
+    ReferenceEpochHierarchy hierarchy(
+        data.initial_mesh, config.initial_coarse_level, config.reference_level);
+    PaperExecution execution;
+    const auto start = std::chrono::steady_clock::now();
+    auto cumulative_seconds = [&] {
+        return elapsed_seconds(start, std::chrono::steady_clock::now());
+    };
+    auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
+        record.reference_epoch = hierarchy.reference_epoch();
+        record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
+        record.reference_nodes = hierarchy.reference_mesh().nodes.size();
+        record.coarse_elements = hierarchy.coarse_mesh().elems.size();
+        record.ell = 0;
+        record.kappa_H_max = config.wavenumber
+            * max_element_diameter(hierarchy.coarse_mesh());
+        record.time_total_cumulative_seconds = cumulative_seconds();
+    };
+
+    PracticalIterationRecord initialization;
+    initialization.sequence = execution.result.journal.size();
+    initialization.state_before = PracticalDriverState::CoarseAdmissibility;
+    initialization.state_after = PracticalDriverState::SolveAndEstimate;
+    initialization.action = PracticalDriverAction::InitializeReferenceEpoch;
+    initialization.detail =
+        "initialized fixed evaluation-reference epoch for conforming P1 AFEM";
+    fill_mesh_fields(initialization);
+    execution.result.journal.push_back(std::move(initialization));
+
+    std::size_t refinements = 0;
+    while (true) {
+        const double wall_seconds = cumulative_seconds();
+        const bool wall_limited = config.work_limits.maximum_wall_seconds > 0.0
+            && wall_seconds >= config.work_limits.maximum_wall_seconds;
+        if (execution.result.journal.size()
+                >= config.work_limits.maximum_iterations
+            || hierarchy.coarse_mesh().nodes.size()
+                > config.work_limits.maximum_unknowns
+            || hierarchy.coarse_mesh().elems.size()
+                > config.work_limits.maximum_coarse_elements
+            || wall_limited) {
+            execution.result.state = PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason =
+                "adaptive FEM trajectory reached a configured work limit";
+            execution.result.final_element_eta_squared.clear();
+            break;
+        }
+
+        const auto solve_begin = std::chrono::steady_clock::now();
+        const HelmholtzOperators operators = assemble_helmholtz_operators(
+            hierarchy.coarse_mesh(), config.wavenumber, {}, {},
+            config.boundary_beta);
+        const ComplexVector load = assemble_helmholtz_load(
+            hierarchy.coarse_mesh(), data.source, config.quadrature,
+            data.quadrature_context);
+        const ComplexVector solution = solve_helmholtz_fem(operators, load);
+        const ComplexVector candidate =
+            hierarchy.coarse_to_reference().cast<Complex>() * solution;
+        const auto solve_end = std::chrono::steady_clock::now();
+
+        const auto estimator_begin = std::chrono::steady_clock::now();
+        const diagnostics::HelmholtzP1ResidualEstimate estimate =
+            diagnostics::estimate_conforming_p1_residual(
+                hierarchy.coarse_mesh(), operators, solution, load,
+                data.source, config.quadrature, data.quadrature_context);
+        std::vector<int> marked;
+        if (estimate.eta > 0.0) {
+            marked = mark_doerfler(estimate.element_squared, config.theta_H);
+        }
+        const auto estimator_end = std::chrono::steady_clock::now();
+
+        execution.result.eta_H = estimate.eta;
+        execution.result.final_marked_H = marked;
+        execution.result.final_element_eta_squared = estimate.element_squared;
+        const bool completed_trajectory =
+            refinements >= config.work_limits.maximum_H_steps || marked.empty();
+        PracticalIterationRecord solved;
+        solved.sequence = execution.result.journal.size();
+        solved.state_before = PracticalDriverState::SolveAndEstimate;
+        solved.state_after = completed_trajectory
+            ? PracticalDriverState::WorkLimitReached
+            : PracticalDriverState::RefineCoarse;
+        solved.action = PracticalDriverAction::SolveAdaptiveFem;
+        solved.evaluation_candidate = candidate;
+        solved.eta_H = estimate.eta;
+        solved.marked_H = marked.size();
+        solved.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
+        solved.time_estimator_seconds =
+            elapsed_seconds(estimator_begin, estimator_end);
+        solved.detail =
+            "solved conforming P1 FEM and formed body/jump/impedance residual marking"
+            "; algebraic residual difference="
+            + numeric(estimate.algebraic_relative_difference);
+        fill_mesh_fields(solved);
+        execution.result.journal.push_back(std::move(solved));
+
+        if (completed_trajectory) {
+            execution.result.state = PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason = marked.empty()
+                ? "adaptive FEM residual indicator vanished"
+                : "completed configured adaptive FEM refinement trajectory";
+            break;
+        }
+
+        const auto mesh_begin = std::chrono::steady_clock::now();
+        const ReferenceEpochRefinementResult refined =
+            hierarchy.refine_coarse_preserving_reference(marked);
+        const auto mesh_end = std::chrono::steady_clock::now();
+        if (refined.status
+            == ReferenceEpochRefinementStatus::ReferenceRefreshRequired) {
+            execution.result.state =
+                PracticalDriverState::ReferenceRefreshRequired;
+            execution.result.stop_reason = refined.detail;
+            break;
+        }
+        if (!refined.changed()) {
+            throw std::runtime_error(
+                "adaptive FEM Doerfler marking produced no coarse refinement");
+        }
+        ++refinements;
+        execution.result.final_element_eta_squared.clear();
+        PracticalIterationRecord refined_record;
+        refined_record.sequence = execution.result.journal.size();
+        refined_record.state_before = PracticalDriverState::RefineCoarse;
+        refined_record.state_after = PracticalDriverState::SolveAndEstimate;
+        refined_record.action = PracticalDriverAction::RefineAdaptiveFem;
+        refined_record.marked_H = marked.size();
+        refined_record.time_mesh_seconds = elapsed_seconds(mesh_begin, mesh_end);
+        refined_record.detail =
+            "locally refined the conforming P1 mesh by residual Doerfler marking";
+        fill_mesh_fields(refined_record);
+        execution.result.journal.push_back(std::move(refined_record));
+    }
+    execution.result.H_steps = refinements;
+    execution.final_mesh = hierarchy.coarse_mesh();
+    return execution;
+}
+
 PaperExecution run_standard_lod_trajectory(
     const PracticalPaperConfig &config,
     const PaperCaseData &data) {
@@ -465,9 +606,11 @@ void write_iterations(
     const bool ell_method = config.method_id == PracticalPaperMethod::Palod
         || config.method_id == PracticalPaperMethod::HlodFixed
         || config.method_id == PracticalPaperMethod::Slod;
-    const bool adaptive_lod_method =
+    const bool practical_bound_method =
         config.method_id == PracticalPaperMethod::Palod
         || config.method_id == PracticalPaperMethod::HlodFixed;
+    const bool eta_method = practical_bound_method
+        || config.method_id == PracticalPaperMethod::Afem;
     const bool localization_method =
         config.method_id == PracticalPaperMethod::Palod;
     for (const PracticalIterationRecord &record : result.journal) {
@@ -481,9 +624,9 @@ void write_iterations(
             << ',' << (ell_method ? std::to_string(record.ell) : "") << ','
             << numeric(record.kappa_H_max) << ",,"
             << (localization_method ? numeric(record.rho_ambient) : "") << ','
-            << (adaptive_lod_method ? numeric(record.eta_H) : "") << ','
+            << (eta_method ? numeric(record.eta_H) : "") << ','
             << (localization_method ? numeric(record.theta_loc) : "") << ','
-            << (adaptive_lod_method ? numeric(record.U_practical) : "") << ','
+            << (practical_bound_method ? numeric(record.U_practical) : "") << ','
             << optional_numeric(record.reference_energy_error) << ','
             << optional_numeric(record.reference_L2_error) << ','
             << record.marked_H << ',' << record.rebuilt_correctors << ','
@@ -628,9 +771,10 @@ int main(const int argc, char **argv) {
         if (config.method_id != PracticalPaperMethod::Palod
             && config.method_id != PracticalPaperMethod::HlodFixed
             && config.method_id != PracticalPaperMethod::Slod
-            && config.method_id != PracticalPaperMethod::Ufem) {
+            && config.method_id != PracticalPaperMethod::Ufem
+            && config.method_id != PracticalPaperMethod::Afem) {
             throw std::invalid_argument(
-                "paper runner currently executes PALOD, HLOD-fixed, SLOD, and UFEM; AFEM remains pending");
+                "paper runner received an unsupported practical method");
         }
         const std::string frozen_hash = first_token(read_text(arguments.manuscript_baseline));
         if (frozen_hash != config.manuscript_sha256) {
@@ -656,6 +800,8 @@ int main(const int argc, char **argv) {
         PaperExecution execution;
         if (config.method_id == PracticalPaperMethod::Ufem) {
             execution = run_uniform_fem_trajectory(config, data);
+        } else if (config.method_id == PracticalPaperMethod::Afem) {
+            execution = run_adaptive_fem_trajectory(config, data);
         } else if (config.method_id == PracticalPaperMethod::Slod) {
             execution = run_standard_lod_trajectory(config, data);
         } else {
@@ -684,7 +830,8 @@ int main(const int argc, char **argv) {
         const auto evaluation_end = std::chrono::steady_clock::now();
         const bool fixed_empirical_trajectory =
             config.method_id == PracticalPaperMethod::Ufem
-            || config.method_id == PracticalPaperMethod::Slod;
+            || config.method_id == PracticalPaperMethod::Slod
+            || config.method_id == PracticalPaperMethod::Afem;
         if (fixed_empirical_trajectory
             && result.state == PracticalDriverState::WorkLimitReached) {
             const double smallest_target = config.relative_energy_targets.back();
@@ -730,7 +877,9 @@ int main(const int argc, char **argv) {
                                      || record.action
                                          == PracticalDriverAction::SolveUniformFem
                                      || record.action
-                                         == PracticalDriverAction::SolveStandardLod;
+                                         == PracticalDriverAction::SolveStandardLod
+                                     || record.action
+                                         == PracticalDriverAction::SolveAdaptiveFem;
                              })) {
                 throw std::runtime_error(
                     "paper smoke did not complete a real method chain");
@@ -805,6 +954,33 @@ int main(const int argc, char **argv) {
                     || wrong_ell || paid_adaptive_cost) {
                     throw std::runtime_error(
                         "SLOD smoke did not remain on the frozen-prior uniform LOD path");
+                }
+            }
+            if (config.method_id == PracticalPaperMethod::Afem) {
+                const bool invalid_estimate = std::any_of(
+                    result.journal.begin(), result.journal.end(),
+                    [](const PracticalIterationRecord &record) {
+                        return record.action
+                                   == PracticalDriverAction::SolveAdaptiveFem
+                            && (!(record.eta_H > 0.0) || record.marked_H == 0);
+                    });
+                const bool paid_lod_cost = std::any_of(
+                    result.journal.begin(), result.journal.end(),
+                    [](const PracticalIterationRecord &record) {
+                        return record.time_corrector_seconds != 0.0
+                            || record.time_certificate_seconds != 0.0
+                            || record.ambient_refined_elements != 0;
+                    });
+                if (!has_action(PracticalDriverAction::SolveAdaptiveFem)
+                    || !has_action(PracticalDriverAction::RefineAdaptiveFem)
+                    || has_action(PracticalDriverAction::SolveUniformFem)
+                    || has_action(PracticalDriverAction::SolveStandardLod)
+                    || has_action(PracticalDriverAction::AcceptLocalization)
+                    || has_action(PracticalDriverAction::AcceptFixedEll)
+                    || has_action(PracticalDriverAction::FormCoarseMarking)
+                    || invalid_estimate || paid_lod_cost) {
+                    throw std::runtime_error(
+                        "AFEM smoke did not remain on the conforming residual-adaptive path");
                 }
             }
             for (const char *file : {

@@ -1221,10 +1221,11 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
                 "SLOD requires ell0 == ell_max == ceil(log2(kappa))");
         }
     }
-    if (config.method_id == PracticalPaperMethod::Ufem
+    if ((config.method_id == PracticalPaperMethod::Ufem
+         || config.method_id == PracticalPaperMethod::Afem)
         && (config.ell0 != 0 || config.ell_max != 0)) {
         throw std::invalid_argument(
-            "UFEM requires ell0 == ell_max == 0");
+            "conforming FEM baselines require ell0 == ell_max == 0");
     }
     const std::array<double, 7> positive{
         config.boundary_beta, config.c_H, config.theta_loc,

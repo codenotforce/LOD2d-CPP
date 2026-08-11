@@ -395,14 +395,17 @@ runner 必须支持从一条轨迹提取多个容差首次命中点。不要为
 `C0_usr/C1_usr`、单一 `theta_H=0.5`、solver、quadrature、容差、资源上限、
 Git/build provenance 和论文 SHA-256，并严格拒绝旧 `theta_h/q_h` 等字段。
 run ID 覆盖完整 canonical v2 配置。runner 在数值工作前核对版本化论文哈希，当前
-允许真实 `PALOD`、`HLOD-fixed`、`SLOD` 和 `UFEM` backend；`AFEM` 名称保留在 v2
-合同，但在实际 backend 完成前会明确拒绝，不能由 legacy proxy 冒充。
+允许真实 `PALOD`、`HLOD-fixed`、`SLOD`、`UFEM` 和 `AFEM` backend，任何名称都不能
+由 legacy proxy 冒充。
 `HLOD-fixed` 与 PALOD 共用 reference-kernel `eta_H` 和 H 标记，但固定全局 ell，且
 不计算 `Theta_loc`、ambient certificate 或 ambient shadow refinement；`UFEM` 只做
 一致 conforming P1 加密/求解，并把候选解延拓到同一固定 reference 空间后事后计算误差。
 `SLOD` 在一致粗网格序列上固定协议常数 \(c_{\mathrm{prior}}=1\)，即
 `ell=ceil(log2(kappa))`，每层重建真实 LOD；它不计算 PALOD/HLOD 的 `eta_H`、
 `Theta_loc`、`U_prac` 或 ambient certificate。
+`AFEM` 在当前 conforming \(P_1\) 网格上累计
+\(h_T^2\|f+\kappa^2u_H\|_T^2\)、内部通量跳跃与 impedance 边界残差，使用同一
+`theta_H=0.5` 做 Dörfler 标记和局部 NVB 加密，不访问 reference solution 做 MARK/STOP。
 
 每条 PALOD 运行先独立计算一次 evaluation reference solution，driver 本身只导出
 已完成 MARK/STOP 后的候选解；reference error 在 driver 返回后计算，其时间与
@@ -450,14 +453,15 @@ ambient-to-reference 一侧上界控制。局部 constraint、Riesz stationarity
 新增 `helmholtz_e0_R1_k16_calibration` Release gate 后，完整回归为 42/42；该 gate
 独立重建 CSV/JSON 和 driver smoke，当前耗时约 150 秒。
 
-E1 backend 准备状态（2026-08-12）：真实 `HLOD-fixed`、`SLOD` 与 `UFEM` 已接入同一 v2
+E1 backend 准备状态（2026-08-12）：真实 `HLOD-fixed`、`SLOD`、`UFEM` 与 `AFEM` 已接入同一 v2
 paper runner。HLOD-fixed 强制 `ell0==ell_max`，复用 `eta_H`/H 标记但完全跳过 PALOD
 的 localization certificate 和 ambient refinement；SLOD 执行一致粗网格、固定先验 ell
-的真实 LOD 轨迹；UFEM 执行一致 conforming P1 加密/求解。三条路径都只在运行后将候选解
-与同一 reference solution 比较，都有方法专属 action、fail-closed smoke 和五文件输出；
-不适用的 `Theta_loc/eta_H/U_prac/ell/ambient` 字段留空，不得写成伪零值（SLOD 仅 ell
-适用）。加入三条基线 smoke 后完整 Release 回归为 45/45。`AFEM` 仍未实现，故此状态
-只表示 E1 基线基础设施推进，不表示 R2a/S 五方法生产实验已开始。
+的真实 LOD 轨迹；UFEM 执行一致 conforming P1 加密/求解；AFEM 用体残差、内部通量跳跃
+和 impedance 边界项做 Dörfler 局部加密。四条基线路径都只在运行后将候选解与同一
+reference solution 比较，都有方法专属 action、fail-closed smoke 和五文件输出；不适用
+字段留空，不得写成伪零值（SLOD 仅 ell 适用；AFEM 的 `eta_H` 明确定义为标准 P1 残差
+指标而非 reference-kernel Riesz 指标）。加入四条基线 smoke 后完整 Release 回归为 46/46。
+这表示 E1 五方法 backend 基础设施闭合，但不表示 R2a/S 生产实验已经完成。
 
 ### E1：核心主实验
 
@@ -475,8 +479,8 @@ paper runner。HLOD-fixed 强制 `ell0==ell_max`，复用 `eta_H`/H 标记但完
 4. `UFEM`：一致加密的 conforming \(P_1\) FEM；
 5. `AFEM`：标准体残差、通量跳跃和 impedance 边界项驱动的 \(P_1\) AFEM。
 
-这 10 条轨迹是论文最重要的数据。若 AFEM 尚未达到共同误差和工作统计规范，
-它可以作为第二优先级，但 S 算例至少要有一个普通 FEM 基线。
+这 10 条轨迹是论文最重要的数据。AFEM backend 已达到共同 reference-error 和工作统计
+合同；下一步必须用生产资源上限验证 R2a/S 轨迹，不能仅凭 R1 smoke 写入论文结果。
 
 S 必须使用论文规定的 \(\Gamma_D/\Gamma_R\) 混合边界和制造解。若生产求解链仍不支持
 Dirichlet 节点，S 处于 blocked 状态；全 Robin 的 L 型替代算例只能标为 surrogate，
@@ -571,24 +575,28 @@ practical 主表中造成“仍有 h 分支”的误解。
 只有通过正确性 gate 后才做优化，顺序如下：
 
 1. **reference solve 复用**：同一 case/kappa/epoch 只计算一次。
-2. **corrector patch cache**：只有 source element、patch、reference 子空间和插值约束
+2. **ambient-defect 多右端复用**：同一 patch 的 energy/constraint saddle 矩阵只分解一次，
+   批量求解全部 coarse-input 右端；必须保持 Gram、`Theta_loc` 和残差诊断不变。
+3. **corrector patch cache**：只有 source element、patch、reference 子空间和插值约束
    都不变时才复用；\(\ell\) 全局增加时仅复用仍然数学等价的装配/分解。
-3. **局部 H 加密复用**：只重算受 coarse patch 变化影响的 correctors 和 Riesz 问题；
+4. **局部 H 加密复用**：只重算受 coarse patch 变化影响的 correctors 和 Riesz 问题；
    用 full rebuild 作小规模逐步对照，误差需在求解容差内。
-4. **特征值 warm start**：`Theta_loc` 的最大广义特征值沿用上一轮向量；当估计值与
+5. **特征值 warm start**：`Theta_loc` 的最大广义特征值沿用上一轮向量；当估计值与
    `theta_loc` 已有充分间隔时提前停止迭代。
-5. **稀疏 saddle-point Riesz**：生产中不显式构造整个 kernel 基；显式基只用于单元测试。
-6. **输出节流**：日志写标量，场数据只保存代表性快照。
+6. **稀疏 saddle-point Riesz**：生产中不显式构造整个 kernel 基；显式基只用于单元测试。
+7. **输出节流**：日志写标量，场数据只保存代表性快照。
 
 不建议为节省时间降低到单精度；Helmholtz 稳定性和证书比较统一使用 double。
 
-当前性能实现边界（2026-08-11）：已完成 reference 解复用、单轨迹多容差事后抽取、
-`Theta_loc` warm start、E0 dense hierarchy 常数去重，以及 HLOD-fixed 对 PALOD
-localization/ambient 工作的完全跳过。practical driver 当前每次 H 或 ell 改变后仍以
-full rebuild 为正确性基线，尚未启用 production corrector/patch cache，也未根据单个
-development smoke 调整求解器容差。只有 AFEM 合同闭合并取得 R2a、κ=16 的代表性
-profile 后，才从上述第 2 项开始做缓存与局部重建优化；每项必须与当前 full rebuild 输出
-逐步对照后才能保留。
+当前性能实现边界（2026-08-12）：已完成 reference 解复用、单轨迹多容差事后抽取、
+`Theta_loc` warm start、E0 dense hierarchy 常数去重、HLOD-fixed 对 PALOD
+localization/ambient 工作的完全跳过，以及第 2 项 patch 内多右端 Riesz 复用。R2a、
+κ=16 development profile（E0 诊断 `c_H`、零 H-step，不是论文结果）显示 certificate
+由 10.107 秒降至 1.404 秒，method time 由 10.217 秒降至 1.509 秒，`Theta_loc`、标记和
+误差在舍入范围内不变；证据见 `profiles/R2a-k16-development-v1.md`。practical driver
+在 H 或 ell 改变后仍以 full rebuild 为正确性基线，尚未启用 production corrector/patch
+cache，也未根据单个 development profile 调整求解器容差。先冻结可行的生产 `c_H` 并
+取得至少一个真实 H-step profile，再从第 3 项开始；每项必须与 full rebuild 逐步对照。
 
 ## 9. 验收门槛
 

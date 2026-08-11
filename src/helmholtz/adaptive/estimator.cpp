@@ -294,6 +294,70 @@ HelmholtzIndicatorSet build_helmholtz_indicators(
     return result;
 }
 
+HelmholtzP1ResidualEstimate estimate_conforming_p1_residual(
+    const TriMesh &mesh,
+    const HelmholtzOperators &operators,
+    const ComplexVector &solution,
+    const ComplexVector &load,
+    const ComplexFunction &source,
+    const QuadraturePolicy &quadrature,
+    const QuadratureContext &quadrature_context) {
+    HelmholtzProblemData identity_problem;
+    identity_problem.coarse = mesh;
+    identity_problem.fine = mesh;
+    const int element_count = static_cast<int>(mesh.elems.size());
+    identity_problem.fine_element_prolongation.resize(
+        element_count, element_count);
+    identity_problem.fine_element_prolongation.setIdentity();
+
+    const HelmholtzResidualContributions contributions =
+        assemble_helmholtz_residual_contributions(
+            identity_problem, operators, solution, load, source,
+            quadrature, quadrature_context);
+    const HelmholtzIndicatorSet total =
+        build_helmholtz_indicators(identity_problem, contributions);
+
+    HelmholtzP1ResidualEstimate result;
+    result.body_squared.assign(element_count, 0.0);
+    result.interior_jump_squared.assign(element_count, 0.0);
+    result.robin_boundary_squared.assign(element_count, 0.0);
+    result.element_squared.assign(element_count, 0.0);
+    for (int element = 0; element < element_count; ++element) {
+        const double diameter =
+            element_geometry(mesh, mesh.elems[element]).diameter;
+        result.body_squared[element] = diameter * diameter
+            * contributions.body_l2_squared[element];
+    }
+    for (const ResidualEdgeContribution &edge : contributions.edges) {
+        const double weighted = edge.length * edge.residual_l2_squared;
+        if (edge.right_element >= 0) {
+            result.interior_jump_squared[edge.left_element] += 0.5 * weighted;
+            result.interior_jump_squared[edge.right_element] += 0.5 * weighted;
+        } else if (edge.robin_boundary) {
+            result.robin_boundary_squared[edge.left_element] += weighted;
+        }
+    }
+    for (int element = 0; element < element_count; ++element) {
+        result.element_squared[element] = result.body_squared[element]
+            + result.interior_jump_squared[element]
+            + result.robin_boundary_squared[element];
+    }
+    const double component_sum = std::accumulate(
+        result.element_squared.begin(), result.element_squared.end(), 0.0);
+    const double total_sum = std::accumulate(
+        total.fine_squared.begin(), total.fine_squared.end(), 0.0);
+    const double consistency_error = std::abs(component_sum - total_sum)
+        / std::max(1.0, total_sum);
+    if (consistency_error > 5e-13) {
+        throw std::runtime_error(
+            "conforming P1 residual component allocation is inconsistent");
+    }
+    result.eta = std::sqrt(std::max(0.0, component_sum));
+    result.algebraic_relative_difference =
+        contributions.algebraic_relative_difference;
+    return result;
+}
+
 std::vector<double> build_local_dual_indicators(
     const HelmholtzProblemData &problem,
     const HelmholtzOperators &operators,

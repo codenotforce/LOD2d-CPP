@@ -143,11 +143,13 @@ in [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md).
 - continuous P1/P2/P3 fine spaces for direct-saddle hp-corrector experiments;
 - globally nested NVB spaces with primal and adjoint localized correctors;
 - two-sided Petrov-Galerkin LOD;
+- patch-batched multi-right-hand-side kernel Riesz solves for practical
+  localization certificates;
 - direct saddle, explicit Schur, and experimental shifted-GMRES patch solvers;
 - experimental two-level hybrid Schwarz solvers;
 - a practical-paper runner with real PALOD, fixed-global-ell HLOD, uniform
-  standard LOD (`SLOD`, frozen `ell=ceil(log2(kappa))`), and uniform P1 FEM
-  trajectories on one evaluation-reference epoch;
+  standard LOD (`SLOD`, frozen `ell=ceil(log2(kappa))`), uniform P1 FEM, and
+  residual-adaptive P1 AFEM trajectories on one evaluation-reference epoch;
 - a legacy fixed-fine-space H-only calibration driver retained as
   `HLOD-proxy` for diagnostics;
 - certified-adaptive WP0-WP5 library infrastructure described below.

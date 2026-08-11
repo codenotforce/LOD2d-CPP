@@ -576,6 +576,16 @@ void verify_practical_v2_contract() {
     validate_practical_paper_config(changed);
     require_invalid([&] { (void)make_practical_driver_config(changed); },
                     "UFEM was silently relabelled as a LOD backend");
+    changed = original;
+    changed.method_id = PracticalPaperMethod::Afem;
+    changed.ell0 = 0;
+    changed.ell_max = 0;
+    validate_practical_paper_config(changed);
+    require_invalid([&] { (void)make_practical_driver_config(changed); },
+                    "AFEM was silently relabelled as a LOD backend");
+    changed.ell_max = 1;
+    require_invalid([&] { validate_practical_paper_config(changed); },
+                    "AFEM accepted a nonzero localization radius");
 
     require(standard_lod_prior_ell(8.0) == 3
                 && standard_lod_prior_ell(16.0) == 4
