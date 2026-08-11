@@ -100,7 +100,8 @@ public:
         const TriMesh &coarse_mesh,
         const std::vector<int> &coarse_element_levels,
         const TriMesh &fine_mesh,
-        const std::vector<int> &fine_element_levels);
+        const std::vector<int> &fine_element_levels,
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
 
     HelmholtzLodSolution solve_load(const ComplexVector &fine_load) const;
     HelmholtzLodSolution solve_source(const ComplexFunction &source) const;
@@ -123,7 +124,8 @@ private:
     static HelmholtzLodModel build_with_problem(
         HelmholtzProblemConfig config,
         HelmholtzProblemData problem,
-        double mesh_and_interpolation_ms);
+        double mesh_and_interpolation_ms,
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
 
     HelmholtzProblemConfig config_;
     HelmholtzProblemData problem_;

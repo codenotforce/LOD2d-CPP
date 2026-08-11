@@ -211,9 +211,10 @@ void verify_reference_capacity_stops_transactionally() {
     PracticalDriverConfig config = base_config();
     config.initial_coarse_level = 1;
     config.reference_level = 2;
-    config.c_H = 1e-6;
+    config.tolerance_reference = 1e-14;
+    config.theta_loc = 100.0;
     config.limits.maximum_H_steps = 10;
-    config.limits.maximum_iterations = 20;
+    config.limits.maximum_iterations = 30;
     PracticalAdaptiveDriver driver(r1_problem(), config);
     const std::uint64_t epoch = driver.hierarchy().reference_epoch();
     const std::uint64_t reference_version =
@@ -255,6 +256,34 @@ void verify_one_trajectory_multiple_target_extraction() {
             "multi-target extraction did not select first hits from one trajectory");
 }
 
+void verify_posterior_convergence_diagnostic() {
+    std::vector<PracticalIterationRecord> stable(3);
+    stable[0].coarse_nodes = 10;
+    stable[0].reference_energy_error = 0.4;
+    stable[1].coarse_nodes = 20;
+    stable[1].reference_energy_error = 0.2;
+    stable[2].coarse_nodes = 40;
+    stable[2].reference_energy_error = 0.1;
+    const PracticalConvergenceDiagnostic stable_result =
+        diagnose_practical_convergence_regime(stable);
+    require(stable_result.regime
+                == PracticalConvergenceRegime::ObservedStableDecay
+                && stable_result.distinct_points == 3
+                && stable_result.previous_log_slope
+                && stable_result.last_log_slope,
+            "stable posterior error decay was not recognized");
+
+    stable[1].reference_energy_error = 0.5;
+    require(diagnose_practical_convergence_regime(stable).regime
+                == PracticalConvergenceRegime::PreAsymptotic,
+            "nonmonotone posterior error was not marked pre-asymptotic");
+
+    stable.pop_back();
+    require(diagnose_practical_convergence_regime(stable).regime
+                == PracticalConvergenceRegime::InsufficientData,
+            "two posterior error points were treated as a convergence regime");
+}
+
 } // namespace
 
 int main() {
@@ -265,6 +294,7 @@ int main() {
         verify_estimator_driven_H_refinement_preserves_epoch();
         verify_reference_capacity_stops_transactionally();
         verify_one_trajectory_multiple_target_extraction();
+        verify_posterior_convergence_diagnostic();
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_practical_driver failed: "
                   << error.what() << '\n';

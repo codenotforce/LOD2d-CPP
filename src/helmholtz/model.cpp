@@ -325,7 +325,8 @@ HelmholtzLodModel HelmholtzLodModel::build_adaptive(
     const TriMesh &coarse_mesh,
     const std::vector<int> &coarse_element_levels,
     const TriMesh &fine_mesh,
-    const std::vector<int> &fine_element_levels) {
+    const std::vector<int> &fine_element_levels,
+    HelmholtzCorrectorPatchCache *corrector_cache) {
     if (config.wavenumber <= 0.0)
         throw std::invalid_argument("Helmholtz wavenumber must be positive");
     HelmholtzProblemConfig resolved = config;
@@ -339,13 +340,15 @@ HelmholtzLodModel HelmholtzLodModel::build_adaptive(
     HelmholtzProblemData problem = build_adaptive_helmholtz_problem_data(
         coarse_mesh, coarse_element_levels, fine_mesh, fine_element_levels, resolved.ell);
     return build_with_problem(
-        std::move(resolved), std::move(problem), elapsed_ms(mesh_start));
+        std::move(resolved), std::move(problem), elapsed_ms(mesh_start),
+        corrector_cache);
 }
 
 HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     HelmholtzProblemConfig config,
     HelmholtzProblemData problem,
-    double mesh_and_interpolation_ms) {
+    double mesh_and_interpolation_ms,
+    HelmholtzCorrectorPatchCache *corrector_cache) {
     const auto total_start = std::chrono::steady_clock::now();
     HelmholtzLodModel model;
     model.config_ = std::move(config);
@@ -388,7 +391,8 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.problem_.fine_node_level_prolongations,
         model.problem_.fine_element_level_prolongations,
         model.operators_,
-        model.config_.patch_solver);
+        model.config_.patch_solver,
+        corrector_cache);
     model.build_timings_.correctors_ms = elapsed_ms(stage_start);
     std::size_t raw_corrector_entries = 0;
     for (const auto &element : model.correctors_.primal) {

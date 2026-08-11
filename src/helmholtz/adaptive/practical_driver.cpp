@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -34,23 +33,6 @@ double maximum_kappa_H(const TriMesh &mesh, const double wavenumber) {
         value = std::max(value, wavenumber * triangle_diameter(mesh, triangle));
     }
     return value;
-}
-
-std::vector<int> inadmissible_coarse_elements(
-    const TriMesh &mesh,
-    const double wavenumber,
-    const double threshold) {
-    std::vector<int> marked;
-    const double guard = 64.0 * std::numeric_limits<double>::epsilon() *
-                         std::max(1.0, std::abs(threshold));
-    for (std::size_t element = 0; element < mesh.elems.size(); ++element) {
-        const double value =
-            wavenumber * triangle_diameter(mesh, mesh.elems[element]);
-        if (value > threshold + guard) {
-            marked.push_back(static_cast<int>(element));
-        }
-    }
-    return marked;
 }
 
 std::vector<int> free_coarse_nodes(const TriMesh &mesh) {
@@ -156,6 +138,19 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
     throw_unknown_enum("practical driver action", action);
 }
 
+const char *practical_convergence_regime_name(
+    const PracticalConvergenceRegime regime) {
+    switch (regime) {
+    case PracticalConvergenceRegime::InsufficientData:
+        return "insufficient_data";
+    case PracticalConvergenceRegime::PreAsymptotic:
+        return "pre_asymptotic";
+    case PracticalConvergenceRegime::ObservedStableDecay:
+        return "observed_stable_decay";
+    }
+    throw_unknown_enum("practical convergence regime", regime);
+}
+
 std::vector<PracticalTargetHit> extract_practical_target_hits(
     const std::vector<PracticalIterationRecord> &journal,
     const std::vector<double> &targets) {
@@ -177,6 +172,45 @@ std::vector<PracticalTargetHit> extract_practical_target_hits(
         }
         result.push_back(hit);
     }
+    return result;
+}
+
+PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
+    const std::vector<PracticalIterationRecord> &journal) {
+    std::vector<std::pair<std::size_t, double>> points;
+    for (const PracticalIterationRecord &record : journal) {
+        if (!record.reference_energy_error || record.coarse_nodes == 0
+            || !std::isfinite(*record.reference_energy_error)
+            || !(*record.reference_energy_error > 0.0))
+            continue;
+        if (!points.empty() && points.back().first == record.coarse_nodes) {
+            points.back().second = *record.reference_energy_error;
+        } else if (points.empty() || record.coarse_nodes > points.back().first) {
+            points.emplace_back(
+                record.coarse_nodes, *record.reference_energy_error);
+        }
+    }
+
+    PracticalConvergenceDiagnostic result;
+    result.distinct_points = points.size();
+    if (points.size() < 3) return result;
+    const auto log_slope = [](const auto &coarser, const auto &finer) {
+        return -std::log(finer.second / coarser.second)
+            / std::log(static_cast<double>(finer.first)
+                       / static_cast<double>(coarser.first));
+    };
+    result.previous_log_slope = log_slope(
+        points[points.size() - 3], points[points.size() - 2]);
+    result.last_log_slope = log_slope(
+        points[points.size() - 2], points[points.size() - 1]);
+    const double smaller = std::min(
+        *result.previous_log_slope, *result.last_log_slope);
+    const double larger = std::max(
+        *result.previous_log_slope, *result.last_log_slope);
+    result.regime = std::isfinite(smaller) && std::isfinite(larger)
+            && smaller > 0.0 && larger <= 2.0 * smaller
+        ? PracticalConvergenceRegime::ObservedStableDecay
+        : PracticalConvergenceRegime::PreAsymptotic;
     return result;
 }
 
@@ -331,65 +365,6 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
             }
 
             if (state_ == PracticalDriverState::CoarseAdmissibility) {
-                const std::vector<int> marked = inadmissible_coarse_elements(
-                    hierarchy_->coarse_mesh(), config_.wavenumber, config_.c_H);
-                if (!marked.empty()) {
-                    if (H_steps_ >= config_.limits.maximum_H_steps) {
-                        stop_reason = "maximum coarse-refinement steps reached during admissibility";
-                        state_ = PracticalDriverState::WorkLimitReached;
-                        PracticalIterationRecord record;
-                        record.state_before = PracticalDriverState::CoarseAdmissibility;
-                        record.state_after = state_;
-                        record.action = PracticalDriverAction::StopWorkLimit;
-                        record.marked_H = marked.size();
-                        record.detail = stop_reason;
-                        append_record(std::move(record));
-                        break;
-                    }
-                    const auto begin = std::chrono::steady_clock::now();
-                    const ReferenceEpochRefinementResult refined =
-                        hierarchy_->refine_coarse_preserving_reference(marked);
-                    const auto end = std::chrono::steady_clock::now();
-                    if (refined.status ==
-                        ReferenceEpochRefinementStatus::ReferenceRefreshRequired) {
-                        stop_reason = refined.detail;
-                        state_ = PracticalDriverState::ReferenceRefreshRequired;
-                        PracticalIterationRecord record;
-                        record.state_before = PracticalDriverState::CoarseAdmissibility;
-                        record.state_after = state_;
-                        record.action = PracticalDriverAction::StopReferenceRefreshRequired;
-                        record.marked_H = marked.size();
-                        record.time_mesh_seconds = elapsed_seconds(begin, end);
-                        record.detail = stop_reason;
-                        append_record(std::move(record));
-                        break;
-                    }
-                    if (!refined.changed()) {
-                        throw std::logic_error(
-                            "Nonempty admissibility marking produced no H refinement.");
-                    }
-                    ++H_steps_;
-                    AmbientRatioEnforcementResult ambient;
-                    if (config_.localization_policy
-                        == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
-                        ambient = hierarchy_->enforce_ambient_ratio(
-                            config_.rho_star);
-                    }
-                    invalidate_discrete_cache();
-                    localization_warm_start_.resize(0);
-                    PracticalIterationRecord record;
-                    record.state_before = PracticalDriverState::CoarseAdmissibility;
-                    record.state_after = PracticalDriverState::CoarseAdmissibility;
-                    record.action = PracticalDriverAction::RefineCoarseForAdmissibility;
-                    record.marked_H = marked.size();
-                    record.ambient_refined_elements = ambient.refined_elements;
-                    record.time_mesh_seconds =
-                        elapsed_seconds(begin, std::chrono::steady_clock::now());
-                    record.detail = refined.detail;
-                    append_record(std::move(record));
-                    continue;
-                }
-
                 const auto begin = std::chrono::steady_clock::now();
                 AmbientRatioEnforcementResult ambient;
                 if (config_.localization_policy
@@ -405,7 +380,9 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 record.ambient_refined_elements = ambient.refined_elements;
                 record.time_mesh_seconds =
                     elapsed_seconds(begin, std::chrono::steady_clock::now());
-                record.detail = "coarse admissibility and ambient-ratio gates accepted";
+                record.detail =
+                    "coarse resolution recorded for posterior convergence diagnostics; "
+                    "ambient-ratio gate accepted";
                 append_record(std::move(record));
                 continue;
             }

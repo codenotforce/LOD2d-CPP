@@ -3,6 +3,8 @@
 #include "helmholtz/operators.h"
 #include "helmholtz/patch_solver.h"
 #include <Eigen/Sparse>
+#include <cstddef>
+#include <memory>
 #include <vector>
 
 namespace lod2d::helmholtz {
@@ -37,11 +39,55 @@ struct HelmholtzCorrectorDiagnostics {
     double max_gmres_relative_residual = 0.0;
     double max_schur_residual = 0.0;
     double min_schur_reciprocal_condition = 1.0;
+    int patch_cache_hits = 0;
+    int patch_cache_misses = 0;
 };
 
 struct HelmholtzCorrectorResult {
     std::vector<HelmholtzElementCorrector> primal;
     HelmholtzCorrectorDiagnostics diagnostics;
+};
+
+// Conservative in-memory cache for complete local patch solves. Hashes only
+// locate candidates; a hit additionally requires exact comparison of the
+// assembled patch system and every solver option.
+class HelmholtzCorrectorPatchCache {
+public:
+    struct Statistics {
+        std::size_t hits = 0;
+        std::size_t misses = 0;
+        std::size_t stores = 0;
+        std::size_t evictions = 0;
+        std::size_t entries = 0;
+    };
+
+    explicit HelmholtzCorrectorPatchCache(std::size_t maximum_entries = 4096);
+    ~HelmholtzCorrectorPatchCache();
+    HelmholtzCorrectorPatchCache(HelmholtzCorrectorPatchCache &&) noexcept;
+    HelmholtzCorrectorPatchCache &operator=(HelmholtzCorrectorPatchCache &&) noexcept;
+    HelmholtzCorrectorPatchCache(const HelmholtzCorrectorPatchCache &) = delete;
+    HelmholtzCorrectorPatchCache &operator=(const HelmholtzCorrectorPatchCache &) = delete;
+
+    void clear();
+    Statistics statistics() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
+
+    friend HelmholtzCorrectorResult build_helmholtz_correctors(
+        const TriMesh &,
+        const TriMesh &,
+        const Eigen::SparseMatrix<double> &,
+        const Eigen::SparseMatrix<double> &,
+        const Eigen::SparseMatrix<double> &,
+        const Eigen::SparseMatrix<double> &,
+        const std::vector<TriMesh> &,
+        const std::vector<Eigen::SparseMatrix<double>> &,
+        const std::vector<Eigen::SparseMatrix<double>> &,
+        const HelmholtzOperators &,
+        const HelmholtzPatchSolverConfig &,
+        HelmholtzCorrectorPatchCache *);
 };
 
 HelmholtzCorrectorResult build_helmholtz_correctors(
@@ -55,7 +101,8 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
     const std::vector<Eigen::SparseMatrix<double>> &node_level_prolongations,
     const std::vector<Eigen::SparseMatrix<double>> &element_level_prolongations,
     const HelmholtzOperators &operators,
-    const HelmholtzPatchSolverConfig &solver_config = {});
+    const HelmholtzPatchSolverConfig &solver_config = {},
+    HelmholtzCorrectorPatchCache *cache = nullptr);
 
 ComplexSparseMatrix build_helmholtz_corrector_matrix(
     const TriMesh &coarse,

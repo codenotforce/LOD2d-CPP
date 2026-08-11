@@ -737,6 +737,11 @@ void write_run_json(
     const double peak_mb) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
+    const PracticalConvergenceDiagnostic convergence =
+        diagnose_practical_convergence_regime(result.journal);
+    const auto optional_json_number = [](const std::optional<double> value) {
+        return value ? numeric(*value) : std::string("null");
+    };
     out << "{\n  \"schema_version\":2,\n"
         << "  \"run_id\":" << json_string(run_id) << ",\n"
         << "  \"config_hash\":" << json_string(canonical_config_hash(config)) << ",\n"
@@ -752,6 +757,14 @@ void write_run_json(
         << "  \"files\":{\"iterations\":\"iterations.csv\","
            "\"summary\":\"summary.csv\",\"ell_history\":\"ell_history.csv\","
            "\"final_mesh\":\"final_mesh.vtu\"},\n"
+        << "  \"convergence_diagnostic\":{\"status\":"
+        << json_string(practical_convergence_regime_name(convergence.regime))
+        << ",\"distinct_points\":" << convergence.distinct_points
+        << ",\"criterion\":\"last two positive error-vs-DOF log slopes differ by at most factor 2\""
+        << ",\"previous_log_slope\":"
+        << optional_json_number(convergence.previous_log_slope)
+        << ",\"last_log_slope\":"
+        << optional_json_number(convergence.last_log_slope) << "},\n"
         << "  \"timing\":{\"method_seconds\":" << numeric(method_seconds)
         << ",\"evaluation_reference_seconds\":" << numeric(reference_seconds)
         << ",\"evaluation_reference_excluded_from_method_time\":true},\n"
@@ -994,6 +1007,10 @@ int main(const int argc, char **argv) {
 
         std::cout << "run_id=" << run_id << '\n'
                   << "state=" << practical_driver_state_name(result.state) << '\n'
+                  << "convergence_regime="
+                  << practical_convergence_regime_name(
+                         diagnose_practical_convergence_regime(result.journal).regime)
+                  << '\n'
                   << "claim=implementation-study\n"
                   << "output=" << run_directory.string() << '\n';
         return result.state == PracticalDriverState::Failed ? 2 : 0;

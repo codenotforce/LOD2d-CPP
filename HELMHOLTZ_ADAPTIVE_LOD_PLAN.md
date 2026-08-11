@@ -126,7 +126,7 @@ V_h^{\mathrm{ref}}\leftarrow V_{\mathrm{amb}}.
 
 | 参数 | 建议初值 | 含义 |
 |---|---:|---|
-| `c_H` | `0.5` | 初始粗分辨率条件 \(\kappa H_T\le c_H\) |
+| `c_H` | `0.5` | schema-v2 兼容的粗分辨率诊断值；不触发 practical driver 加密 |
 | `theta_loc` | `0.19985934547160381` | R1 校准后的 corrector 局部化证书阈值 |
 | `C0_usr` | `0.49135072057990814` | R1 observed effectivity 的 practical 基础系数 |
 | `C1_usr` | `0.059576473311033412` | R1 corrector 扰动的 practical 附加系数 |
@@ -156,13 +156,13 @@ rigorous upper bound。
 每个 reference epoch 严格执行以下顺序：
 
 ```text
-输入: T_H, T_h^ref, ell, c_H, theta_loc, C0_usr, C1_usr,
+输入: T_H, T_h^ref, ell, theta_loc, C0_usr, C1_usr,
       theta_H, rho_star, tol_ref, work limits
 输出: T_H, T_h,amb, ell, U, eta_H, Theta_loc, 完整迭代日志
 
 1. T_h,amb <- T_h^ref。
-2. 加密所有违反 kappa*H_T <= c_H 的粗单元；同步 ambient shadow，
-   直到 rho_amb <= rho_star。
+2. 记录 max_T kappa*H_T 但不以先验 c_H 触发加密；同步 ambient shadow，
+   直到 rho_amb <= rho_star。预渐近区只由已有 reference-error 轨迹后验识别。
 3. 在固定 reference 空间计算 reference localized correctors 和 Theta_loc。
 4. 若 Theta_loc > theta_loc：
       ell <- ell + 1（全局）；
@@ -595,8 +595,18 @@ localization/ambient 工作的完全跳过，以及第 2 项 patch 内多右端 
 由 10.107 秒降至 1.404 秒，method time 由 10.217 秒降至 1.509 秒，`Theta_loc`、标记和
 误差在舍入范围内不变；证据见 `profiles/R2a-k16-development-v1.md`。practical driver
 在 H 或 ell 改变后仍以 full rebuild 为正确性基线，尚未启用 production corrector/patch
-cache，也未根据单个 development profile 调整求解器容差。先冻结可行的生产 `c_H` 并
-取得至少一个真实 H-step profile，再从第 3 项开始；每项必须与 full rebuild 逐步对照。
+cache，也未根据单个 development profile 调整求解器容差。生产实验不再为满足先验
+`c_H` 扩大 reference 网格；完整绘制已有 reference-error 轨迹，并仅在误差随加密持续下降、
+局部对数斜率已脱离明显预渐近波动的区段比较方法。若数据不支持，则标注
+`pre_asymptotic`，不追加昂贵 reference refinement 来调出预期结果。第 3 项 cache 必须
+与 full rebuild 逐步对照后才可启用。
+
+corrector patch cache 的 correctness scaffold 已加入：相同离散状态全命中且与 full
+rebuild 在 corrector、基、粗算子和 LOD 解上逐项一致；PDE 或实际 patch system 改变均
+fail closed；若增大 ell 后 patch 已被边界截断为同一个系统，则允许数学等价复用。
+当前一次局部 H 加密会改变全局准插值约束，小规模测试没有可严格复用的远场 patch，
+因此缓存保持 opt-in、未接入 production driver，避免无命中时增加哈希和
+存储开销。局部 H 复用须先把约束依赖局部化，再重新通过同一 full-rebuild 对照。
 
 ## 9. 验收门槛
 

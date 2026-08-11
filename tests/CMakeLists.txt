@@ -55,6 +55,12 @@ add_executable(test_helmholtz_corrector test_helmholtz_corrector.cpp)
 target_link_libraries(test_helmholtz_corrector PRIVATE lod2d_core)
 add_test(NAME helmholtz_corrector COMMAND test_helmholtz_corrector)
 
+add_executable(test_helmholtz_corrector_cache
+    test_helmholtz_corrector_cache.cpp)
+target_link_libraries(test_helmholtz_corrector_cache PRIVATE lod2d_core)
+add_test(NAME helmholtz_corrector_cache
+    COMMAND test_helmholtz_corrector_cache)
+
 add_executable(test_helmholtz_model test_helmholtz_model.cpp)
 target_link_libraries(test_helmholtz_model PRIVATE lod2d_core)
 add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)

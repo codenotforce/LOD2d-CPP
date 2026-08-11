@@ -73,6 +73,9 @@ struct PracticalDriverConfig {
     int ell_max = 6;
     double wavenumber = 4.0;
     double boundary_beta = 1.0;
+    // Schema-v2 compatibility/reporting value. The practical driver does not
+    // refine from this prior; pre-asymptotic points are diagnosed a posteriori
+    // from the reference-error trajectory.
     double c_H = 0.5;
     double theta_loc = 0.25;
     double C0_usr = 1.0;
@@ -144,11 +147,31 @@ struct PracticalTargetHit {
     std::optional<std::size_t> journal_index;
 };
 
+enum class PracticalConvergenceRegime {
+    InsufficientData,
+    PreAsymptotic,
+    ObservedStableDecay,
+};
+
+struct PracticalConvergenceDiagnostic {
+    PracticalConvergenceRegime regime =
+        PracticalConvergenceRegime::InsufficientData;
+    std::size_t distinct_points = 0;
+    std::optional<double> previous_log_slope;
+    std::optional<double> last_log_slope;
+};
+
 // Post-processing only: extract the first empirical reference-energy hit for
 // every target from one already completed trajectory.
 std::vector<PracticalTargetHit> extract_practical_target_hits(
     const std::vector<PracticalIterationRecord> &journal,
     const std::vector<double> &targets);
+
+// Post-processing only. Uses existing reference-error samples, so it never
+// triggers another solve or influences MARK/STOP. Stable decay means that the
+// last two error-vs-DOF log slopes are positive and differ by at most factor 2.
+PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
+    const std::vector<PracticalIterationRecord> &journal);
 
 class PracticalAdaptiveDriver {
 public:
@@ -191,5 +214,6 @@ private:
 
 const char *practical_driver_state_name(PracticalDriverState state);
 const char *practical_driver_action_name(PracticalDriverAction action);
+const char *practical_convergence_regime_name(PracticalConvergenceRegime regime);
 
 } // namespace lod2d::helmholtz::adaptive
