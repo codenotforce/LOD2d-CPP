@@ -227,6 +227,11 @@ ambient 使用实际三角形直径和 element-parent 映射检查比值，并�
 
 ### WP2：把现有 kernel residual 泛化成两种用途
 
+**状态：已完成（2026-08-11）。** 共享的局部 kernel Riesz 求解器现可按
+`KernelRieszSpace` 显式选择固定 reference 或 ambient shadow；两条路径返回不同结果
+类型，ambient 结果不含 `eta_H` 标记接口。历史 audit/certified 路径保留为兼容回归，
+不作为新 practical driver 的默认接口。
+
 涉及文件：
 
 - `include/helmholtz/adaptive/kernel_residual.h`
@@ -243,6 +248,17 @@ ambient 使用实际三角形直径和 element-parent 映射检查比值，并�
 
 不得把 ambient Riesz 量直接改名为 reference estimator。验收时分别检查 kernel
 约束、Riesz 恒等式、局部平方和与单元分配守恒。
+
+实现记录：`compute_reference_residual_riesz()` 仅在 `reference_mesh()`、
+`reference_quasi_interpolation()` 上计算节点指标、总 η_H、守恒的单元分配和 Dörfler
+集合；ambient shadow 加密后，相同 reference 输入的 η_H 保持不变。
+`compute_ambient_defect_riesz()` 仅在 `ambient_mesh()` 上接收按粗基排列的 defect RHS，
+返回逐 patch 的 Riesz representatives、局部 Gram 贡献及其总和 G_loc。当前 RHS 的
+ambient-to-reference 回缩构造仍严格留给 WP3，本工作包没有用未回缩 residual 冒充该
+defect。Saddle-point 与显式 kernel-basis 两种实现逐 patch 对照通过；kernel 约束、
+Riesz 恒等式、局部平方和、Gram Hermitian/半正定性和 reference 单元分配守恒均由
+`test_helmholtz_kernel_residual.cpp` 覆盖。受影响的历史 certificates/driver/backend
+定向回归为 4/4 通过；启用 benchmarks/smoke 的最终 Release 全量回归为 38/38。
 
 ### WP3：实现 ambient-to-reference retraction 和新证书
 

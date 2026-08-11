@@ -16,6 +16,14 @@ enum class KernelRieszSolver {
     KernelBasisReference
 };
 
+// The two practical-adaptive uses of the same constrained local Riesz
+// machinery.  The distinction is part of the public result type: an ambient
+// defect computation is never an eta_H estimator.
+enum class KernelRieszSpace {
+    ReferenceResidual,
+    AmbientDefect,
+};
+
 enum class KernelResidualEvidenceLevel {
     Diagnostic,
     Verified
@@ -84,18 +92,21 @@ struct KernelPatchPolicy {
     std::string hash;
 };
 
-struct AuditKernelPatch {
+struct KernelRieszPatch {
     int coarse_node = -1;
     std::vector<int> coarse_hat_support;
     std::vector<int> interpolation_support;
     std::vector<int> coarse_elements;
     std::vector<int> enlarged_coarse_elements;
-    std::vector<int> audit_dofs;
-    std::vector<int> enlarged_audit_elements;
+    std::vector<int> discrete_dofs;
+    std::vector<int> enlarged_discrete_elements;
     std::vector<int> active_constraint_rows;
     std::vector<int> independent_constraint_rows;
     Eigen::MatrixXd constraints;
 };
+
+// Compatibility name for the historical certified/audit implementation.
+using AuditKernelPatch = KernelRieszPatch;
 
 struct LocalKernelRieszResult {
     double eta = 0.0;
@@ -123,6 +134,70 @@ struct AuditKernelResidualEstimate {
     double eta = 0.0;
     double allocation_relative_error = 0.0;
 };
+
+// Reference-space residual estimator used for H marking in one fixed
+// reference epoch.  All vectors and operators live on reference_mesh().
+struct ReferenceResidualRiesz {
+    KernelRieszSpace space = KernelRieszSpace::ReferenceResidual;
+    KernelPatchPolicy policy;
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint;
+    ComplexVector global_residual;
+    std::vector<KernelRieszPatch> patches;
+    std::vector<LocalKernelRieszResult> local_results;
+    std::vector<double> node_eta;
+    std::vector<double> node_eta_squared;
+    std::vector<double> element_eta_squared;
+    std::vector<int> marked_elements;
+    double eta = 0.0;
+    double local_square_sum_relative_error = 0.0;
+    double allocation_relative_error = 0.0;
+};
+
+struct AmbientDefectLocalRiesz {
+    std::vector<LocalKernelRieszResult> columns;
+    ComplexMatrix gram;
+    double hermitian_relative_error = 0.0;
+};
+
+// Ambient-space operator data needed by WP3 to form G_loc.  defect_rhs has
+// one column per coarse input basis function; the returned Gram matrix is the
+// sum of the local b_kappa Gram contributions.  It is deliberately not an
+// eta_H result and contains no coarse-element marking.
+struct AmbientDefectRiesz {
+    KernelRieszSpace space = KernelRieszSpace::AmbientDefect;
+    KernelPatchPolicy policy;
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint;
+    std::vector<KernelRieszPatch> patches;
+    std::vector<AmbientDefectLocalRiesz> local_results;
+    std::vector<ComplexMatrix> local_gram_contributions;
+    ComplexMatrix gram;
+    Eigen::VectorXd column_eta_squared;
+    double local_square_sum_relative_error = 0.0;
+    double gram_accumulation_relative_error = 0.0;
+};
+
+KernelPatchPolicy kernel_riesz_patch_policy(
+    const ReferenceEpochHierarchy &hierarchy,
+    KernelRieszSpace space);
+
+std::vector<KernelRieszPatch> build_kernel_riesz_patches(
+    const ReferenceEpochHierarchy &hierarchy,
+    KernelRieszSpace space,
+    const KernelPatchPolicy &policy);
+
+ReferenceResidualRiesz compute_reference_residual_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexVector &reference_load,
+    const ComplexVector &candidate_on_reference,
+    double doerfler_theta,
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint);
+
+AmbientDefectRiesz compute_ambient_defect_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &ambient_operators,
+    const ComplexMatrix &defect_rhs,
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint);
 
 // Determine the verified support-propagation radius of I_H and freeze the
 // corresponding D_z/D_z^+ construction in a deterministic policy hash.
