@@ -35,8 +35,8 @@ case "$MODE" in
     ;;
   calibration)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-epoch1-calibration-v4.json
-      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-step6-calibration-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-epoch2-level12-calibration-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-epoch1-level11-step6-calibration-v4.json
     )
     ;;
   custom)
@@ -160,8 +160,17 @@ manifests = list(root.glob("*/run.json"))
 if len(manifests) != 1:
     raise SystemExit(f"expected one run.json below {root}, found {len(manifests)}")
 manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
-if manifest["status"] in {"linear_algebra_failure", "unavailable"}:
-    raise SystemExit(f"unacceptable terminal status: {manifest['status']}")
+if manifest["status"] != "success":
+    raise SystemExit(
+        f"run did not complete successfully: status={manifest['status']} "
+        f"driver_state={manifest.get('driver_state', '<missing>')} "
+        f"reason={manifest.get('stop_reason', '<missing>')}")
+policy = manifest.get("config", {}).get("trajectory_policy")
+if policy in {"fixed_work_horizon", "fixed_empirical_trajectory"} \
+        and manifest.get("driver_state") != "TrajectoryComplete":
+    raise SystemExit(
+        "fixed trajectory did not reach TrajectoryComplete: "
+        f"driver_state={manifest.get('driver_state', '<missing>')}")
 for name in ("iterations.csv", "summary.csv", "ell_history.csv", "final_mesh.vtu"):
     if not (manifests[0].parent / name).is_file():
         raise SystemExit(f"missing artifact: {name}")
