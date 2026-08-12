@@ -7,14 +7,16 @@ not reconstruct the initial hierarchy.
 
 ## Code and configuration
 
-- implementation baseline: `d309038345bf23ba6ec9481a5b3335d61b693f22`
+- continuous-driver implementation commit:
+  `d309038345bf23ba6ec9481a5b3335d61b693f22`
+- wrapper execution checkout: `6c9ae2f`
 - configuration:
   `configs/S-palod-k16-continuous-e1-epoch0-to1-step4-v4.json`
 - case/method: S/PALOD, kappa=16
 - frozen E0 practical parameters; four patch threads
 - fixed horizon: four cumulative H refinements
 - scheduled refresh: after cumulative H-step 2
-- run id: `S_PALOD_k16_r0_039f918ff7b6fdda`
+- audited wrapper run id: `S_PALOD_k16_r0_1c54bb4141b7fe83`
 
 The driver records `CompleteReferenceEpoch` before promotion and
 `RefreshReferenceEpoch` after promotion.  It rejects a refresh if coarse node,
@@ -43,10 +45,15 @@ reference mesh is the previous ambient mesh.
 | 1 | 351 | 334 | 0.298751 | 0.358690 | 0.133022 | 0.168676 |
 | 1 | 442 | 425 | 0.212844 | 0.292275 | 0.085746 | 0.125864 |
 
-The direct smoke reports `status=success`,
+The fail-closed wrapper reports `status=success`,
 `driver_state=TrajectoryComplete`, and the required fixed-horizon stop reason.
-Method time was about 59.22 s and process peak memory about 4046 MiB.  Because
-this direct invocation did not produce the server wrapper's `.time`, `.done`,
-and checksum artifacts, those resource/completion checks must be repeated with
-the wrapper before treating this as a frozen result.  Reference adequacy is
-also not enabled, so this remains a controlled E1 pilot rather than paper data.
+Its final CSV action is `CompleteTrajectory`; the `.done` sentinel exists only
+after those checks.  Method time was about 63.00 s, `/usr/bin/time` wall time
+64.08 s, process peak RSS 4,142,568 kB, and swaps zero.  Independent
+`sha256sum -c SHA256SUMS` verification passed for every listed file, including
+`run.json`, all CSV/VTK outputs, `.stdout`, `.time`, `.done`, runtime config,
+reference caches, and build identity.  The audited root is
+`results/continuous-e1-S-PALOD-k16-wrapper-2026-08-13`.
+
+Reference adequacy is not enabled, so this remains a controlled E1 pilot rather
+than paper data.
