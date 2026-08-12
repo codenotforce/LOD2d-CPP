@@ -673,9 +673,18 @@ swap 为 0；level 16 按资源增长已接近 23 GiB WSL 的安全边界，转�
 当前下一 gate 只包含 R2a epoch 6/reference level 16 与 S epoch 3/reference level 13 的
 六步校准，随后分别做 16→17 和 13→14 reference audit。两条校准在服务器串行运行，
 `PATCH_THREADS=4`，输出仍是 calibration，不得进入论文图表。只有两项最终
-`terminal_error_fraction<=0.25` 才允许冻结十个 E1 配置；当前禁止启动 E1。
+`terminal_error_fraction<=0.25` 才允许冻结十个正式 E1 配置；当前禁止启动十配置生产 E1。
 完整逐点数据、run ID、资源记录和判定见
 `experiments/helmholtz_adaptive_paper/calibration/reference-epoch-v4-2026-08-12.md`。
+
+2026-08-13 经用户明确授权，先运行了两条 S/PALOD、κ=16、两次 H 加密的探索性 E1，
+仅用于验证制造解后处理和绘图合同。epoch 0/reference level 10 与 epoch 1/level 11 均为
+`success/TrajectoryComplete`，4 patch 线程、零 swap；峰值 RSS 分别约 1.29/1.74 GiB。
+runner 现同时输出真正的非约束粗自由度 `DoF_H`、相对 reference error、制造解绝对误差和
+制造解相对误差。误差求值为单向 post-processing sink，不参与 MARK/STOP。两条短轨迹的
+reference gate 未通过/未执行，结果必须标为 exploratory，不能绕过上述正式 E1 gate。
+完整证据见
+`experiments/helmholtz_adaptive_paper/calibration/exploratory-e1-exact-error-2026-08-13.md`。
 
 corrector patch cache 的 correctness scaffold 已加入：相同离散状态全命中且与 full
 rebuild 在 corrector、基、粗算子和 LOD 解上逐项一致；PDE 或实际 patch system 改变均

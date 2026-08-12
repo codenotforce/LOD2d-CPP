@@ -22,7 +22,7 @@ matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
-from matplotlib.ticker import ScalarFormatter
+from matplotlib.ticker import NullFormatter, ScalarFormatter
 
 from paper_style import apply_paper_style
 
@@ -199,7 +199,11 @@ def plot_epoch_errors(
     figure, axes = plt.subplots(1, 2, figsize=(7.25, 3.25), sharex=False)
     colors = plt.get_cmap("tab10")
     panels = (
-        ("reference_energy_error", "relative_exact_energy_error", "Weighted energy error"),
+        (
+            "reference_energy_error",
+            "relative_exact_energy_error",
+            "Relative weighted energy error",
+        ),
         ("reference_L2_error", "relative_exact_L2_error", r"Relative $L^2$ error"),
     )
 
@@ -253,8 +257,13 @@ def plot_epoch_errors(
         all_dofs = sorted(
             {_integer(row, "DoF_H") for run in runs for row in run.rows}
         )
-        ax.set_xticks(all_dofs)
+        if len(all_dofs) > 3:
+            tick_dofs = [all_dofs[0], all_dofs[len(all_dofs) // 2], all_dofs[-1]]
+        else:
+            tick_dofs = all_dofs
+        ax.set_xticks(tick_dofs)
         ax.xaxis.set_major_formatter(ScalarFormatter())
+        ax.xaxis.set_minor_formatter(NullFormatter())
         ax.grid(True, which="major")
         ax.grid(True, which="minor", alpha=0.12)
         ax.set_xlabel(r"Unconstrained coarse degrees of freedom")
