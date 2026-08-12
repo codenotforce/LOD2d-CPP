@@ -683,6 +683,20 @@ swap 为 0；level 16 按资源增长已接近 23 GiB WSL 的安全边界，转�
 runner 现同时输出真正的非约束粗自由度 `DoF_H`、相对 reference error、制造解绝对误差和
 制造解相对误差。误差求值为单向 post-processing sink，不参与 MARK/STOP。两条短轨迹的
 reference gate 未通过/未执行，结果必须标为 exploratory，不能绕过上述正式 E1 gate。
+这两条旧轨迹分别重建 hierarchy，epoch 1 从初始粗网格重新开始，因此只能作为制造解
+后处理校准，不能解释为论文中的连续 reference epoch。论文的 refresh 语义是
+`T_h_ref <- T_h_amb`，而当前 `T_H`、累计 H-step 与当前 `ell` 均继承。
+
+2026-08-13 随后补齐单次 driver 运行内的显式 reference refresh：配置用累计
+`reference_refresh_H_steps` 指定 epoch 边界，刷新前后 fail-closed 核对粗节点数、
+粗自由度、粗单元数和 coarse mesh version，evaluation sink 按每个 epoch 的实际
+reference mesh 分别构造/缓存 FEM reference。S/PALOD、κ=16 的四步受控 E1 试跑在
+第 2 个 H-step 后从 epoch 0 刷新到 epoch 1；边界前后均为 `N_H=288`、`DoF_H=271`，
+新 reference 的 `N_ref=4209` 等于旧 ambient 的 `N_amb=4209`，epoch 1 首次求解仍在
+同一 `DoF_H=271` 上。轨迹最终为 `success/TrajectoryComplete`，末端
+`DoF_H=425`，reference energy error 约 `0.212844`，制造解相对 energy error 约
+`0.292275`。该短轨迹仍未通过正式 reference-adequacy gate，标为受控 E1 pilot，
+不作为论文正式数据。
 完整证据见
 `experiments/helmholtz_adaptive_paper/calibration/exploratory-e1-exact-error-2026-08-13.md`。
 

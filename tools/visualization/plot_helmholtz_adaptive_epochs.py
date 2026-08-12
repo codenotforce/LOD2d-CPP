@@ -66,7 +66,7 @@ def _optional_number(row: Mapping[str, str], field: str) -> Optional[float]:
     return _number(row, field)
 
 
-def load_epoch_run(directory: Path) -> EpochRun:
+def load_epoch_runs_from_directory(directory: Path) -> List[EpochRun]:
     run_path = directory / "run.json"
     iterations_path = directory / "iterations.csv"
     if not run_path.is_file() or not iterations_path.is_file():
@@ -79,7 +79,6 @@ def load_epoch_run(directory: Path) -> EpochRun:
         all_rows = list(csv.DictReader(stream))
 
     config = metadata.get("config", {})
-    epoch = int(config["reference_epoch"])
     rows = [
         row
         for row in all_rows
@@ -87,11 +86,15 @@ def load_epoch_run(directory: Path) -> EpochRun:
     ]
     if not rows:
         raise ValueError(f"run contains no evaluated error points: {directory}")
+    initial_epoch = int(config["reference_epoch"])
+    epochs = sorted({_integer(row, "reference_epoch") for row in rows})
+    if not epochs or epochs[0] != initial_epoch or epochs != list(
+        range(initial_epoch, initial_epoch + len(epochs))
+    ):
+        raise ValueError(
+            f"evaluated epochs are not contiguous from run.json in {directory}"
+        )
     for row in rows:
-        if _integer(row, "reference_epoch") != epoch:
-            raise ValueError(
-                f"iteration epoch disagrees with run.json in {directory}"
-            )
         dofs = _integer(row, "DoF_H")
         nodes = _integer(row, "N_H")
         if dofs <= 0 or dofs > nodes:
@@ -119,19 +122,37 @@ def load_epoch_run(directory: Path) -> EpochRun:
                 f"non-manufactured case {case} unexpectedly has exact errors"
             )
 
-    return EpochRun(
-        directory=directory,
-        case=case,
-        method=str(metadata["method"]),
-        wavenumber=float(config["wavenumber"]),
-        epoch=epoch,
-        status=str(metadata["status"]),
-        rows=rows,
-    )
+    return [
+        EpochRun(
+            directory=directory,
+            case=case,
+            method=str(metadata["method"]),
+            wavenumber=float(config["wavenumber"]),
+            epoch=epoch,
+            status=str(metadata["status"]),
+            rows=[row for row in rows if _integer(row, "reference_epoch") == epoch],
+        )
+        for epoch in epochs
+    ]
+
+
+def load_epoch_run(directory: Path) -> EpochRun:
+    """Load a legacy single-epoch run, rejecting a continuous trajectory."""
+    runs = load_epoch_runs_from_directory(directory)
+    if len(runs) != 1:
+        raise ValueError(f"run contains multiple reference epochs: {directory}")
+    return runs[0]
 
 
 def load_epoch_runs(directories: Iterable[Path]) -> List[EpochRun]:
-    runs = sorted((load_epoch_run(path) for path in directories), key=lambda run: run.epoch)
+    runs = sorted(
+        (
+            run
+            for path in directories
+            for run in load_epoch_runs_from_directory(path)
+        ),
+        key=lambda run: run.epoch,
+    )
     if not runs:
         raise ValueError("at least one run directory is required")
     identity = (runs[0].case, runs[0].method, runs[0].wavenumber)

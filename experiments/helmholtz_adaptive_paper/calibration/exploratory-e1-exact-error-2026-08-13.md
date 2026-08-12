@@ -1,5 +1,10 @@
 # Exploratory S/PALOD manufactured-error run (2026-08-13)
 
+> Superseded for cross-epoch interpretation: these are two independent
+> hierarchy initializations.  Epoch 1 does not inherit epoch 0's terminal
+> coarse grid.  Retain them only as manufactured-error/post-processing
+> calibration evidence; use the continuous pilot record for epoch semantics.
+
 This record is exploratory implementation evidence, not paper data.  The
 R2a/S reference-adequacy gate was still open when the runs were authorized.
 Both runs used the frozen E0 practical parameters, κ=16, two H refinements,

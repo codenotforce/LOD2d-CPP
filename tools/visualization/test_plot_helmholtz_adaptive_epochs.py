@@ -79,6 +79,33 @@ class AdaptiveEpochPlotTest(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing exact errors"):
                 plots.load_epoch_run(directory)
 
+    def test_load_continuous_run_groups_rows_by_epoch(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = self._run(Path(temporary), 0)
+            path = directory / "iterations.csv"
+            with path.open("r", encoding="utf-8", newline="") as stream:
+                rows = list(csv.DictReader(stream))
+                fields = list(rows[0])
+            inherited = dict(rows[-1])
+            inherited["reference_epoch"] = "1"
+            inherited["reference_energy_error"] = "0.31"
+            inherited["relative_exact_energy_error"] = "0.42"
+            refined = dict(inherited)
+            refined["N_H"] = "310"
+            refined["DoF_H"] = "302"
+            refined["reference_energy_error"] = "0.2"
+            refined["relative_exact_energy_error"] = "0.3"
+            with path.open("a", encoding="utf-8", newline="") as stream:
+                writer = csv.DictWriter(stream, fieldnames=fields)
+                writer.writerow(inherited)
+                writer.writerow(refined)
+
+            runs = plots.load_epoch_runs((directory,))
+            self.assertEqual([run.epoch for run in runs], [0, 1])
+            self.assertEqual(runs[0].rows[-1]["DoF_H"], runs[1].rows[0]["DoF_H"])
+            with self.assertRaisesRegex(ValueError, "multiple reference epochs"):
+                plots.load_epoch_run(directory)
+
 
 if __name__ == "__main__":
     unittest.main()
