@@ -126,7 +126,7 @@ V_h^{\mathrm{ref}}\leftarrow V_{\mathrm{amb}}.
 
 | 参数 | 建议初值 | 含义 |
 |---|---:|---|
-| `c_H` | `0.5` | schema-v2 兼容的粗分辨率诊断值；不触发 practical driver 加密 |
+| `c_H` | `0.5` | schema-v3 兼容的粗分辨率诊断值；不触发 practical driver 加密 |
 | `theta_loc` | `0.19985934547160381` | R1 校准后的 corrector 局部化证书阈值 |
 | `C0_usr` | `0.49135072057990814` | R1 observed effectivity 的 practical 基础系数 |
 | `C1_usr` | `0.059576473311033412` | R1 corrector 扰动的 practical 附加系数 |
@@ -135,6 +135,9 @@ V_h^{\mathrm{ref}}\leftarrow V_{\mathrm{amb}}.
 | `ell0` | `2` | 初始全局 oversampling 层数 |
 | `ell_max` | `6` | 防止异常无限增加的工作上限 |
 | `max_H_steps` | `10` | 单条自适应轨迹的粗加密上限 |
+| `trajectory_policy` | `practical_indicator` | 正式算法；延长校准使用 `fixed_work_horizon` |
+| `practical_stop_tolerance` | 待延长校准冻结 | (U_{prac}) 的绝对停止阈值，不等于相对误差目标 |
+| plateau policy | `ratio>=0.9` 连续 3 步 | 只读 reference-error 平台诊断，不反馈 MARK/STOP |
 
 这些数值是启动配置，不是理论常数。R1 校准后，将同一网格族、插值算子、边界条件和
 波数区间使用的 `theta_loc/C0_usr/C1_usr` 固定下来，主实验中不得逐算例调参。
@@ -157,7 +160,7 @@ rigorous upper bound。
 
 ```text
 输入: T_H, T_h^ref, ell, theta_loc, C0_usr, C1_usr,
-      theta_H, rho_star, tol_ref, work limits
+      theta_H, rho_star, trajectory_policy, practical_stop_tolerance, work limits
 输出: T_H, T_h,amb, ell, U, eta_H, Theta_loc, 完整迭代日志
 
 1. T_h,amb <- T_h^ref。
@@ -169,7 +172,8 @@ rigorous upper bound。
       只重算受影响 correctors 与 ambient Riesz 问题；返回 3。
    禁止执行 reference/fine refinement。
 5. 解 Petrov--Galerkin LOD 问题，计算 eta_{H,T}、eta_H 和 U_prac。
-6. 若 U_prac <= tol_ref：结束。
+6. 正式 `practical_indicator` 模式若 U_prac <= practical_stop_tolerance：结束；
+   `fixed_work_horizon` 校准模式忽略该阈值，直到冻结的 H-step 上限。
 7. 按 theta_H 对 eta_{H,T} 做 Dörfler 标记，加密 T_H 并做相容闭包。
 8. 验证 V_H subset V_h^ref；若失败，返回 ReferenceRefreshRequired，
    不得在粗加密函数内部偷偷改变 reference 网格。
@@ -178,6 +182,9 @@ rigorous upper bound。
 
 必须写状态转换测试，保证任何 `Theta_loc > theta_loc` 的下一动作都是
 `IncreaseGlobalEll`，从状态枚举中删除/禁用 `RefineCorrectorFine` 分支。
+论文相对 reference-energy 目标始终是事后评价量，不得作为在线停止阈值。校准模式可
+报告相邻误差比、负对数改善和 DOF 归一化斜率；只有误差仍单调下降且比值至少 0.9、
+连续 3 个 H-step 成立时才标记 `plateau_observed`。单步不降或反弹必须清零计数。
 
 ## 4. 当前项目差距和代码工作包
 
@@ -418,6 +425,13 @@ reference solve 一并单列并从 method time 排除。四个共同误差目标
 benchmarks/smoke 的 Release 全量回归为 41/41。这里的 WP5 完成不表示 E1 五方法
 backend 或正式生产矩阵已经完成；它们仍按后续实验阶段推进。
 
+资源 pilot 后合同升级为 schema v3（2026-08-12）：v2 曾把绝对 (U_{prac}) 停止阈值
+隐式设成最小相对 reference-error 目标 0.01，R2a 因而在相对误差约 0.0189 时提前停止。
+v3 将 `practical_stop_tolerance` 与 `relative_energy_targets` 分离，并新增
+`trajectory_policy=fixed_work_horizon` 的非论文校准模式。该模式继续使用同一算法标记，
+但不由 reference error 或 (U_{prac}) 提前停止；reference error 只在动作已经固定后流式
+评估并输出平台诊断。v2 schema、配置与已完成 pilot 保留为历史证据，不重写 run ID。
+
 ## 5. 简化后的数值实验矩阵
 
 实验分三层推进。只有上一层通过验收才运行下一层，以避免在错误实现上消耗大规模算力。
@@ -453,7 +467,7 @@ ambient-to-reference 一侧上界控制。局部 constraint、Riesz stationarity
 新增 `helmholtz_e0_R1_k16_calibration` Release gate 后，完整回归为 42/42；该 gate
 独立重建 CSV/JSON 和 driver smoke，当前耗时约 150 秒。
 
-E1 backend 准备状态（2026-08-12）：真实 `HLOD-fixed`、`SLOD`、`UFEM` 与 `AFEM` 已接入同一 v2
+E1 backend 准备状态（2026-08-12）：真实 `HLOD-fixed`、`SLOD`、`UFEM` 与 `AFEM` 已接入同一 practical
 paper runner。HLOD-fixed 强制 `ell0==ell_max`，复用 `eta_H`/H 标记但完全跳过 PALOD
 的 localization certificate 和 ambient refinement；SLOD 执行一致粗网格、固定先验 ell
 的真实 LOD 轨迹；UFEM 执行一致 conforming P1 加密/求解；AFEM 用体残差、内部通量跳跃
@@ -609,12 +623,16 @@ R1 进程已验证第一条 miss、第二条 hit，算法与误差列逐字节�
 的幂迭代在小谱隙下若未收敛，维数不超过 512 时改用带残差验收的 Hermitian 稠密 eigensolve；
 更大问题仍 fail closed，避免把停滞误写成证书。
 
-资源 pilot（16 worker，非论文数据）显示 R2a/PALOD/k16、reference level 10、3 个 H-step
-约需 13.5 秒与 293 MiB，误差稳定降至 0.0189；S/PALOD/k16、同级 reference、2 个 H-step
-约需 72.4 秒与 1.37 GiB，误差由 0.578 降至 0.369，certificate cost 占主导。R2a 可在
-本机继续校验；S 长轨迹以及正式 E1 必须先按 `HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md`
-在服务器比较 8/16 worker 的时间和峰值内存，再冻结生产上限。pilot 名称的输出不得入论文。
-上述优化、五方法 smoke 和 E0 gate 合并验证后的 Release 全量回归为 48/48。
+服务器资源 pilot（AMD EPYC 9554，非论文数据）比较 4/8/16 worker，三组非计时轨迹
+逐字段一致。R2a wall time 为 9.32/9.17/9.24 秒，RSS 为 247/261/289 MiB；S 为
+35.94/35.42/35.74 秒与 1.29/1.31/1.35 GiB，均无 swap。4 worker 相对 8 worker 只慢
+约 1.5% 且占用更低，因此冻结 `PATCH_THREADS=4`；16 worker 不再使用。certificate
+占 method time 约 85%--89%，后续性能工作应针对 certificate/eigensolve，不再扩大线程数。
+R2a 误差 0.190/0.0958/0.0490/0.0189，每步仍改善 49%--61%，明确未平台；S 为
+0.578/0.445/0.369，只有两个改善区间，不足以判平台。下一 gate 是 schema-v3 延长校准：
+R2a 6 H-step、S 5 H-step，均以 4 worker 串行运行。pilot/calibration 输出不得入论文。
+v2 优化合并后的 Release 全量回归为 48/48；加入 schema-v3、平台诊断与
+fixed-horizon 端到端 gate 后，Release 全量回归为 49/49（2026-08-12）。
 
 corrector patch cache 的 correctness scaffold 已加入：相同离散状态全命中且与 full
 rebuild 在 corrector、基、粗算子和 LOD 解上逐项一致；PDE 或实际 patch system 改变均
@@ -675,7 +693,7 @@ corrector h-refinement 分支绕开问题。
 
 ### 第二阶段：统一实验基础设施
 
-5. WP5：paper runner、schema v2、轨迹式容差抽取；
+5. WP5：paper runner、schema v2/v3、轨迹式容差抽取；
 6. R1 小矩阵端到端 smoke 和参数冻结；
 7. corrector/cache full-rebuild 等价性测试。
 

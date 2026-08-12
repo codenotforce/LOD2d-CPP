@@ -76,45 +76,52 @@ add_executable(bench_helmholtz_adaptive_paper
 target_link_libraries(
     bench_helmholtz_adaptive_paper PRIVATE lod2d_core lod2d_visualization_io)
 if(LOD2D_BUILD_TESTS)
-    add_test(NAME helmholtz_adaptive_paper_v2_smoke
+    add_test(NAME helmholtz_adaptive_paper_v3_smoke
         COMMAND bench_helmholtz_adaptive_paper
-            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v2.json
-            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/adaptive-paper-v2-smoke
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v3.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/adaptive-paper-v3-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
-    add_test(NAME helmholtz_hlod_fixed_paper_v2_smoke
+    add_test(NAME helmholtz_hlod_fixed_paper_v3_smoke
         COMMAND bench_helmholtz_adaptive_paper
-            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v2.json
-            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/hlod-fixed-paper-v2-smoke
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v3.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/hlod-fixed-paper-v3-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
-    add_test(NAME helmholtz_ufem_paper_v2_smoke
+    add_test(NAME helmholtz_palod_fixed_horizon_v3_smoke
         COMMAND bench_helmholtz_adaptive_paper
-            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v2.json
-            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/ufem-paper-v2-smoke
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-palod-fixed-horizon-smoke-v3.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/palod-fixed-horizon-v3-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
-    add_test(NAME helmholtz_slod_paper_v2_smoke
+    add_test(NAME helmholtz_ufem_paper_v3_smoke
         COMMAND bench_helmholtz_adaptive_paper
-            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v2.json
-            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/slod-paper-v2-smoke
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v3.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/ufem-paper-v3-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
-    add_test(NAME helmholtz_afem_paper_v2_smoke
+    add_test(NAME helmholtz_slod_paper_v3_smoke
         COMMAND bench_helmholtz_adaptive_paper
-            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v2.json
-            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/afem-paper-v2-smoke
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v3.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/slod-paper-v3-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_afem_paper_v3_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v3.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/afem-paper-v3-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
     set_tests_properties(
-        helmholtz_adaptive_paper_v2_smoke
-        helmholtz_hlod_fixed_paper_v2_smoke
-        helmholtz_ufem_paper_v2_smoke
-        helmholtz_slod_paper_v2_smoke
-        helmholtz_afem_paper_v2_smoke
-        PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v2")
+        helmholtz_adaptive_paper_v3_smoke
+        helmholtz_hlod_fixed_paper_v3_smoke
+        helmholtz_palod_fixed_horizon_v3_smoke
+        helmholtz_ufem_paper_v3_smoke
+        helmholtz_slod_paper_v3_smoke
+        helmholtz_afem_paper_v3_smoke
+        PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v3")
     set_tests_properties(
-        helmholtz_slod_paper_v2_smoke PROPERTIES TIMEOUT 120)
+        helmholtz_slod_paper_v3_smoke PROPERTIES TIMEOUT 120)
 endif()
 
 add_executable(bench_helmholtz_e0_calibration

@@ -14,7 +14,7 @@
 namespace lod2d::helmholtz::experiments {
 
 inline constexpr int paper_schema_version = 1;
-inline constexpr int practical_paper_schema_version = 2;
+inline constexpr int practical_paper_schema_version = 3;
 
 enum class PaperCase { R1, R2a, R2b, S };
 enum class PaperMethod {
@@ -186,6 +186,10 @@ bool operator==(const PaperConfig &lhs, const PaperConfig &rhs);
 // legacy certified v1 contract above: theta_h/q_h and certificate evidence
 // fields cannot enter a PALOD run identity through this type.
 enum class PracticalPaperMethod { Palod, HlodFixed, Slod, Ufem, Afem };
+enum class PracticalTrajectoryPolicy {
+    PracticalIndicator,
+    FixedWorkHorizon,
+};
 
 struct PracticalPaperConfig {
     int schema_version = practical_paper_schema_version;
@@ -206,6 +210,12 @@ struct PracticalPaperConfig {
     double C1_usr = 1.0;
     double theta_H = 0.5;
     double rho_star = 0.25;
+    PracticalTrajectoryPolicy trajectory_policy =
+        PracticalTrajectoryPolicy::PracticalIndicator;
+    // Absolute U_prac threshold, deliberately separate from the relative
+    // evaluation-reference targets below. Ignored by FixedWorkHorizon.
+    double practical_stop_tolerance = 1e-2;
+    adaptive::PracticalPlateauDiagnosticConfig plateau_diagnostic;
     HelmholtzPetrovMode petrov_mode = HelmholtzPetrovMode::TwoSided;
     HelmholtzPatchSolverKind patch_solver_kind =
         HelmholtzPatchSolverKind::DirectSaddle;
@@ -224,6 +234,9 @@ struct PracticalPaperConfig {
 
 std::string_view to_string(PracticalPaperMethod id);
 PracticalPaperMethod parse_practical_paper_method(std::string_view text);
+std::string_view to_string(PracticalTrajectoryPolicy policy);
+PracticalTrajectoryPolicy parse_practical_trajectory_policy(
+    std::string_view text);
 // Frozen E1 protocol: c_prior = 1 in ell = ceil(c_prior * log2(kappa)).
 int standard_lod_prior_ell(double wavenumber);
 void validate_practical_paper_config(const PracticalPaperConfig &config);

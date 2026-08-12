@@ -176,7 +176,15 @@ std::vector<PracticalTargetHit> extract_practical_target_hits(
 }
 
 PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
-    const std::vector<PracticalIterationRecord> &journal) {
+    const std::vector<PracticalIterationRecord> &journal,
+    const PracticalPlateauDiagnosticConfig plateau) {
+    if (!std::isfinite(plateau.minimum_error_ratio)
+        || !(plateau.minimum_error_ratio > 0.0)
+        || plateau.minimum_error_ratio > 1.0
+        || plateau.minimum_consecutive_steps == 0) {
+        throw std::invalid_argument(
+            "Practical plateau diagnostic configuration is invalid.");
+    }
     std::vector<std::pair<std::size_t, double>> points;
     for (const PracticalIterationRecord &record : journal) {
         if (!record.reference_energy_error || record.coarse_nodes == 0
@@ -193,6 +201,24 @@ PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
 
     PracticalConvergenceDiagnostic result;
     result.distinct_points = points.size();
+    for (std::size_t index = 1; index < points.size(); ++index) {
+        const double ratio = points[index].second / points[index - 1].second;
+        if (std::isfinite(ratio) && ratio > 0.0) {
+            result.last_error_ratio = ratio;
+            result.last_log_improvement = -std::log(ratio);
+        } else {
+            result.last_error_ratio.reset();
+            result.last_log_improvement.reset();
+        }
+        if (std::isfinite(ratio) && ratio >= plateau.minimum_error_ratio
+            && ratio <= 1.0) {
+            ++result.consecutive_plateau_steps;
+        } else {
+            result.consecutive_plateau_steps = 0;
+        }
+    }
+    result.plateau_observed = result.consecutive_plateau_steps
+        >= plateau.minimum_consecutive_steps;
     if (points.size() < 3) return result;
     const auto log_slope = [](const auto &coarser, const auto &finer) {
         return -std::log(finer.second / coarser.second)
@@ -253,6 +279,13 @@ void PracticalAdaptiveDriver::validate_config() const {
         && config_.ell0 != config_.ell_max) {
         throw std::invalid_argument(
             "Fixed-ell practical driver requires ell0 == ell_max.");
+    }
+    switch (config_.stop_policy) {
+    case PracticalStopPolicy::IndicatorTolerance:
+    case PracticalStopPolicy::FixedWorkHorizon:
+        break;
+    default:
+        throw std::invalid_argument("Practical driver stop policy is invalid.");
     }
     const auto positive_finite = [](const double value) {
         return std::isfinite(value) && value > 0.0;
@@ -569,11 +602,24 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     append_record(std::move(record));
                     break;
                 }
-                if (U_practical_ <= config_.tolerance_reference) {
+                if (config_.stop_policy
+                        == PracticalStopPolicy::IndicatorTolerance
+                    && U_practical_ <= config_.tolerance_reference) {
                     state_ = PracticalDriverState::Converged;
                     record.state_after = state_;
                     record.action = PracticalDriverAction::Complete;
                     record.detail = "practical reference tolerance reached";
+                    append_record(std::move(record));
+                    break;
+                }
+                if (config_.stop_policy
+                        == PracticalStopPolicy::FixedWorkHorizon
+                    && H_steps_ >= config_.limits.maximum_H_steps) {
+                    stop_reason = "fixed calibration H-step horizon reached";
+                    state_ = PracticalDriverState::WorkLimitReached;
+                    record.state_after = state_;
+                    record.action = PracticalDriverAction::StopWorkLimit;
+                    record.detail = stop_reason;
                     append_record(std::move(record));
                     break;
                 }

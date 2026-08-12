@@ -490,6 +490,11 @@ PracticalPaperConfig sample_practical_config() {
     config.C0_usr = 1.1;
     config.C1_usr = 1.3;
     config.rho_star = 0.2;
+    config.trajectory_policy =
+        PracticalTrajectoryPolicy::FixedWorkHorizon;
+    config.practical_stop_tolerance = 0.0123;
+    config.plateau_diagnostic.minimum_error_ratio = 0.92;
+    config.plateau_diagnostic.minimum_consecutive_steps = 4;
     config.petrov_mode = lod2d::helmholtz::HelmholtzPetrovMode::CorrectedTestOnly;
     config.patch_solver_kind =
         lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
@@ -508,15 +513,15 @@ PracticalPaperConfig sample_practical_config() {
     return config;
 }
 
-void verify_practical_v2_contract() {
+void verify_practical_v3_contract() {
     const PracticalPaperConfig original = sample_practical_config();
     const std::string encoded = canonical_json(original);
     const PracticalPaperConfig decoded = parse_practical_paper_config(encoded);
-    require(decoded == original, "practical v2 JSON round trip lost fields");
+    require(decoded == original, "practical v3 JSON round trip lost fields");
     require(canonical_json(decoded) == encoded,
-            "practical v2 canonical JSON changed after round trip");
+            "practical v3 canonical JSON changed after round trip");
     require(make_run_id(decoded) == make_run_id(original),
-            "practical v2 run ID is not deterministic");
+            "practical v3 run ID is not deterministic");
 
     const auto driver = make_practical_driver_config(original);
     require(driver.initial_coarse_level == original.initial_coarse_level &&
@@ -527,38 +532,50 @@ void verify_practical_v2_contract() {
                 driver.C1_usr == original.C1_usr &&
                 driver.theta_H == original.theta_H &&
                 driver.rho_star == original.rho_star &&
-                driver.tolerance_reference == 0.01 &&
+                driver.tolerance_reference ==
+                    original.practical_stop_tolerance &&
+                driver.stop_policy ==
+                    lod2d::helmholtz::adaptive::
+                        PracticalStopPolicy::FixedWorkHorizon &&
                 driver.limits.maximum_unknowns ==
                     original.work_limits.maximum_unknowns,
-            "practical v2 fields drifted while making the driver config");
+            "practical v3 fields drifted while making the driver config");
 
     PracticalPaperConfig changed = original;
     changed.reference_level += 1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
-            "practical v2 identity ignores reference_mesh level");
+            "practical v3 identity ignores reference_mesh level");
     changed = original;
     changed.rho_star = 0.3;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
-            "practical v2 identity ignores ambient ratio policy");
+            "practical v3 identity ignores ambient ratio policy");
     changed = original;
     changed.C1_usr += 0.1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
-            "practical v2 identity ignores user localization constant");
+            "practical v3 identity ignores user localization constant");
     changed = original;
     changed.work_limits.maximum_unknowns += 1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
-            "practical v2 identity ignores work limits");
+            "practical v3 identity ignores work limits");
+    changed = original;
+    changed.practical_stop_tolerance *= 2.0;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v3 identity ignores the independent stop tolerance");
+    changed = original;
+    changed.plateau_diagnostic.minimum_error_ratio = 0.9;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v3 identity ignores the plateau diagnostic policy");
 
     std::string with_legacy_theta_h = encoded;
     with_legacy_theta_h.insert(with_legacy_theta_h.size() - 1, ",\"theta_h\":0.5");
     require_invalid(
         [&] { (void)parse_practical_paper_config(with_legacy_theta_h); },
-        "practical v2 accepted legacy theta_h");
+        "practical v3 accepted legacy theta_h");
     std::string with_legacy_q_h = encoded;
     with_legacy_q_h.insert(with_legacy_q_h.size() - 1, ",\"q_h\":0.25");
     require_invalid(
         [&] { (void)parse_practical_paper_config(with_legacy_q_h); },
-        "practical v2 accepted legacy q_h");
+        "practical v3 accepted legacy q_h");
 
     changed = original;
     changed.method_id = PracticalPaperMethod::HlodFixed;
@@ -615,7 +632,7 @@ int main() {
         verify_numerical_backend_config_is_part_of_identity();
         verify_strict_validation();
         verify_status_contract();
-        verify_practical_v2_contract();
+        verify_practical_v3_contract();
         std::cout << "Helmholtz paper configuration protocol passed\n";
         return 0;
     } catch (const std::exception &error) {

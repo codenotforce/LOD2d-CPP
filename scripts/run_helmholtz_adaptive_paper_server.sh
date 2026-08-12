@@ -7,7 +7,7 @@ RESULT_DIR=${RESULT_DIR:-"$ROOT_DIR/results/helmholtz_adaptive_paper_server"}
 REFERENCE_CACHE_DIR=${REFERENCE_CACHE_DIR:-"$RESULT_DIR/reference-cache"}
 MODE=${MODE:-pilot}
 JOBS=${JOBS:-16}
-PATCH_THREADS=${PATCH_THREADS:-8}
+PATCH_THREADS=${PATCH_THREADS:-4}
 MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-16}
 VALIDATE=${VALIDATE:-1}
 
@@ -20,11 +20,11 @@ fi
 case "$MODE" in
   smoke)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v2.json
-      experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v2.json
-      experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v2.json
-      experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v2.json
-      experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v2.json
+      experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v3.json
+      experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v3.json
+      experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v3.json
+      experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v3.json
+      experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v3.json
     )
     ;;
   pilot)
@@ -33,11 +33,17 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/S-palod-k16-resource-pilot-v2.json
     )
     ;;
+  calibration)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-extended-calibration-v3.json
+      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-extended-calibration-v3.json
+    )
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, or custom" >&2
+    echo "MODE must be smoke, pilot, calibration, or custom" >&2
     exit 2
     ;;
 esac

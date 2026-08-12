@@ -67,6 +67,11 @@ enum class PracticalLocalizationPolicy {
     FixedGlobalEll,
 };
 
+enum class PracticalStopPolicy {
+    IndicatorTolerance,
+    FixedWorkHorizon,
+};
+
 struct PracticalDriverConfig {
     int initial_coarse_level = 1;
     int reference_level = 5;
@@ -84,6 +89,8 @@ struct PracticalDriverConfig {
     double theta_H = 0.5;
     double rho_star = 0.25;
     double tolerance_reference = 1e-2;
+    PracticalStopPolicy stop_policy =
+        PracticalStopPolicy::IndicatorTolerance;
     PracticalLocalizationPolicy localization_policy =
         PracticalLocalizationPolicy::AdaptiveGlobalEll;
     HelmholtzPetrovMode mode = HelmholtzPetrovMode::TwoSided;
@@ -166,6 +173,17 @@ struct PracticalConvergenceDiagnostic {
     std::size_t distinct_points = 0;
     std::optional<double> previous_log_slope;
     std::optional<double> last_log_slope;
+    std::optional<double> last_error_ratio;
+    std::optional<double> last_log_improvement;
+    std::size_t consecutive_plateau_steps = 0;
+    bool plateau_observed = false;
+};
+
+struct PracticalPlateauDiagnosticConfig {
+    // A step is plateau-like only when the reference error still decreases,
+    // but by no more than 1-minimum_error_ratio. Reporting-only.
+    double minimum_error_ratio = 0.9;
+    std::size_t minimum_consecutive_steps = 3;
 };
 
 // Post-processing only: extract the first empirical reference-energy hit for
@@ -178,7 +196,8 @@ std::vector<PracticalTargetHit> extract_practical_target_hits(
 // triggers another solve or influences MARK/STOP. Stable decay means that the
 // last two error-vs-DOF log slopes are positive and differ by at most factor 2.
 PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
-    const std::vector<PracticalIterationRecord> &journal);
+    const std::vector<PracticalIterationRecord> &journal,
+    PracticalPlateauDiagnosticConfig plateau = {});
 
 class PracticalAdaptiveDriver {
 public:

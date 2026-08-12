@@ -282,6 +282,49 @@ void verify_posterior_convergence_diagnostic() {
     require(diagnose_practical_convergence_regime(stable).regime
                 == PracticalConvergenceRegime::InsufficientData,
             "two posterior error points were treated as a convergence regime");
+
+    std::vector<PracticalIterationRecord> plateau(4);
+    for (std::size_t index = 0; index < plateau.size(); ++index)
+        plateau[index].coarse_nodes = 10U << index;
+    plateau[0].reference_energy_error = 0.4;
+    plateau[1].reference_energy_error = 0.38;
+    plateau[2].reference_energy_error = 0.365;
+    plateau[3].reference_energy_error = 0.35;
+    const PracticalConvergenceDiagnostic plateau_result =
+        diagnose_practical_convergence_regime(
+            plateau, {0.9, 3});
+    require(plateau_result.plateau_observed
+                && plateau_result.consecutive_plateau_steps == 3
+                && plateau_result.last_error_ratio
+                && plateau_result.last_log_improvement,
+            "three consecutive small improvements did not report a plateau");
+    plateau[3].reference_energy_error = 0.37;
+    const PracticalConvergenceDiagnostic increase_result =
+        diagnose_practical_convergence_regime(
+            plateau, {0.9, 3});
+    require(!increase_result.plateau_observed
+                && increase_result.consecutive_plateau_steps == 0
+                && increase_result.last_error_ratio
+                && *increase_result.last_error_ratio > 1.0,
+            "an error increase was misclassified as a reference plateau");
+}
+
+void verify_fixed_work_horizon_ignores_indicator_tolerance() {
+    PracticalDriverConfig config = base_config();
+    config.stop_policy = PracticalStopPolicy::FixedWorkHorizon;
+    config.tolerance_reference = 1e6;
+    config.limits.maximum_H_steps = 1;
+    PracticalAdaptiveDriver driver(r1_problem(), config);
+    const PracticalDriverResult result = driver.run();
+    require(result.state == PracticalDriverState::WorkLimitReached
+                && result.H_steps == 1
+                && count_action(result, PracticalDriverAction::Complete) == 0
+                && count_action(result, PracticalDriverAction::StopWorkLimit) == 1
+                && result.stop_reason
+                    == "fixed calibration H-step horizon reached",
+            "fixed work horizon stopped from the practical indicator");
+    require(result.journal.back().evaluation_candidate.size() > 0,
+            "fixed work horizon did not export its terminal candidate");
 }
 
 void verify_streaming_evaluation_is_one_way() {
@@ -317,6 +360,7 @@ int main() {
         verify_reference_capacity_stops_transactionally();
         verify_one_trajectory_multiple_target_extraction();
         verify_posterior_convergence_diagnostic();
+        verify_fixed_work_horizon_ignores_indicator_tolerance();
         verify_streaming_evaluation_is_one_way();
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_practical_driver failed: "

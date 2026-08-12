@@ -1177,6 +1177,27 @@ PracticalPaperMethod parse_practical_paper_method(const std::string_view text) {
         "unknown practical paper method: " + std::string(text));
 }
 
+std::string_view to_string(const PracticalTrajectoryPolicy policy) {
+    switch (policy) {
+    case PracticalTrajectoryPolicy::PracticalIndicator:
+        return "practical_indicator";
+    case PracticalTrajectoryPolicy::FixedWorkHorizon:
+        return "fixed_work_horizon";
+    }
+    throw std::invalid_argument("unknown practical trajectory policy enum");
+}
+
+PracticalTrajectoryPolicy parse_practical_trajectory_policy(
+    const std::string_view text) {
+    for (const PracticalTrajectoryPolicy policy : {
+             PracticalTrajectoryPolicy::PracticalIndicator,
+             PracticalTrajectoryPolicy::FixedWorkHorizon}) {
+        if (to_string(policy) == text) return policy;
+    }
+    throw std::invalid_argument(
+        "unknown practical trajectory policy: " + std::string(text));
+}
+
 int standard_lod_prior_ell(const double wavenumber) {
     if (!std::isfinite(wavenumber) || !(wavenumber > 0.0)) {
         throw std::invalid_argument(
@@ -1194,6 +1215,7 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
     }
     (void)case_definition(config.case_id);
     (void)to_string(config.method_id);
+    (void)to_string(config.trajectory_policy);
     if (!(config.wavenumber == 8.0 || config.wavenumber == 16.0 ||
           config.wavenumber == 32.0)) {
         throw std::invalid_argument("practical paper wavenumber must be 8, 16, or 32");
@@ -1227,12 +1249,16 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         throw std::invalid_argument(
             "conforming FEM baselines require ell0 == ell_max == 0");
     }
-    const std::array<double, 7> positive{
+    const std::array<double, 9> positive{
         config.boundary_beta, config.c_H, config.theta_loc,
-        config.C0_usr, config.C1_usr, config.theta_H, config.rho_star};
+        config.C0_usr, config.C1_usr, config.theta_H, config.rho_star,
+        config.practical_stop_tolerance,
+        config.plateau_diagnostic.minimum_error_ratio};
     if (std::any_of(positive.begin(), positive.end(), [](const double value) {
             return !std::isfinite(value) || !(value > 0.0);
-        }) || config.theta_H != 0.5 || config.rho_star > 1.0) {
+        }) || config.theta_H != 0.5 || config.rho_star > 1.0
+        || config.plateau_diagnostic.minimum_error_ratio > 1.0
+        || config.plateau_diagnostic.minimum_consecutive_steps == 0) {
         throw std::invalid_argument("practical decision parameters are invalid");
     }
     (void)petrov_mode_name(config.petrov_mode);
@@ -1246,12 +1272,13 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         config.work_limits.maximum_wall_seconds < 0.0) {
         throw std::invalid_argument("practical work limits are invalid");
     }
-    const std::array<std::size_t, 5> integer_limits{
+    const std::array<std::size_t, 6> integer_limits{
         config.work_limits.maximum_iterations,
         config.work_limits.maximum_H_steps,
         config.work_limits.maximum_unknowns,
         config.work_limits.maximum_coarse_elements,
-        config.work_limits.maximum_ambient_elements};
+        config.work_limits.maximum_ambient_elements,
+        config.plateau_diagnostic.minimum_consecutive_steps};
     if (std::any_of(integer_limits.begin(), integer_limits.end(), [](const std::size_t value) {
             return value > max_exact_json_integer;
         })) {
@@ -1314,7 +1341,11 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
     result.C1_usr = config.C1_usr;
     result.theta_H = config.theta_H;
     result.rho_star = config.rho_star;
-    result.tolerance_reference = config.relative_energy_targets.back();
+    result.tolerance_reference = config.practical_stop_tolerance;
+    result.stop_policy = config.trajectory_policy
+            == PracticalTrajectoryPolicy::FixedWorkHorizon
+        ? adaptive::PracticalStopPolicy::FixedWorkHorizon
+        : adaptive::PracticalStopPolicy::IndicatorTolerance;
     result.localization_policy = config.method_id
             == PracticalPaperMethod::HlodFixed
         ? adaptive::PracticalLocalizationPolicy::FixedGlobalEll
@@ -1351,6 +1382,12 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"patch_solver_kind\":"
         << json_string(patch_solver_kind_name(config.patch_solver_kind))
         << ",\"petrov_mode\":" << json_string(petrov_mode_name(config.petrov_mode))
+        << ",\"plateau_diagnostic\":{\"minimum_consecutive_steps\":"
+        << config.plateau_diagnostic.minimum_consecutive_steps
+        << ",\"minimum_error_ratio\":"
+        << number(config.plateau_diagnostic.minimum_error_ratio) << "}"
+        << ",\"practical_stop_tolerance\":"
+        << number(config.practical_stop_tolerance)
         << ",\"quadrature\":{\"base_triangle_order\":"
         << config.quadrature.base_triangle_order
         << ",\"gaussian_triangle_order\":"
@@ -1374,6 +1411,8 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"theta_H\":" << number(config.theta_H)
         << ",\"theta_loc\":" << number(config.theta_loc)
         << ",\"timing_repeats\":" << config.timing_repeats
+        << ",\"trajectory_policy\":"
+        << json_string(to_string(config.trajectory_policy))
         << ",\"tolerances\":{\"eigen_relative_residual\":"
         << number(config.tolerances.eigen_relative_residual)
         << ",\"interpolation_right_inverse\":"
@@ -1405,9 +1444,11 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
          "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
          "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
-         "petrov_mode", "quadrature", "reference_epoch", "reference_level",
+         "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
+         "quadrature", "reference_epoch", "reference_level",
          "reference_mesh", "relative_energy_targets", "repeat_index", "rho_star",
          "schema_version", "theta_H", "theta_loc", "timing_repeats", "tolerances",
+         "trajectory_policy",
          "wavenumber", "work_limits"}, "root");
     PracticalPaperConfig config;
     config.schema_version = as_integer(get(root, "schema_version"), "schema_version");
@@ -1430,6 +1471,10 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     config.C1_usr = as_number(get(root, "C1_usr"), "C1_usr");
     config.theta_H = as_number(get(root, "theta_H"), "theta_H");
     config.rho_star = as_number(get(root, "rho_star"), "rho_star");
+    config.trajectory_policy = parse_practical_trajectory_policy(
+        as_string(get(root, "trajectory_policy"), "trajectory_policy"));
+    config.practical_stop_tolerance = as_number(
+        get(root, "practical_stop_tolerance"), "practical_stop_tolerance");
     config.petrov_mode = parse_petrov_mode(
         as_string(get(root, "petrov_mode"), "petrov_mode"));
     config.patch_solver_kind = parse_patch_solver_kind(
@@ -1442,6 +1487,18 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     config.build_hash = as_string(get(root, "build_hash"), "build_hash");
     config.manuscript_sha256 = as_string(
         get(root, "manuscript_sha256"), "manuscript_sha256");
+
+    const JsonObject &plateau = as_object(
+        get(root, "plateau_diagnostic"), "plateau_diagnostic");
+    require_keys(plateau,
+        {"minimum_consecutive_steps", "minimum_error_ratio"},
+        "plateau_diagnostic");
+    config.plateau_diagnostic.minimum_consecutive_steps =
+        static_cast<std::size_t>(as_uint64(
+            get(plateau, "minimum_consecutive_steps"),
+            "minimum_consecutive_steps"));
+    config.plateau_diagnostic.minimum_error_ratio = as_number(
+        get(plateau, "minimum_error_ratio"), "minimum_error_ratio");
 
     const JsonArray &targets = as_array(
         get(root, "relative_energy_targets"), "relative_energy_targets");
@@ -1533,7 +1590,14 @@ bool operator==(const PracticalPaperConfig &lhs,
         lhs.boundary_beta == rhs.boundary_beta && lhs.c_H == rhs.c_H &&
         lhs.theta_loc == rhs.theta_loc && lhs.C0_usr == rhs.C0_usr &&
         lhs.C1_usr == rhs.C1_usr && lhs.theta_H == rhs.theta_H &&
-        lhs.rho_star == rhs.rho_star && lhs.petrov_mode == rhs.petrov_mode &&
+        lhs.rho_star == rhs.rho_star &&
+        lhs.trajectory_policy == rhs.trajectory_policy &&
+        lhs.practical_stop_tolerance == rhs.practical_stop_tolerance &&
+        lhs.plateau_diagnostic.minimum_error_ratio ==
+            rhs.plateau_diagnostic.minimum_error_ratio &&
+        lhs.plateau_diagnostic.minimum_consecutive_steps ==
+            rhs.plateau_diagnostic.minimum_consecutive_steps &&
+        lhs.petrov_mode == rhs.petrov_mode &&
         lhs.patch_solver_kind == rhs.patch_solver_kind &&
         lhs.kernel_riesz_solver == rhs.kernel_riesz_solver &&
         lhs.work_limits.maximum_iterations == rhs.work_limits.maximum_iterations &&

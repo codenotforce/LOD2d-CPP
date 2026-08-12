@@ -632,7 +632,8 @@ void write_iterations(
     if (!out) throw std::runtime_error("cannot write " + path.string());
     out << "schema_version,case,method,kappa,run_id,reference_epoch,iteration,action,stop_reason,"
            "N_H,N_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,U_prac,"
-           "reference_energy_error,reference_L2_error,marked_H,rebuilt_correctors,"
+           "reference_energy_error,reference_L2_error,reference_error_ratio,"
+           "reference_log_improvement,reference_dof_log_slope,marked_H,rebuilt_correctors,"
            "ambient_refined_elements,time_mesh,time_corrector,time_certificate,time_solve,"
            "time_estimator,time_total_cumulative,peak_memory_mb\n";
     const bool ell_method = config.method_id == PracticalPaperMethod::Palod
@@ -645,8 +646,26 @@ void write_iterations(
         || config.method_id == PracticalPaperMethod::Afem;
     const bool localization_method =
         config.method_id == PracticalPaperMethod::Palod;
+    std::optional<std::pair<std::size_t, double>> previous_reference_point;
     for (const PracticalIterationRecord &record : result.journal) {
-        out << practical_paper_schema_version << ',' << to_string(config.case_id) << ','
+        std::optional<double> error_ratio;
+        std::optional<double> log_improvement;
+        std::optional<double> dof_log_slope;
+        if (record.reference_energy_error && previous_reference_point
+            && record.coarse_nodes > previous_reference_point->first
+            && *record.reference_energy_error > 0.0
+            && previous_reference_point->second > 0.0) {
+            error_ratio = *record.reference_energy_error
+                / previous_reference_point->second;
+            if (std::isfinite(*error_ratio) && *error_ratio > 0.0) {
+                log_improvement = -std::log(*error_ratio);
+                dof_log_slope = *log_improvement
+                    / std::log(static_cast<double>(record.coarse_nodes)
+                               / static_cast<double>(
+                                   previous_reference_point->first));
+            }
+        }
+        out << config.schema_version << ',' << to_string(config.case_id) << ','
             << to_string(config.method_id) << ',' << numeric(config.wavenumber) << ','
             << run_id << ',' << record.reference_epoch << ',' << record.sequence << ','
             << practical_driver_action_name(record.action) << ','
@@ -661,6 +680,9 @@ void write_iterations(
             << (practical_bound_method ? numeric(record.U_practical) : "") << ','
             << optional_numeric(record.reference_energy_error) << ','
             << optional_numeric(record.reference_L2_error) << ','
+            << optional_numeric(error_ratio) << ','
+            << optional_numeric(log_improvement) << ','
+            << optional_numeric(dof_log_slope) << ','
             << record.marked_H << ',' << record.rebuilt_correctors << ','
             << record.ambient_refined_elements << ','
             << numeric(record.time_mesh_seconds) << ','
@@ -670,6 +692,12 @@ void write_iterations(
             << numeric(record.time_estimator_seconds) << ','
             << numeric(record.time_total_cumulative_seconds) << ','
             << numeric(peak_mb) << '\n';
+        if (record.reference_energy_error && record.coarse_nodes > 0
+            && std::isfinite(*record.reference_energy_error)
+            && *record.reference_energy_error > 0.0) {
+            previous_reference_point = {
+                record.coarse_nodes, *record.reference_energy_error};
+        }
     }
 }
 
@@ -772,11 +800,12 @@ void write_run_json(
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
     const PracticalConvergenceDiagnostic convergence =
-        diagnose_practical_convergence_regime(result.journal);
+        diagnose_practical_convergence_regime(
+            result.journal, config.plateau_diagnostic);
     const auto optional_json_number = [](const std::optional<double> value) {
         return value ? numeric(*value) : std::string("null");
     };
-    out << "{\n  \"schema_version\":2,\n"
+    out << "{\n  \"schema_version\":" << config.schema_version << ",\n"
         << "  \"run_id\":" << json_string(run_id) << ",\n"
         << "  \"config_hash\":" << json_string(canonical_config_hash(config)) << ",\n"
         << "  \"case\":" << json_string(std::string(to_string(config.case_id))) << ",\n"
@@ -798,7 +827,19 @@ void write_run_json(
         << ",\"previous_log_slope\":"
         << optional_json_number(convergence.previous_log_slope)
         << ",\"last_log_slope\":"
-        << optional_json_number(convergence.last_log_slope) << "},\n"
+        << optional_json_number(convergence.last_log_slope)
+        << ",\"last_error_ratio\":"
+        << optional_json_number(convergence.last_error_ratio)
+        << ",\"last_log_improvement\":"
+        << optional_json_number(convergence.last_log_improvement)
+        << ",\"plateau_error_ratio_threshold\":"
+        << numeric(config.plateau_diagnostic.minimum_error_ratio)
+        << ",\"plateau_minimum_consecutive_steps\":"
+        << config.plateau_diagnostic.minimum_consecutive_steps
+        << ",\"consecutive_plateau_steps\":"
+        << convergence.consecutive_plateau_steps
+        << ",\"plateau_observed\":"
+        << (convergence.plateau_observed ? "true" : "false") << "},\n"
         << "  \"timing\":{\"method_seconds\":" << numeric(method_seconds)
         << ",\"evaluation_reference_seconds\":" << numeric(reference_seconds)
         << ",\"evaluation_reference_excluded_from_method_time\":true"
@@ -928,6 +969,9 @@ int main(const int argc, char **argv) {
             config.method_id == PracticalPaperMethod::Ufem
             || config.method_id == PracticalPaperMethod::Slod
             || config.method_id == PracticalPaperMethod::Afem;
+        const bool fixed_work_horizon =
+            config.trajectory_policy
+            == PracticalTrajectoryPolicy::FixedWorkHorizon;
         if (fixed_empirical_trajectory
             && result.state == PracticalDriverState::WorkLimitReached) {
             const double smallest_target = config.relative_energy_targets.back();
@@ -969,12 +1013,14 @@ int main(const int argc, char **argv) {
         if (arguments.check) {
             const bool acceptable_state =
                 result.state == PracticalDriverState::Converged
-                || (fixed_empirical_trajectory
+                || ((fixed_empirical_trajectory || fixed_work_horizon)
                     && result.state == PracticalDriverState::WorkLimitReached);
             if (!acceptable_state ||
                 std::none_of(result.journal.begin(), result.journal.end(),
                              [](const PracticalIterationRecord &record) {
                                  return record.action == PracticalDriverAction::Complete
+                                     || record.action
+                                         == PracticalDriverAction::StopWorkLimit
                                      || record.action
                                          == PracticalDriverAction::SolveUniformFem
                                      || record.action
@@ -1000,11 +1046,20 @@ int main(const int argc, char **argv) {
                         return record.action == action;
                     });
             };
-            if (config.method_id == PracticalPaperMethod::Palod
-                && (!has_action(PracticalDriverAction::AcceptLocalization)
-                    || !has_action(PracticalDriverAction::Complete))) {
-                throw std::runtime_error(
-                    "PALOD smoke did not execute localization and completion");
+            if (config.method_id == PracticalPaperMethod::Palod) {
+                const bool invalid_completion = fixed_work_horizon
+                    ? (!has_action(PracticalDriverAction::StopWorkLimit)
+                       || has_action(PracticalDriverAction::Complete)
+                       || result.H_steps
+                           != config.work_limits.maximum_H_steps
+                       || result.stop_reason
+                           != "fixed calibration H-step horizon reached")
+                    : !has_action(PracticalDriverAction::Complete);
+                if (!has_action(PracticalDriverAction::AcceptLocalization)
+                    || invalid_completion) {
+                    throw std::runtime_error(
+                        "PALOD smoke did not execute the configured trajectory policy");
+                }
             }
             if (config.method_id == PracticalPaperMethod::HlodFixed) {
                 const bool paid_certificate_cost = std::any_of(
@@ -1097,7 +1152,9 @@ int main(const int argc, char **argv) {
                   << "state=" << practical_driver_state_name(result.state) << '\n'
                   << "convergence_regime="
                   << practical_convergence_regime_name(
-                         diagnose_practical_convergence_regime(result.journal).regime)
+                         diagnose_practical_convergence_regime(
+                             result.journal,
+                             config.plateau_diagnostic).regime)
                   << '\n'
                   << "reference_cache="
                   << (reference_cache_hit ? "hit" : "miss") << '\n'
