@@ -68,5 +68,8 @@ print(
     f"terminal_fraction={data['terminal_error_fraction']:.6g}")
 PY
 
-find "$RESULT_DIR" -type f ! -path "$RESULT_DIR/SHA256SUMS" -print0 \
-  | sort -z | xargs -0 sha256sum > "$RESULT_DIR/SHA256SUMS"
+(
+  cd "$RESULT_DIR"
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | sort -z | xargs -0 sha256sum > SHA256SUMS
+)

@@ -10,6 +10,7 @@ JOBS=${JOBS:-16}
 PATCH_THREADS=${PATCH_THREADS:-4}
 MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-16}
 VALIDATE=${VALIDATE:-1}
+ALLOW_NONFROZEN_PATCH_THREADS=${ALLOW_NONFROZEN_PATCH_THREADS:-0}
 
 if ! git -C "$ROOT_DIR" diff --quiet ||
    ! git -C "$ROOT_DIR" diff --cached --quiet; then
@@ -47,6 +48,14 @@ case "$MODE" in
     exit 2
     ;;
 esac
+
+if [[ "$MODE" != "smoke" && "$MODE" != "pilot"
+      && "$PATCH_THREADS" != 4
+      && "$ALLOW_NONFROZEN_PATCH_THREADS" != 1 ]]; then
+  echo "Refusing non-frozen PATCH_THREADS=$PATCH_THREADS for $MODE mode; expected 4" >&2
+  echo "Set ALLOW_NONFROZEN_PATCH_THREADS=1 only for an explicitly non-production study" >&2
+  exit 2
+fi
 
 if [[ -n ${CONFIGS:-} ]]; then
   read -r -a CONFIG_LIST <<< "$CONFIGS"
@@ -184,7 +193,10 @@ PY
 done
 
 cat /proc/meminfo > "$RESULT_DIR/meminfo-after.txt"
-find "$RESULT_DIR" -type f ! -path "$RESULT_DIR/SHA256SUMS" -print0 \
-  | sort -z | xargs -0 sha256sum \
-  > "$RESULT_DIR/SHA256SUMS"
+(
+  cd "$RESULT_DIR"
+  find . -type f ! -path './SHA256SUMS' -print0 \
+    | sort -z | xargs -0 sha256sum \
+    > SHA256SUMS
+)
 echo "All selected adaptive-paper runs completed. Results: $RESULT_DIR"
