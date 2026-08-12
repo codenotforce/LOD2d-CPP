@@ -485,9 +485,10 @@ PaperExecution run_standard_lod_trajectory(
     ReferenceEpochHierarchy hierarchy(
         data.initial_mesh, config.initial_coarse_level, config.reference_level,
         config.reference_epoch);
-    const ComplexVector reference_load = assemble_helmholtz_load(
+    ComplexVector reference_load = assemble_helmholtz_load(
         hierarchy.reference_mesh(), data.source, config.quadrature,
         data.quadrature_context);
+    const double fixed_fine_to_coarse_ratio = hierarchy.ambient_ratio();
     PaperExecution execution;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
@@ -514,7 +515,7 @@ PaperExecution run_standard_lod_trajectory(
     initialization.state_after = PracticalDriverState::SolveAndEstimate;
     initialization.action = PracticalDriverAction::InitializeReferenceEpoch;
     initialization.detail =
-        "initialized fixed evaluation-reference epoch for uniform standard LOD";
+        "initialized standard LOD with a fixed fine-to-coarse mesh ratio";
     fill_mesh_fields(initialization);
     execution.result.journal.push_back(std::move(initialization));
 
@@ -598,10 +599,14 @@ PaperExecution run_standard_lod_trajectory(
 
         std::vector<int> marked(hierarchy.coarse_mesh().elems.size());
         std::iota(marked.begin(), marked.end(), 0);
+        const int coarse_level_before = *std::min_element(
+            hierarchy.coarse_levels().begin(), hierarchy.coarse_levels().end());
+        const int fine_level_before = *std::min_element(
+            hierarchy.reference_element_levels().begin(),
+            hierarchy.reference_element_levels().end());
         const auto mesh_begin = std::chrono::steady_clock::now();
         const ReferenceEpochRefinementResult refined =
             hierarchy.refine_coarse_preserving_reference(marked);
-        const auto mesh_end = std::chrono::steady_clock::now();
         if (refined.status
             == ReferenceEpochRefinementStatus::ReferenceRefreshRequired) {
             execution.result.state =
@@ -613,6 +618,29 @@ PaperExecution run_standard_lod_trajectory(
             throw std::runtime_error(
                 "standard LOD uniform marking produced no coarse refinement");
         }
+        const AmbientRatioEnforcementResult fine_refined =
+            hierarchy.enforce_ambient_ratio(fixed_fine_to_coarse_ratio);
+        if (!fine_refined.changed) {
+            throw std::runtime_error(
+                "standard LOD H refinement did not trigger the matching fine refinement");
+        }
+        hierarchy.refresh_reference_from_ambient();
+        const int coarse_level_after = *std::min_element(
+            hierarchy.coarse_levels().begin(), hierarchy.coarse_levels().end());
+        const int fine_level_after = *std::min_element(
+            hierarchy.reference_element_levels().begin(),
+            hierarchy.reference_element_levels().end());
+        if (coarse_level_after != coarse_level_before + 1
+            || fine_level_after != fine_level_before + 1
+            || fine_level_after - coarse_level_after
+                != fine_level_before - coarse_level_before) {
+            throw std::runtime_error(
+                "standard LOD failed to preserve its fixed h/H level difference");
+        }
+        reference_load = assemble_helmholtz_load(
+            hierarchy.reference_mesh(), data.source, config.quadrature,
+            data.quadrature_context);
+        const auto mesh_end = std::chrono::steady_clock::now();
         ++refinements;
         PracticalIterationRecord refined_record;
         refined_record.sequence = execution.result.journal.size();
@@ -620,9 +648,11 @@ PaperExecution run_standard_lod_trajectory(
         refined_record.state_after = PracticalDriverState::SolveAndEstimate;
         refined_record.action = PracticalDriverAction::RefineUniformLod;
         refined_record.marked_H = marked.size();
+        refined_record.ambient_refined_elements =
+            fine_refined.refined_elements;
         refined_record.time_mesh_seconds = elapsed_seconds(mesh_begin, mesh_end);
         refined_record.detail =
-            "uniformly refined every standard LOD coarse element";
+            "uniformly refined H and h by one level while preserving fixed h/H";
         fill_mesh_fields(refined_record);
         execution.result.journal.push_back(std::move(refined_record));
     }
@@ -1277,21 +1307,22 @@ int main(const int argc, char **argv) {
                                    == PracticalDriverAction::SolveStandardLod
                             && record.ell != expected_ell;
                     });
-                const bool paid_adaptive_cost = std::any_of(
+                const bool missed_synchronized_fine_refinement = std::any_of(
                     result.journal.begin(), result.journal.end(),
                     [](const PracticalIterationRecord &record) {
-                        return record.time_certificate_seconds != 0.0
-                            || record.time_estimator_seconds != 0.0
-                            || record.ambient_refined_elements != 0;
+                        return record.action
+                                   == PracticalDriverAction::RefineUniformLod
+                            && (record.ambient_refined_elements == 0
+                                || record.reference_epoch == 0);
                     });
                 if (!has_action(PracticalDriverAction::SolveStandardLod)
                     || !has_action(PracticalDriverAction::RefineUniformLod)
                     || has_action(PracticalDriverAction::AcceptLocalization)
                     || has_action(PracticalDriverAction::AcceptFixedEll)
                     || has_action(PracticalDriverAction::FormCoarseMarking)
-                    || wrong_ell || paid_adaptive_cost) {
+                    || wrong_ell || missed_synchronized_fine_refinement) {
                     throw std::runtime_error(
-                        "SLOD smoke did not remain on the frozen-prior uniform LOD path");
+                        "SLOD smoke did not preserve synchronized uniform H/h refinement");
                 }
             }
             if (config.method_id == PracticalPaperMethod::Afem) {
