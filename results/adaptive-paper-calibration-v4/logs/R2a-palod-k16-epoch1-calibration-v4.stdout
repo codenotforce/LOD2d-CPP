@@ -1,0 +1,6 @@
+run_id=R2a_PALOD_k16_r0_739aaa90c18030f7
+state=ReferenceRefreshRequired
+convergence_regime=observed_stable_decay
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/adaptive-paper-calibration-v4/runs/R2a-palod-k16-epoch1-calibration-v4/R2a_PALOD_k16_r0_739aaa90c18030f7

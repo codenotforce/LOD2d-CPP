@@ -1,0 +1,6 @@
+run_id=S_PALOD_k16_r0_b8272bc608cc3803
+state=ReferenceRefreshRequired
+convergence_regime=pre_asymptotic
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/adaptive-paper-calibration-v4/runs/S-palod-k16-step6-calibration-v4/S_PALOD_k16_r0_b8272bc608cc3803
