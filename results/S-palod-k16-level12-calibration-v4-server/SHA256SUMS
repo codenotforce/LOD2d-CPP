@@ -1,0 +1,14 @@
+ed873cfdb8787ac7ef981a03e399397accda389ebc15befb8b62471cb81b8b13  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/logs/S-palod-k16-epoch2-level12-step6-calibration-v4.stdout
+1d4a84f3e3e31fc362f782aacf363d340880621f6c118cca971a31bee94ff6a1  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/logs/S-palod-k16-epoch2-level12-step6-calibration-v4.time
+2ca059c2d25574ccb6933115df594e2f86c082a09d6eff5871eb74cf51073067  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/lscpu.txt
+01f557ec482e8f637188e7f81452be016a5958c36a3404f2fbc478219c6d9715  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/meminfo-after.txt
+031f23011998236a70b5b829172c43abfbd123d1834339837738505a56bc432b  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/meminfo-before.txt
+e0649273fcc6d06ed5ea9022766531223436edac277f04dc80696c3affae8446  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/reference-cache/reference_4d22306ad13069a3.bin
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4.done
+2f31a825e65f781196cc01aa990283c536976b9d4d6bc04bf2935d0d1f077155  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4/S_PALOD_k16_r0_6225f02ebe6c1f0b/ell_history.csv
+053773ac607bc67f02b7837327498f9dbd8fed5f38b4a190e06384b601752c51  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4/S_PALOD_k16_r0_6225f02ebe6c1f0b/final_mesh.vtu
+6d16001c1d42082464a946dd7b3eba758051178381c005eebf31ae1c91eba36f  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4/S_PALOD_k16_r0_6225f02ebe6c1f0b/iterations.csv
+432cd47aa0c5892f627b5f94e7d05d06496a4159a5c9503dc5e9f526f36ef030  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4/S_PALOD_k16_r0_6225f02ebe6c1f0b/run.json
+12fecf478db85312186aba364a66ecff66b8c9beea4672f38961825331f9a5c0  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4/S_PALOD_k16_r0_6225f02ebe6c1f0b/summary.csv
+9a9ceea8560f74e2b0ee331a065193c4b27bc91fa5997ddf2c285c0fd199a2a7  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runtime-configs/S-palod-k16-epoch2-level12-step6-calibration-v4.json
+d50b57fca9a15478559031702719661a4a373f64725c1230bbd7fa44c13f7f4e  /home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/server-build-identity.txt

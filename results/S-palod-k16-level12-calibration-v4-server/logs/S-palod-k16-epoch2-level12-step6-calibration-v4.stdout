@@ -1,0 +1,6 @@
+run_id=S_PALOD_k16_r0_6225f02ebe6c1f0b
+state=TrajectoryComplete
+convergence_regime=observed_stable_decay
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-palod-k16-level12-calibration-v4-server/runs/S-palod-k16-epoch2-level12-step6-calibration-v4/S_PALOD_k16_r0_6225f02ebe6c1f0b
