@@ -57,7 +57,7 @@ struct LocalizationEigenConfig {
     int maximum_iterations = 1000;
     double relative_tolerance = 1e-11;
     int dense_cross_check_max_dimension = 64;
-    int dense_fallback_max_dimension = 512;
+    int dense_fallback_max_dimension = 1024;
     ComplexVector warm_start;
 };
 
