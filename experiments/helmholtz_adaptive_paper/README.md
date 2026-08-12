@@ -149,6 +149,11 @@ Formal manifests still require frozen E0 calibration and completion of the
 acceptance gates in
 [../../HELMHOLTZ_ADAPTIVE_LOD_PLAN.md](../../HELMHOLTZ_ADAPTIVE_LOD_PLAN.md).
 
+The case-S manufactured-solution comparison at `kappa=16`, including the
+accepted run IDs, PALOD target crossings, epoch starts, and reproduction
+command, is recorded in
+[`S_K16_METHOD_COMPARISON_2026-08-13.md`](S_K16_METHOD_COMPARISON_2026-08-13.md).
+
 ## Validation
 
 The contract and paper-case regressions are included in the normal CTest suite.

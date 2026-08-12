@@ -41,6 +41,16 @@ successive measured `H`-orders. The metrics CSV contains fitted DOF slopes,
 P1/LOD ratios, fine-reference floors, and residual maxima. When the fine exact
 errors are available, both error panels display the corresponding floor.
 
+`plot_helmholtz_method_comparison.py` compares completed case-S PALOD, SLOD,
+uniform P1 FEM, and adaptive P1 FEM trajectories using the manufactured exact
+solution. It requires every input run to be `success/TrajectoryComplete`,
+checks the common case, wave number, initial coarse level, and initial coarse
+DoF, and truncates each comparator at its first evaluated point at or below the
+terminal PALOD exact relative weighted-energy error. The figure marks the
+three PALOD reference-epoch starts and includes an $N^{-1/2}$ reference slope.
+It writes the plotted observations and first-crossing summary beside the PNG
+and PDF outputs; none of these post-processing quantities feed MARK or STOP.
+
 The pollution figure uses fixed `kH=1`. Its primary panel uses `kh=1/8`; its
 strict-reference panel uses `kh=1/16`. The coarse P1 FEM exact error is
 independent of the auxiliary fine space. The fine-P1 exact error is included
@@ -67,10 +77,17 @@ cmake --build build --target bench_helmholtz_visualization -j
 python3 tools/visualization/plot_helmholtz_results.py
 python3 tools/visualization/plot_helmholtz_snapshot.py
 python3 tools/visualization/plot_helmholtz_H_convergence.py
+python3 tools/visualization/plot_helmholtz_method_comparison.py \
+  --palod=results/.../S_PALOD_run \
+  --slod=results/.../S_SLOD_run \
+  --ufem=results/.../S_UFEM_run \
+  --afem=results/.../S_AFEM_run \
+  --output=results/.../S-k16-error-vs-DoF.png
 python3 -m unittest \
   tools/visualization/test_plot_helmholtz_results.py \
   tools/visualization/test_helmholtz_snapshot.py \
-  tools/visualization/test_helmholtz_H_convergence.py
+  tools/visualization/test_helmholtz_H_convergence.py \
+  tools/visualization/test_plot_helmholtz_method_comparison.py
 ```
 
 To generate SVG in addition to PNG/PDF:
