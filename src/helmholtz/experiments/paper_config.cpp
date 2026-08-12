@@ -1230,6 +1230,24 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         config.ell0 < 0 || config.ell_max < config.ell0) {
         throw std::invalid_argument("practical mesh levels or ell limits are invalid");
     }
+    std::size_t previous_refresh = 0;
+    for (const std::size_t refresh : config.reference_refresh_H_steps) {
+        if (refresh == 0 || refresh >= config.work_limits.maximum_H_steps
+            || refresh <= previous_refresh) {
+            throw std::invalid_argument(
+                "reference_refresh_H_steps must be strictly increasing and lie in "
+                "[1, maximum_H_steps)");
+        }
+        previous_refresh = refresh;
+    }
+    if (!config.reference_refresh_H_steps.empty()
+        && (config.trajectory_policy
+                != PracticalTrajectoryPolicy::FixedWorkHorizon
+            || (config.method_id != PracticalPaperMethod::Palod
+                && config.method_id != PracticalPaperMethod::HlodFixed))) {
+        throw std::invalid_argument(
+            "scheduled reference refresh is supported only for fixed-horizon PALOD/HLOD-fixed");
+    }
     if (config.method_id == PracticalPaperMethod::HlodFixed
         && config.ell0 != config.ell_max) {
         throw std::invalid_argument(
@@ -1338,6 +1356,7 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
     result.initial_coarse_level = config.initial_coarse_level;
     result.reference_level = config.reference_level;
     result.reference_epoch = config.reference_epoch;
+    result.reference_refresh_H_steps = config.reference_refresh_H_steps;
     result.ell0 = config.ell0;
     result.ell_max = config.ell_max;
     result.wavenumber = config.wavenumber;
@@ -1405,8 +1424,17 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << config.quadrature.max_recursive_subdivisions
         << ",\"singular_triangle_order\":"
         << config.quadrature.singular_triangle_order << "}"
-        << ",\"reference_epoch\":" << config.reference_epoch
-        << ",\"reference_adequacy\":{\"enabled\":"
+        << ",\"reference_epoch\":" << config.reference_epoch;
+    if (!config.reference_refresh_H_steps.empty()) {
+        out << ",\"reference_refresh_H_steps\":[";
+        for (std::size_t index = 0;
+             index < config.reference_refresh_H_steps.size(); ++index) {
+            if (index) out << ',';
+            out << config.reference_refresh_H_steps[index];
+        }
+        out << "]";
+    }
+    out << ",\"reference_adequacy\":{\"enabled\":"
         << (config.reference_adequacy.enabled ? "true" : "false")
         << ",\"maximum_terminal_error_fraction\":"
         << number(config.reference_adequacy.maximum_terminal_error_fraction)
@@ -1455,16 +1483,30 @@ std::string canonical_json(const PracticalPaperConfig &config) {
 PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     const JsonValue parsed_root = JsonParser(json).parse();
     const JsonObject &root = as_object(parsed_root, "root");
-    require_keys(root,
-        {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
-         "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
-         "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
-         "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
-         "quadrature", "reference_adequacy", "reference_epoch", "reference_level",
-         "reference_mesh", "relative_energy_targets", "repeat_index", "rho_star",
-         "schema_version", "theta_H", "theta_loc", "timing_repeats", "tolerances",
-         "trajectory_policy",
-         "wavenumber", "work_limits"}, "root");
+    const bool has_refresh_schedule =
+        root.contains("reference_refresh_H_steps");
+    if (has_refresh_schedule) {
+        require_keys(root,
+            {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
+             "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
+             "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
+             "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
+             "quadrature", "reference_adequacy", "reference_epoch",
+             "reference_refresh_H_steps", "reference_level", "reference_mesh",
+             "relative_energy_targets", "repeat_index", "rho_star", "schema_version",
+             "theta_H", "theta_loc", "timing_repeats", "tolerances",
+             "trajectory_policy", "wavenumber", "work_limits"}, "root");
+    } else {
+        require_keys(root,
+            {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
+             "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
+             "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
+             "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
+             "quadrature", "reference_adequacy", "reference_epoch", "reference_level",
+             "reference_mesh", "relative_energy_targets", "repeat_index", "rho_star",
+             "schema_version", "theta_H", "theta_loc", "timing_repeats", "tolerances",
+             "trajectory_policy", "wavenumber", "work_limits"}, "root");
+    }
     PracticalPaperConfig config;
     config.schema_version = as_integer(get(root, "schema_version"), "schema_version");
     config.case_id = parse_paper_case(as_string(get(root, "case"), "case"));
@@ -1475,6 +1517,17 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     config.reference_level = as_integer(get(root, "reference_level"), "reference_level");
     config.ambient_mesh = as_string(get(root, "ambient_mesh"), "ambient_mesh");
     config.reference_epoch = as_uint64(get(root, "reference_epoch"), "reference_epoch");
+    if (has_refresh_schedule) {
+        const JsonArray &refreshes = as_array(
+            get(root, "reference_refresh_H_steps"),
+            "reference_refresh_H_steps");
+        config.reference_refresh_H_steps.reserve(refreshes.size());
+        for (const JsonValue &refresh : refreshes) {
+            config.reference_refresh_H_steps.push_back(
+                static_cast<std::size_t>(as_uint64(
+                    refresh, "reference_refresh_H_steps")));
+        }
+    }
     config.initial_coarse_level = as_integer(
         get(root, "initial_coarse_level"), "initial_coarse_level");
     config.ell0 = as_integer(get(root, "ell0"), "ell0");
@@ -1617,6 +1670,7 @@ bool operator==(const PracticalPaperConfig &lhs,
         lhs.reference_level == rhs.reference_level &&
         lhs.ambient_mesh == rhs.ambient_mesh &&
         lhs.reference_epoch == rhs.reference_epoch &&
+        lhs.reference_refresh_H_steps == rhs.reference_refresh_H_steps &&
         lhs.initial_coarse_level == rhs.initial_coarse_level &&
         lhs.ell0 == rhs.ell0 && lhs.ell_max == rhs.ell_max &&
         lhs.boundary_beta == rhs.boundary_beta && lhs.c_H == rhs.c_H &&

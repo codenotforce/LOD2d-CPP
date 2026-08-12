@@ -344,7 +344,8 @@ void verify_streaming_evaluation_is_one_way() {
     std::size_t received_size = 0;
     PracticalAdaptiveDriver driver(
         r1_problem(), config,
-        [&](const std::size_t, const ComplexVector &candidate) {
+        [&](const std::size_t, const ReferenceEpochHierarchy &,
+            const ComplexVector &candidate) {
             ++calls;
             received_size = static_cast<std::size_t>(candidate.size());
         });
@@ -360,6 +361,46 @@ void verify_streaming_evaluation_is_one_way() {
             "streamed evaluation candidates were retained in the journal");
 }
 
+void verify_scheduled_reference_refresh_inherits_coarse_mesh() {
+    PracticalDriverConfig config = base_config();
+    config.stop_policy = PracticalStopPolicy::FixedWorkHorizon;
+    config.tolerance_reference = 1e6;
+    config.limits.maximum_iterations = 40;
+    config.limits.maximum_H_steps = 2;
+    config.reference_refresh_H_steps = {1};
+    PracticalAdaptiveDriver driver(r1_problem(), config);
+    const PracticalDriverResult result = driver.run();
+    require(result.state == PracticalDriverState::TrajectoryComplete
+                && result.H_steps == 2,
+            "continuous reference-epoch trajectory did not complete");
+    require(count_action(result, PracticalDriverAction::CompleteReferenceEpoch) == 1
+                && count_action(result, PracticalDriverAction::RefreshReferenceEpoch) == 1,
+            "scheduled reference refresh was not recorded exactly once");
+    const PracticalIterationRecord &completed = first_action(
+        result, PracticalDriverAction::CompleteReferenceEpoch);
+    const PracticalIterationRecord &refreshed = first_action(
+        result, PracticalDriverAction::RefreshReferenceEpoch);
+    require(completed.reference_epoch == 0 && refreshed.reference_epoch == 1,
+            "scheduled refresh did not advance the explicit reference epoch");
+    require(completed.coarse_nodes == refreshed.coarse_nodes
+                && completed.coarse_dofs == refreshed.coarse_dofs
+                && completed.coarse_elements == refreshed.coarse_elements,
+            "new reference epoch did not inherit the terminal coarse mesh");
+    require(refreshed.reference_nodes == completed.ambient_nodes,
+            "new reference mesh is not the previous ambient mesh");
+    const auto first_epoch_one_solve = std::find_if(
+        result.journal.begin(), result.journal.end(),
+        [](const PracticalIterationRecord &record) {
+            return record.reference_epoch == 1
+                && record.evaluation_candidate.size() > 0;
+        });
+    require(first_epoch_one_solve != result.journal.end()
+                && first_epoch_one_solve->coarse_nodes == completed.coarse_nodes
+                && first_epoch_one_solve->coarse_dofs == completed.coarse_dofs
+                && first_epoch_one_solve->coarse_elements == completed.coarse_elements,
+            "epoch 1 did not start by solving on the inherited epoch-0 coarse mesh");
+}
+
 } // namespace
 
 int main() {
@@ -373,6 +414,7 @@ int main() {
         verify_posterior_convergence_diagnostic();
         verify_fixed_work_horizon_ignores_indicator_tolerance();
         verify_streaming_evaluation_is_one_way();
+        verify_scheduled_reference_refresh_inherits_coarse_mesh();
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_practical_driver failed: "
                   << error.what() << '\n';

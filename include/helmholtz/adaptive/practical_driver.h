@@ -41,6 +41,8 @@ enum class PracticalDriverAction {
     RefineAdaptiveFem,
     FormCoarseMarking,
     RefineCoarse,
+    CompleteReferenceEpoch,
+    RefreshReferenceEpoch,
     Complete,
     CompleteTrajectory,
     StopReferenceRefreshRequired,
@@ -101,6 +103,10 @@ struct PracticalDriverConfig {
     KernelRieszSolver riesz_solver = KernelRieszSolver::SaddlePoint;
     LocalizationEigenConfig localization_eigen;
     PracticalWorkLimits limits;
+    // Cumulative accepted H-refinement counts after which the current
+    // reference epoch is closed and the ambient mesh is promoted to the next
+    // reference mesh.  The coarse mesh and H_steps are inherited unchanged.
+    std::vector<std::size_t> reference_refresh_H_steps;
 };
 
 struct PracticalIterationRecord {
@@ -165,7 +171,8 @@ struct PracticalDriverResult {
 // state transition have been fixed. No value is returned to the driver, so an
 // evaluation reference cannot influence MARK/STOP.
 using PracticalEvaluationSink =
-    std::function<void(std::size_t, const ComplexVector &)>;
+    std::function<void(std::size_t, const ReferenceEpochHierarchy &,
+                       const ComplexVector &)>;
 
 struct PracticalTargetHit {
     double target = 0.0;
@@ -235,6 +242,7 @@ private:
         PracticalDriverState::CoarseAdmissibility;
     int ell_ = 0;
     std::size_t H_steps_ = 0;
+    std::size_t next_reference_refresh_ = 0;
     std::vector<int> pending_marking_;
     ComplexVector reference_load_;
     std::unique_ptr<HelmholtzLodModel> model_;

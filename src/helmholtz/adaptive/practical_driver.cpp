@@ -128,6 +128,10 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
         return "FormCoarseMarking";
     case PracticalDriverAction::RefineCoarse:
         return "RefineCoarse";
+    case PracticalDriverAction::CompleteReferenceEpoch:
+        return "CompleteReferenceEpoch";
+    case PracticalDriverAction::RefreshReferenceEpoch:
+        return "RefreshReferenceEpoch";
     case PracticalDriverAction::Complete:
         return "Complete";
     case PracticalDriverAction::CompleteTrajectory:
@@ -332,6 +336,21 @@ void PracticalAdaptiveDriver::validate_config() const {
         config_.limits.maximum_wall_seconds < 0.0) {
         throw std::invalid_argument("Practical driver work limits are invalid.");
     }
+    std::size_t previous_refresh = 0;
+    for (const std::size_t refresh : config_.reference_refresh_H_steps) {
+        if (refresh == 0 || refresh >= config_.limits.maximum_H_steps
+            || refresh <= previous_refresh) {
+            throw std::invalid_argument(
+                "Reference refresh H steps must be strictly increasing and lie in "
+                "[1, maximum_H_steps)." );
+        }
+        previous_refresh = refresh;
+    }
+    if (!config_.reference_refresh_H_steps.empty()
+        && config_.stop_policy != PracticalStopPolicy::FixedWorkHorizon) {
+        throw std::invalid_argument(
+            "Scheduled reference refresh requires a fixed H-step trajectory.");
+    }
 }
 
 void PracticalAdaptiveDriver::invalidate_discrete_cache() {
@@ -359,7 +378,7 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
     record.U_practical = U_practical_;
     if (evaluation_sink_ && record.evaluation_candidate.size() > 0) {
         const auto evaluation_begin = std::chrono::steady_clock::now();
-        evaluation_sink_(record.sequence, record.evaluation_candidate);
+        evaluation_sink_(record.sequence, *hierarchy_, record.evaluation_candidate);
         evaluation_seconds_excluded_ += elapsed_seconds(
             evaluation_begin, std::chrono::steady_clock::now());
         record.evaluation_candidate.resize(0);
@@ -633,6 +652,62 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     record.detail = "practical reference tolerance reached";
                     append_record(std::move(record));
                     break;
+                }
+                if (next_reference_refresh_
+                        < config_.reference_refresh_H_steps.size()
+                    && H_steps_ == config_.reference_refresh_H_steps[
+                        next_reference_refresh_]) {
+                    const std::size_t coarse_nodes_before =
+                        hierarchy_->coarse_mesh().nodes.size();
+                    const std::size_t coarse_elements_before =
+                        hierarchy_->coarse_mesh().elems.size();
+                    const std::size_t coarse_dofs_before = coarse_nodes_before
+                        - dirichlet_nodes(hierarchy_->coarse_mesh()).size();
+                    const std::uint64_t coarse_version_before =
+                        hierarchy_->coarse_mesh_version();
+
+                    record.state_after = PracticalDriverState::CoarseAdmissibility;
+                    record.action = PracticalDriverAction::CompleteReferenceEpoch;
+                    record.detail =
+                        "completed scheduled reference epoch on inherited coarse mesh";
+                    append_record(std::move(record));
+
+                    const auto refresh_begin = std::chrono::steady_clock::now();
+                    hierarchy_->refresh_reference_from_ambient();
+                    const std::size_t coarse_nodes_after =
+                        hierarchy_->coarse_mesh().nodes.size();
+                    const std::size_t coarse_elements_after =
+                        hierarchy_->coarse_mesh().elems.size();
+                    const std::size_t coarse_dofs_after = coarse_nodes_after
+                        - dirichlet_nodes(hierarchy_->coarse_mesh()).size();
+                    if (coarse_nodes_before != coarse_nodes_after
+                        || coarse_elements_before != coarse_elements_after
+                        || coarse_dofs_before != coarse_dofs_after
+                        || coarse_version_before != hierarchy_->coarse_mesh_version()) {
+                        throw std::logic_error(
+                            "Reference refresh changed the inherited coarse mesh.");
+                    }
+                    reference_load_ = assemble_helmholtz_load(
+                        hierarchy_->reference_mesh(), problem_.source,
+                        problem_.quadrature, problem_.quadrature_context);
+                    pending_marking_.clear();
+                    localization_warm_start_.resize(0);
+                    invalidate_discrete_cache();
+                    ++next_reference_refresh_;
+                    state_ = PracticalDriverState::CoarseAdmissibility;
+
+                    PracticalIterationRecord refresh_record;
+                    refresh_record.state_before =
+                        PracticalDriverState::CoarseAdmissibility;
+                    refresh_record.state_after = state_;
+                    refresh_record.action =
+                        PracticalDriverAction::RefreshReferenceEpoch;
+                    refresh_record.time_mesh_seconds = elapsed_seconds(
+                        refresh_begin, std::chrono::steady_clock::now());
+                    refresh_record.detail =
+                        "promoted ambient mesh to reference; inherited coarse mesh and ell";
+                    append_record(std::move(refresh_record));
+                    continue;
                 }
                 if (config_.stop_policy
                         == PracticalStopPolicy::FixedWorkHorizon

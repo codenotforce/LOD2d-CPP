@@ -16,6 +16,8 @@
 #include <iomanip>
 #include <iostream>
 #include <iterator>
+#include <map>
+#include <memory>
 #include <optional>
 #include <numeric>
 #include <sstream>
@@ -55,6 +57,15 @@ struct PostprocessErrors {
     std::optional<double> exact_L2;
     std::optional<double> relative_exact_energy;
     std::optional<double> relative_exact_L2;
+};
+
+struct EvaluationReference {
+    TriMesh mesh;
+    HelmholtzOperators operators;
+    ComplexVector solution;
+    std::optional<HelmholtzError> exact_norm;
+    bool cache_hit = false;
+    std::string cache_key;
 };
 
 std::string read_text(const std::filesystem::path &path) {
@@ -169,9 +180,10 @@ double peak_memory_mb() {
 
 void stream_evaluation_candidate(
     PracticalIterationRecord &record,
+    const ReferenceEpochHierarchy &hierarchy,
     const PracticalEvaluationSink &sink) {
     if (sink && record.evaluation_candidate.size() > 0) {
-        sink(record.sequence, record.evaluation_candidate);
+        sink(record.sequence, hierarchy, record.evaluation_candidate);
         record.evaluation_candidate.resize(0);
     }
 }
@@ -258,7 +270,7 @@ PaperExecution run_uniform_fem_trajectory(
         solved.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
         solved.detail = "solved conforming P1 FEM on the current uniform mesh";
         fill_mesh_fields(solved);
-        stream_evaluation_candidate(solved, evaluation_sink);
+        stream_evaluation_candidate(solved, hierarchy, evaluation_sink);
         execution.result.journal.push_back(std::move(solved));
 
         if (refinements >= config.work_limits.maximum_H_steps) {
@@ -413,7 +425,7 @@ PaperExecution run_adaptive_fem_trajectory(
             "; algebraic residual difference="
             + numeric(estimate.algebraic_relative_difference);
         fill_mesh_fields(solved);
-        stream_evaluation_candidate(solved, evaluation_sink);
+        stream_evaluation_candidate(solved, hierarchy, evaluation_sink);
         execution.result.journal.push_back(std::move(solved));
 
         if (completed_trajectory) {
@@ -569,7 +581,7 @@ PaperExecution run_standard_lod_trajectory(
             "; full model build seconds="
             + numeric(elapsed_seconds(build_begin, build_end));
         fill_mesh_fields(solved);
-        stream_evaluation_candidate(solved, evaluation_sink);
+        stream_evaluation_candidate(solved, hierarchy, evaluation_sink);
         execution.result.journal.push_back(std::move(solved));
 
         if (refinements >= config.work_limits.maximum_H_steps) {
@@ -981,66 +993,88 @@ int main(const int argc, char **argv) {
         }
         const PaperCaseData data = make_paper_case(config.case_id, config.wavenumber);
 
-        const auto reference_begin = std::chrono::steady_clock::now();
-        ReferenceEpochHierarchy reference_hierarchy(
-            data.initial_mesh, config.initial_coarse_level, config.reference_level,
-            config.reference_epoch);
-        const HelmholtzOperators reference_operators = assemble_helmholtz_operators(
-            reference_hierarchy.reference_mesh(), config.wavenumber, {}, {},
-            config.boundary_beta);
-        const ComplexVector reference_load = assemble_helmholtz_load(
-            reference_hierarchy.reference_mesh(), data.source,
-            config.quadrature, data.quadrature_context);
         const std::string reference_identity =
             "reference-sparse-lu-v1/" + config.git_commit + "/"
             + config.build_hash;
-        const std::string reference_cache_key = reference_solution_cache_key(
-            reference_hierarchy.reference_mesh(), reference_operators,
-            reference_load, reference_identity);
-        ReferenceSolutionCacheLookup reference_cache =
-            load_reference_solution_cache(
-                arguments.reference_cache_directory,
-                reference_cache_key,
-                reference_load.size());
-        const bool reference_cache_hit = reference_cache.solution.has_value();
-        ComplexVector reference_solution;
-        if (reference_cache_hit) {
-            reference_solution = std::move(*reference_cache.solution);
-        } else {
-            reference_solution = solve_helmholtz_fem(
-                reference_operators, reference_load);
-            store_reference_solution_cache(
-                arguments.reference_cache_directory,
-                reference_cache_key,
-                reference_solution);
-        }
-        const auto reference_end = std::chrono::steady_clock::now();
-
-        std::optional<HelmholtzError> exact_norm;
+        std::map<std::uint64_t, std::unique_ptr<EvaluationReference>>
+            evaluation_references;
+        double reference_construction_seconds = 0.0;
         double exact_norm_seconds = 0.0;
-        if (data.exact && data.exact_gradient) {
-            const auto exact_norm_begin = std::chrono::steady_clock::now();
-            exact_norm = compute_helmholtz_error(
-                reference_hierarchy.reference_mesh(),
-                ComplexVector::Zero(reference_solution.size()),
-                config.wavenumber, data.exact, data.exact_gradient,
-                config.quadrature, data.quadrature_context);
-            exact_norm_seconds = elapsed_seconds(
-                exact_norm_begin, std::chrono::steady_clock::now());
-        }
+        bool reference_cache_hit = true;
+        std::string reference_cache_key;
+        const auto ensure_evaluation_reference =
+            [&](const ReferenceEpochHierarchy &hierarchy)
+                -> const EvaluationReference & {
+            const std::uint64_t epoch = hierarchy.reference_epoch();
+            const auto found = evaluation_references.find(epoch);
+            if (found != evaluation_references.end()) return *found->second;
+
+            const auto reference_begin = std::chrono::steady_clock::now();
+            auto evaluation = std::make_unique<EvaluationReference>();
+            evaluation->mesh = hierarchy.reference_mesh();
+            evaluation->operators = assemble_helmholtz_operators(
+                evaluation->mesh, config.wavenumber, {}, {},
+                config.boundary_beta);
+            const ComplexVector reference_load = assemble_helmholtz_load(
+                evaluation->mesh, data.source, config.quadrature,
+                data.quadrature_context);
+            evaluation->cache_key = reference_solution_cache_key(
+                evaluation->mesh, evaluation->operators, reference_load,
+                reference_identity);
+            ReferenceSolutionCacheLookup reference_cache =
+                load_reference_solution_cache(
+                    arguments.reference_cache_directory,
+                    evaluation->cache_key, reference_load.size());
+            evaluation->cache_hit = reference_cache.solution.has_value();
+            if (evaluation->cache_hit) {
+                evaluation->solution = std::move(*reference_cache.solution);
+            } else {
+                evaluation->solution = solve_helmholtz_fem(
+                    evaluation->operators, reference_load);
+                store_reference_solution_cache(
+                    arguments.reference_cache_directory,
+                    evaluation->cache_key, evaluation->solution);
+            }
+            reference_construction_seconds += elapsed_seconds(
+                reference_begin, std::chrono::steady_clock::now());
+            if (data.exact && data.exact_gradient) {
+                const auto exact_norm_begin = std::chrono::steady_clock::now();
+                evaluation->exact_norm = compute_helmholtz_error(
+                    evaluation->mesh,
+                    ComplexVector::Zero(evaluation->solution.size()),
+                    config.wavenumber, data.exact, data.exact_gradient,
+                    config.quadrature, data.quadrature_context);
+                exact_norm_seconds += elapsed_seconds(
+                    exact_norm_begin, std::chrono::steady_clock::now());
+            }
+            reference_cache_hit = reference_cache_hit && evaluation->cache_hit;
+            reference_cache_key = evaluation->cache_key;
+            const auto inserted = evaluation_references.emplace(
+                epoch, std::move(evaluation));
+            return *inserted.first->second;
+        };
+
+        ReferenceEpochHierarchy initial_evaluation_hierarchy(
+            data.initial_mesh, config.initial_coarse_level, config.reference_level,
+            config.reference_epoch);
+        (void)ensure_evaluation_reference(initial_evaluation_hierarchy);
 
         std::vector<std::optional<PostprocessErrors>> streamed_errors;
         double streamed_evaluation_seconds = 0.0;
         double reference_error_seconds = 0.0;
         double exact_error_seconds = 0.0;
         const PracticalEvaluationSink evaluation_sink =
-            [&](const std::size_t sequence, const ComplexVector &candidate) {
+            [&](const std::size_t sequence,
+                const ReferenceEpochHierarchy &hierarchy,
+                const ComplexVector &candidate) {
                 const auto begin = std::chrono::steady_clock::now();
                 if (streamed_errors.size() <= sequence)
                     streamed_errors.resize(sequence + 1);
+                const EvaluationReference &evaluation =
+                    ensure_evaluation_reference(hierarchy);
                 streamed_errors[sequence] = postprocess_errors(
-                    config, data, reference_hierarchy.reference_mesh(),
-                    reference_operators, reference_solution, exact_norm,
+                    config, data, evaluation.mesh, evaluation.operators,
+                    evaluation.solution, evaluation.exact_norm,
                     candidate, reference_error_seconds, exact_error_seconds);
                 streamed_evaluation_seconds += elapsed_seconds(
                     begin, std::chrono::steady_clock::now());
@@ -1077,9 +1111,11 @@ int main(const int argc, char **argv) {
                 assign_postprocess_errors(
                     record, *streamed_errors[record.sequence]);
             } else if (record.evaluation_candidate.size() > 0) {
+                const EvaluationReference &evaluation =
+                    *evaluation_references.at(record.reference_epoch);
                 const PostprocessErrors errors = postprocess_errors(
-                    config, data, reference_hierarchy.reference_mesh(),
-                    reference_operators, reference_solution, exact_norm,
+                    config, data, evaluation.mesh, evaluation.operators,
+                    evaluation.solution, evaluation.exact_norm,
                     record.evaluation_candidate,
                     reference_error_seconds, exact_error_seconds);
                 assign_postprocess_errors(record, errors);
@@ -1132,8 +1168,7 @@ int main(const int argc, char **argv) {
             std::max(
                 0.0, elapsed_seconds(method_begin, method_end)
                     - streamed_evaluation_seconds),
-            elapsed_seconds(reference_begin, reference_end) +
-                reference_error_seconds,
+            reference_construction_seconds + reference_error_seconds,
             exact_norm_seconds + exact_error_seconds,
             reference_cache_hit,
             reference_cache_key,

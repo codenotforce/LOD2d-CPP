@@ -581,6 +581,20 @@ void verify_practical_v4_contract() {
     changed.reference_adequacy.maximum_terminal_error_fraction = 0.3;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
             "practical v4 identity ignores the reference adequacy policy");
+    changed = original;
+    changed.reference_refresh_H_steps = {2, 5};
+    const std::string scheduled_encoded = canonical_json(changed);
+    const PracticalPaperConfig scheduled_decoded =
+        parse_practical_paper_config(scheduled_encoded);
+    require(scheduled_decoded == changed
+                && make_practical_driver_config(scheduled_decoded)
+                       .reference_refresh_H_steps == changed.reference_refresh_H_steps
+                && canonical_config_hash(changed)
+                       != canonical_config_hash(original),
+            "continuous reference-epoch schedule did not round trip into the driver identity");
+    changed.reference_refresh_H_steps = {2, 2};
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "practical v4 accepted a repeated reference refresh step");
 
     std::string with_legacy_theta_h = encoded;
     with_legacy_theta_h.insert(with_legacy_theta_h.size() - 1, ",\"theta_h\":0.5");

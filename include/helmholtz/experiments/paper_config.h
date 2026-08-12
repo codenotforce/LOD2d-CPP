@@ -208,6 +208,9 @@ struct PracticalPaperConfig {
     int reference_level = 6;
     std::string ambient_mesh = "reference-shadow";
     std::uint64_t reference_epoch = 0;
+    // Optional cumulative H-step schedule for explicit in-run reference
+    // refreshes.  Empty preserves the original single-epoch v4 protocol.
+    std::vector<std::size_t> reference_refresh_H_steps;
     int initial_coarse_level = 2;
     int ell0 = 2;
     int ell_max = 6;
