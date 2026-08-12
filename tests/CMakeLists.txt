@@ -115,6 +115,12 @@ add_executable(test_helmholtz_paper_config test_helmholtz_paper_config.cpp)
 target_link_libraries(test_helmholtz_paper_config PRIVATE lod2d_core)
 add_test(NAME helmholtz_paper_config COMMAND test_helmholtz_paper_config)
 
+add_executable(test_helmholtz_reference_solution_cache
+    test_helmholtz_reference_solution_cache.cpp)
+target_link_libraries(test_helmholtz_reference_solution_cache PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_solution_cache
+    COMMAND test_helmholtz_reference_solution_cache)
+
 add_executable(test_helmholtz_mixed_boundary test_helmholtz_mixed_boundary.cpp)
 target_link_libraries(test_helmholtz_mixed_boundary PRIVATE lod2d_core)
 add_test(NAME helmholtz_mixed_boundary COMMAND test_helmholtz_mixed_boundary)

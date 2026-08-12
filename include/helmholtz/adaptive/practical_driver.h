@@ -6,6 +6,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -142,6 +143,12 @@ struct PracticalDriverResult {
     std::vector<PracticalIterationRecord> journal;
 };
 
+// Reporting-only, one-way sink. It is invoked after an iteration action and
+// state transition have been fixed. No value is returned to the driver, so an
+// evaluation reference cannot influence MARK/STOP.
+using PracticalEvaluationSink =
+    std::function<void(std::size_t, const ComplexVector &)>;
+
 struct PracticalTargetHit {
     double target = 0.0;
     std::optional<std::size_t> journal_index;
@@ -177,7 +184,8 @@ class PracticalAdaptiveDriver {
 public:
     PracticalAdaptiveDriver(
         PracticalDriverProblem problem,
-        PracticalDriverConfig config);
+        PracticalDriverConfig config,
+        PracticalEvaluationSink evaluation_sink = {});
 
     PracticalDriverResult run();
 
@@ -205,6 +213,8 @@ private:
     double eta_H_ = 0.0;
     double theta_loc_ = 0.0;
     double U_practical_ = 0.0;
+    PracticalEvaluationSink evaluation_sink_;
+    double evaluation_seconds_excluded_ = 0.0;
 
     void validate_config() const;
     void invalidate_discrete_cache();

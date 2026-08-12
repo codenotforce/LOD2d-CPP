@@ -229,7 +229,8 @@ LocalizationSpectrum largest_generalized_eigenvalue(
     const LocalizationEigenConfig &config) {
     if (config.maximum_iterations <= 0
         || !(config.relative_tolerance > 0.0)
-        || config.dense_cross_check_max_dimension < 0) {
+        || config.dense_cross_check_max_dimension < 0
+        || config.dense_fallback_max_dimension < 0) {
         throw std::invalid_argument("localization eigen configuration is invalid");
     }
     ComplexMatrix inverse_lower;
@@ -280,8 +281,31 @@ LocalizationSpectrum largest_generalized_eigenvalue(
             break;
         }
     }
-    if (!result.converged)
-        throw std::runtime_error("localization largest-eigenvalue iteration did not converge");
+    if (!result.converged) {
+        if (dimension > config.dense_fallback_max_dimension) {
+            throw std::runtime_error(
+                "localization largest-eigenvalue iteration did not converge");
+        }
+        Eigen::SelfAdjointEigenSolver<ComplexMatrix> dense_solver(whitened);
+        if (dense_solver.info() != Eigen::Success)
+            throw std::runtime_error("localization dense eigen fallback failed");
+        iterate = dense_solver.eigenvectors().col(dimension - 1);
+        result.lambda_max = std::max(
+            0.0, dense_solver.eigenvalues()(dimension - 1));
+        const ComplexVector applied = whitened * iterate;
+        result.relative_residual =
+            (applied - result.lambda_max * iterate).norm() / matrix_scale;
+        if (!std::isfinite(result.relative_residual)
+            || result.relative_residual > config.relative_tolerance) {
+            throw std::runtime_error(
+                "localization dense eigen fallback residual is too large");
+        }
+        result.converged = true;
+        result.used_dense_fallback = true;
+        result.dense_cross_checked = true;
+        result.dense_lambda_max = result.lambda_max;
+        result.dense_relative_difference = 0.0;
+    }
 
     result.dominant_vector = inverse_lower.adjoint() * iterate;
     const double energy_norm = std::sqrt(std::max(
@@ -289,7 +313,8 @@ LocalizationSpectrum largest_generalized_eigenvalue(
             denominator * result.dominant_vector))));
     if (energy_norm > 0.0) result.dominant_vector /= energy_norm;
 
-    if (dimension <= config.dense_cross_check_max_dimension) {
+    if (!result.used_dense_fallback
+        && dimension <= config.dense_cross_check_max_dimension) {
         Eigen::SelfAdjointEigenSolver<ComplexMatrix> dense_solver(whitened);
         if (dense_solver.info() != Eigen::Success)
             throw std::runtime_error("dense localization eigen cross-check failed");

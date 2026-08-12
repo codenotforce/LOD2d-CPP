@@ -231,6 +231,7 @@ a rebuild.
 | [experiments/helmholtz_adaptive_paper/README.md](experiments/helmholtz_adaptive_paper/README.md) | Versioned experiment schemas, IDs, timing ownership, and current execution boundary |
 | [HELMHOLTZ_HP_SERVER_RUNBOOK.md](HELMHOLTZ_HP_SERVER_RUNBOOK.md) | hp-LOD validation and server runs |
 | [HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md](HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md) | Staged pollution scans, memory gates, and recovery |
+| [HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md](HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md) | Practical adaptive-paper pilots, shared reference cache, memory gates, and result return |
 
 Other `*_PLAN.md` files are retained as scoped design records. Their dated
 status statements are historical unless the active adaptive plan explicitly

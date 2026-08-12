@@ -284,6 +284,28 @@ void verify_posterior_convergence_diagnostic() {
             "two posterior error points were treated as a convergence regime");
 }
 
+void verify_streaming_evaluation_is_one_way() {
+    PracticalDriverConfig config = base_config();
+    std::size_t calls = 0;
+    std::size_t received_size = 0;
+    PracticalAdaptiveDriver driver(
+        r1_problem(), config,
+        [&](const std::size_t, const ComplexVector &candidate) {
+            ++calls;
+            received_size = static_cast<std::size_t>(candidate.size());
+        });
+    const PracticalDriverResult result = driver.run();
+    require(result.state == PracticalDriverState::Converged
+                && calls == 1 && received_size > 0,
+            "streaming evaluation sink did not receive the completed candidate");
+    require(std::none_of(
+                result.journal.begin(), result.journal.end(),
+                [](const PracticalIterationRecord &record) {
+                    return record.evaluation_candidate.size() != 0;
+                }),
+            "streamed evaluation candidates were retained in the journal");
+}
+
 } // namespace
 
 int main() {
@@ -295,6 +317,7 @@ int main() {
         verify_reference_capacity_stops_transactionally();
         verify_one_trajectory_multiple_target_extraction();
         verify_posterior_convergence_diagnostic();
+        verify_streaming_evaluation_is_one_way();
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_practical_driver failed: "
                   << error.what() << '\n';

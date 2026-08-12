@@ -188,6 +188,47 @@ void verify_localization_certificate() {
                 "Theta_loc did not decrease when ell increased");
     }
 
+    const HelmholtzLodModel fallback_model = build_reference_model(
+        data, hierarchy, 1);
+    LocalizationEigenConfig fallback_config;
+    fallback_config.maximum_iterations = 1;
+    fallback_config.relative_tolerance = 1e-10;
+    fallback_config.dense_cross_check_max_dimension = 0;
+    fallback_config.dense_fallback_max_dimension = 512;
+    const ReferenceLocalizationCertificate fallback_certificate =
+        compute_reference_localization_certificate(
+            hierarchy,
+            fallback_model.operators(),
+            ambient_operators,
+            fallback_model.corrected_test_basis(),
+            basis_nodes,
+            KernelRieszSolver::SaddlePoint,
+            fallback_config);
+    require(fallback_certificate.spectrum.used_dense_fallback
+                && fallback_certificate.spectrum.converged
+                && fallback_certificate.spectrum.relative_residual <= 1e-10
+                && std::abs(
+                    fallback_certificate.theta_loc - theta.front())
+                    <= 3e-10 * std::max(1.0, theta.front()),
+            "dense localization fallback did not recover the same spectrum");
+
+    fallback_config.dense_fallback_max_dimension = 0;
+    bool disabled_fallback_rejected = false;
+    try {
+        (void)compute_reference_localization_certificate(
+            hierarchy,
+            fallback_model.operators(),
+            ambient_operators,
+            fallback_model.corrected_test_basis(),
+            basis_nodes,
+            KernelRieszSolver::SaddlePoint,
+            fallback_config);
+    } catch (const std::runtime_error &) {
+        disabled_fallback_rejected = true;
+    }
+    require(disabled_fallback_rejected,
+            "disabled dense fallback accepted a nonconverged eigen iteration");
+
     const HelmholtzLodModel localized = build_reference_model(
         data, hierarchy, 1);
     const HelmholtzLodModel ideal = build_reference_model(

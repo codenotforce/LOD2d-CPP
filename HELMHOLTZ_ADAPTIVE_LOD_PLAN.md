@@ -588,7 +588,7 @@ practical 主表中造成“仍有 h 分支”的误解。
 
 不建议为节省时间降低到单精度；Helmholtz 稳定性和证书比较统一使用 double。
 
-当前性能实现边界（2026-08-12）：已完成 reference 解复用、单轨迹多容差事后抽取、
+当前性能实现边界（2026-08-12）：已完成跨进程 reference 解磁盘复用、单轨迹多容差事后抽取、
 `Theta_loc` warm start、E0 dense hierarchy 常数去重、HLOD-fixed 对 PALOD
 localization/ambient 工作的完全跳过，以及第 2 项 patch 内多右端 Riesz 复用。R2a、
 κ=16 development profile（E0 诊断 `c_H`、零 H-step，不是论文结果）显示 certificate
@@ -600,6 +600,21 @@ cache，也未根据单个 development profile 调整求解器容差。生产实
 局部对数斜率已脱离明显预渐近波动的区段比较方法。若数据不支持，则标注
 `pre_asymptotic`，不追加昂贵 reference refinement 来调出预期结果。第 3 项 cache 必须
 与 full rebuild 逐步对照后才可启用。
+
+runner 现按轨迹点流式计算 reference error，评估完成后立即释放 candidate，不再在 journal
+中累计保存全部 reference-size 复向量；该评估时间继续从 method time 排除。磁盘 reference
+cache 的 key 绑定 reference 网格、边界标签、完整装配算子、载荷、求解器格式、Git commit
+和 benchmark 二进制摘要；损坏、维数或输入变化均 fail closed 为 cache miss。连续两个独立
+R1 进程已验证第一条 miss、第二条 hit，算法与误差列逐字节一致。localization 最大特征值
+的幂迭代在小谱隙下若未收敛，维数不超过 512 时改用带残差验收的 Hermitian 稠密 eigensolve；
+更大问题仍 fail closed，避免把停滞误写成证书。
+
+资源 pilot（16 worker，非论文数据）显示 R2a/PALOD/k16、reference level 10、3 个 H-step
+约需 13.5 秒与 293 MiB，误差稳定降至 0.0189；S/PALOD/k16、同级 reference、2 个 H-step
+约需 72.4 秒与 1.37 GiB，误差由 0.578 降至 0.369，certificate cost 占主导。R2a 可在
+本机继续校验；S 长轨迹以及正式 E1 必须先按 `HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md`
+在服务器比较 8/16 worker 的时间和峰值内存，再冻结生产上限。pilot 名称的输出不得入论文。
+上述优化、五方法 smoke 和 E0 gate 合并验证后的 Release 全量回归为 48/48。
 
 corrector patch cache 的 correctness scaffold 已加入：相同离散状态全命中且与 full
 rebuild 在 corrector、基、粗算子和 LOD 解上逐项一致；PDE 或实际 patch system 改变均

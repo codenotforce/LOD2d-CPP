@@ -2,6 +2,7 @@
 #include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/benchmarks/paper_cases.h"
 #include "helmholtz/experiments/paper_config.h"
+#include "helmholtz/experiments/reference_solution_cache.h"
 #include "helmholtz/operators.h"
 #include "io/vtk_writer.h"
 
@@ -37,6 +38,7 @@ struct Arguments {
     std::filesystem::path config;
     std::filesystem::path output_directory;
     std::filesystem::path manuscript_baseline;
+    std::filesystem::path reference_cache_directory;
     bool check = false;
 };
 
@@ -65,6 +67,8 @@ Arguments parse_arguments(const int argc, char **argv) {
             result.output_directory = value("--output-dir=");
         } else if (argument.starts_with("--manuscript-baseline=")) {
             result.manuscript_baseline = value("--manuscript-baseline=");
+        } else if (argument.starts_with("--reference-cache-dir=")) {
+            result.reference_cache_directory = value("--reference-cache-dir=");
         } else if (argument == "--check") {
             result.check = true;
         } else {
@@ -74,8 +78,12 @@ Arguments parse_arguments(const int argc, char **argv) {
     if (result.config.empty() || result.output_directory.empty() ||
         result.manuscript_baseline.empty()) {
         throw std::invalid_argument(
-            "required: --config=FILE --output-dir=DIR --manuscript-baseline=FILE");
+            "required: --config=FILE --output-dir=DIR --manuscript-baseline=FILE "
+            "[--reference-cache-dir=DIR]");
     }
+    if (result.reference_cache_directory.empty())
+        result.reference_cache_directory =
+            result.output_directory / "_reference_cache";
     return result;
 }
 
@@ -149,15 +157,28 @@ double peak_memory_mb() {
     return 0.0;
 }
 
+void stream_evaluation_candidate(
+    PracticalIterationRecord &record,
+    const PracticalEvaluationSink &sink) {
+    if (sink && record.evaluation_candidate.size() > 0) {
+        sink(record.sequence, record.evaluation_candidate);
+        record.evaluation_candidate.resize(0);
+    }
+}
+
 PaperExecution run_uniform_fem_trajectory(
     const PracticalPaperConfig &config,
-    const PaperCaseData &data) {
+    const PaperCaseData &data,
+    const PracticalEvaluationSink &evaluation_sink,
+    const double &evaluation_seconds_excluded) {
     ReferenceEpochHierarchy hierarchy(
         data.initial_mesh, config.initial_coarse_level, config.reference_level);
     PaperExecution execution;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
-        return elapsed_seconds(start, std::chrono::steady_clock::now());
+        return std::max(
+            0.0, elapsed_seconds(start, std::chrono::steady_clock::now())
+                - evaluation_seconds_excluded);
     };
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
         record.reference_epoch = hierarchy.reference_epoch();
@@ -221,6 +242,7 @@ PaperExecution run_uniform_fem_trajectory(
         solved.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
         solved.detail = "solved conforming P1 FEM on the current uniform mesh";
         fill_mesh_fields(solved);
+        stream_evaluation_candidate(solved, evaluation_sink);
         execution.result.journal.push_back(std::move(solved));
 
         if (refinements >= config.work_limits.maximum_H_steps) {
@@ -266,13 +288,17 @@ PaperExecution run_uniform_fem_trajectory(
 
 PaperExecution run_adaptive_fem_trajectory(
     const PracticalPaperConfig &config,
-    const PaperCaseData &data) {
+    const PaperCaseData &data,
+    const PracticalEvaluationSink &evaluation_sink,
+    const double &evaluation_seconds_excluded) {
     ReferenceEpochHierarchy hierarchy(
         data.initial_mesh, config.initial_coarse_level, config.reference_level);
     PaperExecution execution;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
-        return elapsed_seconds(start, std::chrono::steady_clock::now());
+        return std::max(
+            0.0, elapsed_seconds(start, std::chrono::steady_clock::now())
+                - evaluation_seconds_excluded);
     };
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
         record.reference_epoch = hierarchy.reference_epoch();
@@ -360,6 +386,7 @@ PaperExecution run_adaptive_fem_trajectory(
             "; algebraic residual difference="
             + numeric(estimate.algebraic_relative_difference);
         fill_mesh_fields(solved);
+        stream_evaluation_candidate(solved, evaluation_sink);
         execution.result.journal.push_back(std::move(solved));
 
         if (completed_trajectory) {
@@ -406,7 +433,9 @@ PaperExecution run_adaptive_fem_trajectory(
 
 PaperExecution run_standard_lod_trajectory(
     const PracticalPaperConfig &config,
-    const PaperCaseData &data) {
+    const PaperCaseData &data,
+    const PracticalEvaluationSink &evaluation_sink,
+    const double &evaluation_seconds_excluded) {
     const int prior_ell = standard_lod_prior_ell(config.wavenumber);
     ReferenceEpochHierarchy hierarchy(
         data.initial_mesh, config.initial_coarse_level, config.reference_level);
@@ -416,7 +445,9 @@ PaperExecution run_standard_lod_trajectory(
     PaperExecution execution;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
-        return elapsed_seconds(start, std::chrono::steady_clock::now());
+        return std::max(
+            0.0, elapsed_seconds(start, std::chrono::steady_clock::now())
+                - evaluation_seconds_excluded);
     };
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
         record.reference_epoch = hierarchy.reference_epoch();
@@ -499,6 +530,7 @@ PaperExecution run_standard_lod_trajectory(
             "; full model build seconds="
             + numeric(elapsed_seconds(build_begin, build_end));
         fill_mesh_fields(solved);
+        stream_evaluation_candidate(solved, evaluation_sink);
         execution.result.journal.push_back(std::move(solved));
 
         if (refinements >= config.work_limits.maximum_H_steps) {
@@ -734,6 +766,8 @@ void write_run_json(
     const PracticalDriverResult &result,
     const double method_seconds,
     const double reference_seconds,
+    const bool reference_cache_hit,
+    const std::string &reference_cache_key,
     const double peak_mb) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
@@ -767,7 +801,11 @@ void write_run_json(
         << optional_json_number(convergence.last_log_slope) << "},\n"
         << "  \"timing\":{\"method_seconds\":" << numeric(method_seconds)
         << ",\"evaluation_reference_seconds\":" << numeric(reference_seconds)
-        << ",\"evaluation_reference_excluded_from_method_time\":true},\n"
+        << ",\"evaluation_reference_excluded_from_method_time\":true"
+        << ",\"reference_solution_cache_hit\":"
+        << (reference_cache_hit ? "true" : "false")
+        << ",\"reference_solution_cache_key\":"
+        << json_string(reference_cache_key) << "},\n"
         << "  \"hardware\":{\"hardware_threads\":"
         << std::thread::hardware_concurrency()
         << ",\"compiler\":" << json_string(__VERSION__)
@@ -805,18 +843,55 @@ int main(const int argc, char **argv) {
         const ComplexVector reference_load = assemble_helmholtz_load(
             reference_hierarchy.reference_mesh(), data.source,
             config.quadrature, data.quadrature_context);
-        const ComplexVector reference_solution =
-            solve_helmholtz_fem(reference_operators, reference_load);
+        const std::string reference_identity =
+            "reference-sparse-lu-v1/" + config.git_commit + "/"
+            + config.build_hash;
+        const std::string reference_cache_key = reference_solution_cache_key(
+            reference_hierarchy.reference_mesh(), reference_operators,
+            reference_load, reference_identity);
+        ReferenceSolutionCacheLookup reference_cache =
+            load_reference_solution_cache(
+                arguments.reference_cache_directory,
+                reference_cache_key,
+                reference_load.size());
+        const bool reference_cache_hit = reference_cache.solution.has_value();
+        ComplexVector reference_solution;
+        if (reference_cache_hit) {
+            reference_solution = std::move(*reference_cache.solution);
+        } else {
+            reference_solution = solve_helmholtz_fem(
+                reference_operators, reference_load);
+            store_reference_solution_cache(
+                arguments.reference_cache_directory,
+                reference_cache_key,
+                reference_solution);
+        }
         const auto reference_end = std::chrono::steady_clock::now();
+
+        std::vector<std::optional<std::pair<double, double>>> streamed_errors;
+        double streamed_evaluation_seconds = 0.0;
+        const PracticalEvaluationSink evaluation_sink =
+            [&](const std::size_t sequence, const ComplexVector &candidate) {
+                const auto begin = std::chrono::steady_clock::now();
+                if (streamed_errors.size() <= sequence)
+                    streamed_errors.resize(sequence + 1);
+                streamed_errors[sequence] = relative_reference_errors(
+                    reference_operators, reference_solution, candidate);
+                streamed_evaluation_seconds += elapsed_seconds(
+                    begin, std::chrono::steady_clock::now());
+            };
 
         const auto method_begin = std::chrono::steady_clock::now();
         PaperExecution execution;
         if (config.method_id == PracticalPaperMethod::Ufem) {
-            execution = run_uniform_fem_trajectory(config, data);
+            execution = run_uniform_fem_trajectory(
+                config, data, evaluation_sink, streamed_evaluation_seconds);
         } else if (config.method_id == PracticalPaperMethod::Afem) {
-            execution = run_adaptive_fem_trajectory(config, data);
+            execution = run_adaptive_fem_trajectory(
+                config, data, evaluation_sink, streamed_evaluation_seconds);
         } else if (config.method_id == PracticalPaperMethod::Slod) {
-            execution = run_standard_lod_trajectory(config, data);
+            execution = run_standard_lod_trajectory(
+                config, data, evaluation_sink, streamed_evaluation_seconds);
         } else {
             PracticalDriverProblem problem;
             problem.initial_mesh = data.initial_mesh;
@@ -824,7 +899,8 @@ int main(const int argc, char **argv) {
             problem.quadrature = config.quadrature;
             problem.quadrature_context = data.quadrature_context;
             PracticalAdaptiveDriver driver(
-                std::move(problem), make_practical_driver_config(config));
+                std::move(problem), make_practical_driver_config(config),
+                evaluation_sink);
             execution.result = driver.run();
             execution.final_mesh = driver.hierarchy().coarse_mesh();
         }
@@ -832,13 +908,20 @@ int main(const int argc, char **argv) {
         const auto method_end = std::chrono::steady_clock::now();
         const auto evaluation_begin = std::chrono::steady_clock::now();
         for (PracticalIterationRecord &record : result.journal) {
-            if (record.evaluation_candidate.size() == 0) continue;
-            const auto errors = relative_reference_errors(
-                reference_operators, reference_solution,
-                record.evaluation_candidate);
-            record.reference_energy_error = errors.first;
-            record.reference_L2_error = errors.second;
-            record.evaluation_candidate.resize(0);
+            if (record.sequence < streamed_errors.size()
+                && streamed_errors[record.sequence]) {
+                record.reference_energy_error =
+                    streamed_errors[record.sequence]->first;
+                record.reference_L2_error =
+                    streamed_errors[record.sequence]->second;
+            } else if (record.evaluation_candidate.size() > 0) {
+                const auto errors = relative_reference_errors(
+                    reference_operators, reference_solution,
+                    record.evaluation_candidate);
+                record.reference_energy_error = errors.first;
+                record.reference_L2_error = errors.second;
+                record.evaluation_candidate.resize(0);
+            }
         }
         const auto evaluation_end = std::chrono::steady_clock::now();
         const bool fixed_empirical_trajectory =
@@ -873,9 +956,14 @@ int main(const int argc, char **argv) {
             run_directory / "final_mesh.vtu", execution.final_mesh, result);
         write_run_json(
             run_directory / "run.json", config, run_id, result,
-            elapsed_seconds(method_begin, method_end),
+            std::max(
+                0.0, elapsed_seconds(method_begin, method_end)
+                    - streamed_evaluation_seconds),
             elapsed_seconds(reference_begin, reference_end) +
-                elapsed_seconds(evaluation_begin, evaluation_end),
+                streamed_evaluation_seconds
+                + elapsed_seconds(evaluation_begin, evaluation_end),
+            reference_cache_hit,
+            reference_cache_key,
             peak_mb);
 
         if (arguments.check) {
@@ -1011,6 +1099,8 @@ int main(const int argc, char **argv) {
                   << practical_convergence_regime_name(
                          diagnose_practical_convergence_regime(result.journal).regime)
                   << '\n'
+                  << "reference_cache="
+                  << (reference_cache_hit ? "hit" : "miss") << '\n'
                   << "claim=implementation-study\n"
                   << "output=" << run_directory.string() << '\n';
         return result.state == PracticalDriverState::Failed ? 2 : 0;

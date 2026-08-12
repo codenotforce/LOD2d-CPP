@@ -14,6 +14,8 @@ is the practical paper contract and is consumed by
 | `schema-v2.json` | Practical PALOD input contract with fixed reference/ambient epoch semantics |
 | `output-schema-v2.json` | Practical `run.json` contract and artifact manifest |
 | `configs/R1-palod-smoke-v2.json` | Development-only end-to-end smoke configuration |
+| `configs/R2a-palod-k16-resource-pilot-v2.json` | Non-paper R2a resource pilot |
+| `configs/S-palod-k16-resource-pilot-v2.json` | Non-paper S resource pilot |
 
 The C++ registry in `helmholtz/experiments/paper_config.h` is the executable
 counterpart. The v1 and v2 types and parsers are separate. In particular, v2
@@ -65,13 +67,16 @@ structured stop codes and never silently fall back to the legacy H-only proxy.
 `HLOD-proxy` is intentionally a legacy diagnostic method only. It is not a v2
 paper comparator and must not be relabelled as PALOD or HLOD-fixed.
 
-The v2 runner now executes real `PALOD`, `HLOD-fixed`, and `UFEM` paths.
+The v2 runner now executes real `PALOD`, `HLOD-fixed`, `SLOD`, `UFEM`, and
+`AFEM` paths.
 `HLOD-fixed` reuses the reference-kernel estimator and H marking with one
 frozen global ell, while skipping the PALOD localization certificate and
 ambient-shadow work. `UFEM` performs uniform conforming P1 refinements and
 solves, then prolongs every candidate to the same fixed reference space for
-post-processing. `SLOD` and `AFEM` remain reserved until their real backends
-share this contract. The runner never relabels an old proxy.
+post-processing. `SLOD` rebuilds a real LOD solution along a uniform coarse
+sequence with the frozen prior localization rule. `AFEM` uses volume,
+interior-flux-jump, and impedance-boundary residual contributions for local
+P1 refinement. The runner never relabels an old proxy.
 
 ## Current Implementation Boundary
 
@@ -87,8 +92,16 @@ share this contract. The runner never relabels an old proxy.
 | PALOD paper runner and five-file artifact contract | Implemented in WP5 |
 | HLOD-fixed paper backend without localization/certificate cost | Implemented |
 | UFEM uniform conforming P1 trajectory backend | Implemented |
-| SLOD/AFEM paper backends | Pending production experiment work |
-| Six-method production matrix and paper tables/figures | Not run |
+| SLOD/AFEM paper backends | Implemented and smoke-tested |
+| Five-method R2a/S production matrix and paper tables/figures | Not run |
+
+Reference solutions are cached on disk across method processes using a key
+that binds the assembled reference problem, load, solver format, Git revision,
+and executable build identity. Candidate errors are evaluated as each
+trajectory point is produced and the candidate vector is then released; the
+journal does not retain all reference-sized vectors. Both operations remain
+post-processing and are excluded from method time. Cache hits and keys are
+recorded in `run.json`.
 
 Do not publish paper-result claims from the development smoke configuration.
 Formal manifests still require frozen E0 calibration and completion of the
@@ -112,18 +125,22 @@ ctest --test-dir build \
   --output-on-failure
 ```
 
-The three implemented v2 paths have end-to-end smoke tests:
+All five v2 paths have end-to-end smoke tests:
 `helmholtz_adaptive_paper_v2_smoke`,
 `helmholtz_hlod_fixed_paper_v2_smoke`, and
-`helmholtz_ufem_paper_v2_smoke`. A direct PALOD run has the form:
+`helmholtz_slod_paper_v2_smoke`, `helmholtz_ufem_paper_v2_smoke`, and
+`helmholtz_afem_paper_v2_smoke`. A direct PALOD run has the form:
 
 ```bash
 benchmarks/bench_helmholtz_adaptive_paper \
   --config=experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v2.json \
   --output-dir=results/wp5-smoke \
+  --reference-cache-dir=results/wp5-reference-cache \
   --manuscript-baseline=experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
 ```
 
 Each run directory contains `iterations.csv`, `summary.csv`, `run.json`,
 `ell_history.csv`, and `final_mesh.vtu`. Reference solves and post-run
 reference-error evaluation are timed separately and excluded from method time.
+For resource pilots and formal server runs, follow
+[../../HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md](../../HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md).

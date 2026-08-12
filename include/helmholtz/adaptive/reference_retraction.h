@@ -54,6 +54,7 @@ struct LocalizationEigenConfig {
     int maximum_iterations = 200;
     double relative_tolerance = 1e-11;
     int dense_cross_check_max_dimension = 64;
+    int dense_fallback_max_dimension = 512;
     ComplexVector warm_start;
 };
 
@@ -64,6 +65,7 @@ struct LocalizationSpectrum {
     double relative_residual = 0.0;
     bool converged = false;
     bool dense_cross_checked = false;
+    bool used_dense_fallback = false;
     double dense_lambda_max = 0.0;
     double dense_relative_difference = 0.0;
 };

@@ -216,8 +216,10 @@ PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
 
 PracticalAdaptiveDriver::PracticalAdaptiveDriver(
     PracticalDriverProblem problem,
-    PracticalDriverConfig config)
-    : problem_(std::move(problem)), config_(std::move(config)), ell_(config_.ell0) {
+    PracticalDriverConfig config,
+    PracticalEvaluationSink evaluation_sink)
+    : problem_(std::move(problem)), config_(std::move(config)), ell_(config_.ell0),
+      evaluation_sink_(std::move(evaluation_sink)) {
     start_ = std::chrono::steady_clock::now();
     validate_config();
     hierarchy_ = std::make_unique<ReferenceEpochHierarchy>(
@@ -301,8 +303,17 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
     record.eta_H = eta_H_;
     record.theta_loc = theta_loc_;
     record.U_practical = U_practical_;
-    record.time_total_cumulative_seconds =
-        elapsed_seconds(start_, std::chrono::steady_clock::now());
+    if (evaluation_sink_ && record.evaluation_candidate.size() > 0) {
+        const auto evaluation_begin = std::chrono::steady_clock::now();
+        evaluation_sink_(record.sequence, record.evaluation_candidate);
+        evaluation_seconds_excluded_ += elapsed_seconds(
+            evaluation_begin, std::chrono::steady_clock::now());
+        record.evaluation_candidate.resize(0);
+    }
+    record.time_total_cumulative_seconds = std::max(
+        0.0,
+        elapsed_seconds(start_, std::chrono::steady_clock::now())
+            - evaluation_seconds_excluded_);
     journal_.push_back(std::move(record));
 }
 
@@ -327,7 +338,8 @@ bool PracticalAdaptiveDriver::work_limit_exceeded(std::string &reason) const {
         return true;
     }
     if (config_.limits.maximum_wall_seconds > 0.0 &&
-        elapsed_seconds(start_, std::chrono::steady_clock::now()) >=
+        elapsed_seconds(start_, std::chrono::steady_clock::now())
+                - evaluation_seconds_excluded_ >=
             config_.limits.maximum_wall_seconds) {
         reason = "maximum wall time reached";
         return true;

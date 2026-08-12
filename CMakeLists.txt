@@ -96,6 +96,7 @@ add_library(lod2d_core STATIC
     src/helmholtz/adaptive/reliability.cpp
     src/helmholtz/adaptive/driver.cpp
     src/helmholtz/experiments/paper_config.cpp
+    src/helmholtz/experiments/reference_solution_cache.cpp
     src/helmholtz/benchmarks/paper_cases.cpp
     src/solver/coarse_solve.cpp
     src/solver/right_gmres.cpp
