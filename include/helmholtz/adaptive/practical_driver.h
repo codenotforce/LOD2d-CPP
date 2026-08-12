@@ -20,6 +20,7 @@ enum class PracticalDriverState {
     SolveAndEstimate,
     RefineCoarse,
     Converged,
+    TrajectoryComplete,
     ReferenceRefreshRequired,
     WorkLimitReached,
     Failed,
@@ -41,6 +42,7 @@ enum class PracticalDriverAction {
     FormCoarseMarking,
     RefineCoarse,
     Complete,
+    CompleteTrajectory,
     StopReferenceRefreshRequired,
     StopWorkLimit,
     Fail,
@@ -75,6 +77,7 @@ enum class PracticalStopPolicy {
 struct PracticalDriverConfig {
     int initial_coarse_level = 1;
     int reference_level = 5;
+    std::uint64_t reference_epoch = 0;
     int ell0 = 2;
     int ell_max = 6;
     double wavenumber = 4.0;
@@ -175,15 +178,18 @@ struct PracticalConvergenceDiagnostic {
     std::optional<double> last_log_slope;
     std::optional<double> last_error_ratio;
     std::optional<double> last_log_improvement;
-    std::size_t consecutive_plateau_steps = 0;
+    std::optional<double> window_geometric_mean_ratio;
+    std::optional<double> window_relative_oscillation;
     bool plateau_observed = false;
 };
 
 struct PracticalPlateauDiagnosticConfig {
-    // A step is plateau-like only when the reference error still decreases,
-    // but by no more than 1-minimum_error_ratio. Reporting-only.
-    double minimum_error_ratio = 0.9;
-    std::size_t minimum_consecutive_steps = 3;
+    // A three-point window is plateau-like when its geometric-mean reduction
+    // is small and the whole window remains in a narrow band. Reporting-only;
+    // a small intermediate increase is deliberately permitted.
+    double minimum_geometric_mean_ratio = 0.9;
+    double maximum_relative_oscillation = 0.15;
+    std::size_t window_steps = 2;
 };
 
 // Post-processing only: extract the first empirical reference-energy hit for

@@ -171,7 +171,8 @@ public:
     ReferenceEpochHierarchy(
         const TriMesh &initial_mesh,
         int initial_coarse_level,
-        int reference_level);
+        int reference_level,
+        std::uint64_t initial_reference_epoch = 0);
 
     const TriMesh &initial_mesh() const { return initial_mesh_; }
     const TriMesh &coarse_mesh() const { return coarse_mesh_; }

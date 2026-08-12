@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lod2d.helmholtz-adaptive-paper.practical-config.v4",
+  "title": "Practical adaptive Helmholtz LOD paper run configuration v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
+    "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
+    "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
+    "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
+    "quadrature", "reference_adequacy", "reference_epoch", "reference_level", "reference_mesh",
+    "relative_energy_targets", "repeat_index", "rho_star", "schema_version",
+    "theta_H", "theta_loc", "timing_repeats", "tolerances",
+    "trajectory_policy", "wavenumber", "work_limits"
+  ],
+  "properties": {
+    "C0_usr": {"type": "number", "exclusiveMinimum": 0},
+    "C1_usr": {"type": "number", "exclusiveMinimum": 0},
+    "ambient_mesh": {"const": "reference-shadow"},
+    "boundary_beta": {"type": "number", "exclusiveMinimum": 0},
+    "build_hash": {"type": "string", "minLength": 1},
+    "c_H": {"type": "number", "exclusiveMinimum": 0},
+    "case": {"enum": ["R1", "R2a", "R2b", "S"]},
+    "ell0": {"type": "integer", "minimum": 0},
+    "ell_max": {"type": "integer", "minimum": 0},
+    "git_commit": {"type": "string", "minLength": 1},
+    "initial_coarse_level": {"type": "integer", "minimum": 0},
+    "kernel_riesz_solver": {"enum": ["saddle_point", "kernel_basis_reference"]},
+    "manuscript_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "method": {"enum": ["PALOD", "HLOD-fixed", "SLOD", "UFEM", "AFEM"]},
+    "patch_solver_kind": {"enum": ["direct_saddle", "direct_schur", "shifted_gmres"]},
+    "petrov_mode": {"enum": ["two_sided", "corrected_test_only"]},
+    "plateau_diagnostic": {"$ref": "#/$defs/plateauDiagnostic"},
+    "practical_stop_tolerance": {"type": "number", "exclusiveMinimum": 0},
+    "quadrature": {"$ref": "#/$defs/quadrature"},
+    "reference_epoch": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+    "reference_level": {"type": "integer", "minimum": 1},
+    "reference_mesh": {"const": "uniform-nvb"},
+    "relative_energy_targets": {
+      "type": "array",
+      "prefixItems": [{"const": 0.1}, {"const": 0.05}, {"const": 0.02}, {"const": 0.01}],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "repeat_index": {"type": "integer", "minimum": 0, "maximum": 2},
+    "rho_star": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "reference_adequacy": {"$ref": "#/$defs/referenceAdequacy"},
+    "schema_version": {"const": 4},
+    "theta_H": {"const": 0.5},
+    "theta_loc": {"type": "number", "exclusiveMinimum": 0},
+    "timing_repeats": {"enum": [1, 3]},
+    "tolerances": {"$ref": "#/$defs/tolerances"},
+    "trajectory_policy": {"enum": ["practical_indicator", "fixed_work_horizon"]},
+    "wavenumber": {"enum": [8, 16, 32]},
+    "work_limits": {"$ref": "#/$defs/workLimits"}
+  },
+  "$defs": {
+    "plateauDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_relative_oscillation", "minimum_geometric_mean_ratio", "window_steps"],
+      "properties": {
+        "maximum_relative_oscillation": {"type": "number", "minimum": 0},
+        "minimum_geometric_mean_ratio": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "window_steps": {"const": 2}
+      }
+    },
+    "referenceAdequacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "maximum_terminal_error_fraction", "refinement_levels"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "maximum_terminal_error_fraction": {"type": "number", "exclusiveMinimum": 0},
+        "refinement_levels": {"const": 1}
+      }
+    },
+    "quadrature": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_triangle_order", "gaussian_triangle_order", "max_recursive_subdivisions", "singular_triangle_order"],
+      "properties": {
+        "base_triangle_order": {"type": "integer", "minimum": 1},
+        "gaussian_triangle_order": {"type": "integer", "minimum": 1},
+        "max_recursive_subdivisions": {"type": "integer", "minimum": 0},
+        "singular_triangle_order": {"type": "integer", "minimum": 1}
+      }
+    },
+    "tolerances": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eigen_relative_residual", "interpolation_right_inverse", "linear_relative_residual", "prolongation_composition"],
+      "properties": {
+        "eigen_relative_residual": {"type": "number", "exclusiveMinimum": 0},
+        "interpolation_right_inverse": {"type": "number", "exclusiveMinimum": 0},
+        "linear_relative_residual": {"type": "number", "exclusiveMinimum": 0},
+        "prolongation_composition": {"type": "number", "exclusiveMinimum": 0}
+      }
+    },
+    "workLimits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maximum_H_steps", "maximum_ambient_elements", "maximum_coarse_elements", "maximum_iterations", "maximum_unknowns", "maximum_wall_seconds"],
+      "properties": {
+        "maximum_H_steps": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "maximum_ambient_elements": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "maximum_coarse_elements": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "maximum_iterations": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "maximum_unknowns": {"type": "integer", "minimum": 1, "maximum": 9007199254740991},
+        "maximum_wall_seconds": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

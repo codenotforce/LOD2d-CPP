@@ -1221,10 +1221,9 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         throw std::invalid_argument("practical paper wavenumber must be 8, 16, or 32");
     }
     if (config.reference_mesh != "uniform-nvb" ||
-        config.ambient_mesh != "reference-shadow" ||
-        config.reference_epoch != 0) {
+        config.ambient_mesh != "reference-shadow") {
         throw std::invalid_argument(
-            "v2 requires uniform-nvb reference_mesh, reference-shadow ambient_mesh, and initial reference_epoch 0");
+            "v4 requires uniform-nvb reference_mesh and reference-shadow ambient_mesh");
     }
     if (config.initial_coarse_level < 0 ||
         config.reference_level <= config.initial_coarse_level ||
@@ -1253,12 +1252,19 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         config.boundary_beta, config.c_H, config.theta_loc,
         config.C0_usr, config.C1_usr, config.theta_H, config.rho_star,
         config.practical_stop_tolerance,
-        config.plateau_diagnostic.minimum_error_ratio};
+        config.plateau_diagnostic.minimum_geometric_mean_ratio};
     if (std::any_of(positive.begin(), positive.end(), [](const double value) {
             return !std::isfinite(value) || !(value > 0.0);
         }) || config.theta_H != 0.5 || config.rho_star > 1.0
-        || config.plateau_diagnostic.minimum_error_ratio > 1.0
-        || config.plateau_diagnostic.minimum_consecutive_steps == 0) {
+        || config.plateau_diagnostic.minimum_geometric_mean_ratio > 1.0
+        || !std::isfinite(
+            config.plateau_diagnostic.maximum_relative_oscillation)
+        || config.plateau_diagnostic.maximum_relative_oscillation < 0.0
+        || config.plateau_diagnostic.window_steps == 0
+        || config.reference_adequacy.refinement_levels != 1
+        || !std::isfinite(
+            config.reference_adequacy.maximum_terminal_error_fraction)
+        || !(config.reference_adequacy.maximum_terminal_error_fraction > 0.0)) {
         throw std::invalid_argument("practical decision parameters are invalid");
     }
     (void)petrov_mode_name(config.petrov_mode);
@@ -1278,7 +1284,7 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         config.work_limits.maximum_unknowns,
         config.work_limits.maximum_coarse_elements,
         config.work_limits.maximum_ambient_elements,
-        config.plateau_diagnostic.minimum_consecutive_steps};
+        config.plateau_diagnostic.window_steps};
     if (std::any_of(integer_limits.begin(), integer_limits.end(), [](const std::size_t value) {
             return value > max_exact_json_integer;
         })) {
@@ -1331,6 +1337,7 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
     adaptive::PracticalDriverConfig result;
     result.initial_coarse_level = config.initial_coarse_level;
     result.reference_level = config.reference_level;
+    result.reference_epoch = config.reference_epoch;
     result.ell0 = config.ell0;
     result.ell_max = config.ell_max;
     result.wavenumber = config.wavenumber;
@@ -1382,10 +1389,12 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"patch_solver_kind\":"
         << json_string(patch_solver_kind_name(config.patch_solver_kind))
         << ",\"petrov_mode\":" << json_string(petrov_mode_name(config.petrov_mode))
-        << ",\"plateau_diagnostic\":{\"minimum_consecutive_steps\":"
-        << config.plateau_diagnostic.minimum_consecutive_steps
-        << ",\"minimum_error_ratio\":"
-        << number(config.plateau_diagnostic.minimum_error_ratio) << "}"
+        << ",\"plateau_diagnostic\":{\"maximum_relative_oscillation\":"
+        << number(config.plateau_diagnostic.maximum_relative_oscillation)
+        << ",\"minimum_geometric_mean_ratio\":"
+        << number(config.plateau_diagnostic.minimum_geometric_mean_ratio)
+        << ",\"window_steps\":"
+        << config.plateau_diagnostic.window_steps << "}"
         << ",\"practical_stop_tolerance\":"
         << number(config.practical_stop_tolerance)
         << ",\"quadrature\":{\"base_triangle_order\":"
@@ -1397,6 +1406,12 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"singular_triangle_order\":"
         << config.quadrature.singular_triangle_order << "}"
         << ",\"reference_epoch\":" << config.reference_epoch
+        << ",\"reference_adequacy\":{\"enabled\":"
+        << (config.reference_adequacy.enabled ? "true" : "false")
+        << ",\"maximum_terminal_error_fraction\":"
+        << number(config.reference_adequacy.maximum_terminal_error_fraction)
+        << ",\"refinement_levels\":"
+        << config.reference_adequacy.refinement_levels << "}"
         << ",\"reference_level\":" << config.reference_level
         << ",\"reference_mesh\":" << json_string(config.reference_mesh)
         << ",\"relative_energy_targets\":[";
@@ -1445,7 +1460,7 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
          "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
          "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
          "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
-         "quadrature", "reference_epoch", "reference_level",
+         "quadrature", "reference_adequacy", "reference_epoch", "reference_level",
          "reference_mesh", "relative_energy_targets", "repeat_index", "rho_star",
          "schema_version", "theta_H", "theta_loc", "timing_repeats", "tolerances",
          "trajectory_policy",
@@ -1488,17 +1503,34 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     config.manuscript_sha256 = as_string(
         get(root, "manuscript_sha256"), "manuscript_sha256");
 
+    const JsonObject &reference_adequacy = as_object(
+        get(root, "reference_adequacy"), "reference_adequacy");
+    require_keys(reference_adequacy,
+        {"enabled", "maximum_terminal_error_fraction", "refinement_levels"},
+        "reference_adequacy");
+    config.reference_adequacy.enabled = as_bool(
+        get(reference_adequacy, "enabled"), "enabled");
+    config.reference_adequacy.maximum_terminal_error_fraction = as_number(
+        get(reference_adequacy, "maximum_terminal_error_fraction"),
+        "maximum_terminal_error_fraction");
+    config.reference_adequacy.refinement_levels = as_integer(
+        get(reference_adequacy, "refinement_levels"), "refinement_levels");
+
     const JsonObject &plateau = as_object(
         get(root, "plateau_diagnostic"), "plateau_diagnostic");
     require_keys(plateau,
-        {"minimum_consecutive_steps", "minimum_error_ratio"},
+        {"maximum_relative_oscillation", "minimum_geometric_mean_ratio",
+         "window_steps"},
         "plateau_diagnostic");
-    config.plateau_diagnostic.minimum_consecutive_steps =
+    config.plateau_diagnostic.window_steps =
         static_cast<std::size_t>(as_uint64(
-            get(plateau, "minimum_consecutive_steps"),
-            "minimum_consecutive_steps"));
-    config.plateau_diagnostic.minimum_error_ratio = as_number(
-        get(plateau, "minimum_error_ratio"), "minimum_error_ratio");
+            get(plateau, "window_steps"), "window_steps"));
+    config.plateau_diagnostic.minimum_geometric_mean_ratio = as_number(
+        get(plateau, "minimum_geometric_mean_ratio"),
+        "minimum_geometric_mean_ratio");
+    config.plateau_diagnostic.maximum_relative_oscillation = as_number(
+        get(plateau, "maximum_relative_oscillation"),
+        "maximum_relative_oscillation");
 
     const JsonArray &targets = as_array(
         get(root, "relative_energy_targets"), "relative_energy_targets");
@@ -1593,10 +1625,17 @@ bool operator==(const PracticalPaperConfig &lhs,
         lhs.rho_star == rhs.rho_star &&
         lhs.trajectory_policy == rhs.trajectory_policy &&
         lhs.practical_stop_tolerance == rhs.practical_stop_tolerance &&
-        lhs.plateau_diagnostic.minimum_error_ratio ==
-            rhs.plateau_diagnostic.minimum_error_ratio &&
-        lhs.plateau_diagnostic.minimum_consecutive_steps ==
-            rhs.plateau_diagnostic.minimum_consecutive_steps &&
+        lhs.plateau_diagnostic.minimum_geometric_mean_ratio ==
+            rhs.plateau_diagnostic.minimum_geometric_mean_ratio &&
+        lhs.plateau_diagnostic.maximum_relative_oscillation ==
+            rhs.plateau_diagnostic.maximum_relative_oscillation &&
+        lhs.plateau_diagnostic.window_steps ==
+            rhs.plateau_diagnostic.window_steps &&
+        lhs.reference_adequacy.enabled == rhs.reference_adequacy.enabled &&
+        lhs.reference_adequacy.refinement_levels ==
+            rhs.reference_adequacy.refinement_levels &&
+        lhs.reference_adequacy.maximum_terminal_error_fraction ==
+            rhs.reference_adequacy.maximum_terminal_error_fraction &&
         lhs.petrov_mode == rhs.petrov_mode &&
         lhs.patch_solver_kind == rhs.patch_solver_kind &&
         lhs.kernel_riesz_solver == rhs.kernel_riesz_solver &&

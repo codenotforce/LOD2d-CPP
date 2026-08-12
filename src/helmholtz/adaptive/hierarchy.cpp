@@ -778,8 +778,10 @@ Eigen::SparseMatrix<double> AdaptiveMeshHierarchy::cert_audit_kernel_constraints
 ReferenceEpochHierarchy::ReferenceEpochHierarchy(
     const TriMesh &initial_mesh,
     int initial_coarse_level,
-    int reference_level)
-    : initial_mesh_(initial_mesh), reference_level_(reference_level) {
+    int reference_level,
+    const std::uint64_t initial_reference_epoch)
+    : initial_mesh_(initial_mesh), reference_level_(reference_level),
+      reference_epoch_(initial_reference_epoch) {
     if (initial_mesh.nodes.empty() || initial_mesh.elems.empty()) {
         throw std::invalid_argument(
             "reference-epoch hierarchy initial mesh must not be empty");

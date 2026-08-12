@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lod2d.helmholtz-adaptive-paper.practical-output.v4",
+  "title": "Practical adaptive Helmholtz LOD run metadata v4",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "run_id", "config_hash", "case", "method", "status", "claim", "stop_reason", "driver_state", "config", "files", "convergence_diagnostic", "timing", "hardware"],
+  "properties": {
+    "schema_version": {"const": 4},
+    "run_id": {"type": "string", "minLength": 1},
+    "config_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "case": {"enum": ["R1", "R2a", "R2b", "S"]},
+    "method": {"enum": ["PALOD", "HLOD-fixed", "SLOD", "UFEM", "AFEM"]},
+    "status": {"enum": ["success", "interrupted", "censored_work_limit", "censored_time_limit", "censored_iteration_limit", "linear_algebra_failure", "unavailable"]},
+    "claim": {"const": "implementation-study"},
+    "stop_reason": {"type": "string"},
+    "driver_state": {"enum": ["Converged", "TrajectoryComplete", "ReferenceRefreshRequired", "WorkLimitReached", "Failed"]},
+    "config": {"$ref": "schema-v4.json"},
+    "files": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["iterations", "summary", "ell_history", "final_mesh"],
+      "properties": {
+        "iterations": {"const": "iterations.csv"},
+        "summary": {"const": "summary.csv"},
+        "ell_history": {"const": "ell_history.csv"},
+        "final_mesh": {"const": "final_mesh.vtu"}
+      }
+    },
+    "convergence_diagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "distinct_points", "criterion", "previous_log_slope", "last_log_slope", "last_error_ratio", "last_log_improvement", "plateau_minimum_geometric_mean_ratio", "plateau_maximum_relative_oscillation", "plateau_window_steps", "window_geometric_mean_ratio", "window_relative_oscillation", "plateau_observed"],
+      "properties": {
+        "status": {"enum": ["insufficient_data", "pre_asymptotic", "observed_stable_decay"]},
+        "distinct_points": {"type": "integer", "minimum": 0},
+        "criterion": {"const": "last two positive error-vs-DOF log slopes differ by at most factor 2"},
+        "previous_log_slope": {"type": ["number", "null"]},
+        "last_log_slope": {"type": ["number", "null"]},
+        "last_error_ratio": {"type": ["number", "null"]},
+        "last_log_improvement": {"type": ["number", "null"]},
+        "plateau_minimum_geometric_mean_ratio": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "plateau_maximum_relative_oscillation": {"type": "number", "minimum": 0},
+        "plateau_window_steps": {"const": 2},
+        "window_geometric_mean_ratio": {"type": ["number", "null"]},
+        "window_relative_oscillation": {"type": ["number", "null"]},
+        "plateau_observed": {"type": "boolean"}
+      }
+    },
+    "timing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method_seconds", "evaluation_reference_seconds", "evaluation_reference_excluded_from_method_time", "reference_solution_cache_hit", "reference_solution_cache_key"],
+      "properties": {
+        "method_seconds": {"type": "number", "minimum": 0},
+        "evaluation_reference_seconds": {"type": "number", "minimum": 0},
+        "evaluation_reference_excluded_from_method_time": {"const": true},
+        "reference_solution_cache_hit": {"type": "boolean"},
+        "reference_solution_cache_key": {"type": "string", "pattern": "^[0-9a-f]{16}$"}
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hardware_threads", "compiler", "peak_memory_mb"],
+      "properties": {
+        "hardware_threads": {"type": "integer", "minimum": 0},
+        "compiler": {"type": "string", "minLength": 1},
+        "peak_memory_mb": {"type": "number", "minimum": 0}
+      }
+    }
+  }
+}

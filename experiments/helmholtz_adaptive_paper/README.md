@@ -2,8 +2,8 @@
 
 This directory owns the versioned contracts for the Helmholtz LOD paper
 experiments. Schema v1 is the legacy certified-controller contract. Schema v2
-is retained for the completed resource pilots. Schema v3 is the active
-practical paper contract consumed by
+is retained for the completed resource pilots. Schema v3 records the first
+fixed-horizon calibration. Schema v4 is the active practical paper contract consumed by
 `bench_helmholtz_adaptive_paper`.
 
 ## Files
@@ -14,16 +14,22 @@ practical paper contract consumed by
 | `output-schema-v1.json` | Common run-output envelope, terminal states, timings, and nullable values |
 | `schema-v2.json` | Practical PALOD input contract with fixed reference/ambient epoch semantics |
 | `output-schema-v2.json` | Practical `run.json` contract and artifact manifest |
-| `schema-v3.json` | Active contract with independent stopping and calibration policies |
-| `output-schema-v3.json` | Active output with reference-error plateau diagnostics |
+| `schema-v3.json` | Historical first fixed-horizon calibration contract |
+| `output-schema-v3.json` | Historical first plateau-diagnostic output |
+| `schema-v4.json` | Active three-point plateau, reference-audit and trajectory-completion contract |
+| `output-schema-v4.json` | Active run output with normal fixed-horizon completion semantics |
+| `reference-audit-output-schema-v1.json` | Level-to-level reference adequacy audit artifact |
 | `configs/R1-palod-smoke-v2.json` | Development-only end-to-end smoke configuration |
 | `configs/R2a-palod-k16-resource-pilot-v2.json` | Non-paper R2a resource pilot |
 | `configs/S-palod-k16-resource-pilot-v2.json` | Non-paper S resource pilot |
 | `configs/R2a-palod-k16-extended-calibration-v3.json` | Non-paper fixed-horizon R2a calibration |
 | `configs/S-palod-k16-extended-calibration-v3.json` | Non-paper fixed-horizon S calibration |
+| `configs/R2a-palod-k16-reference-audit-v4.json` | R2a level 10-to-11 audit without rerunning PALOD |
+| `configs/R2a-palod-k16-epoch1-calibration-v4.json` | Non-paper R2a epoch-1 calibration |
+| `configs/S-palod-k16-step6-calibration-v4.json` | Non-paper S six-step calibration |
 
 The C++ registry in `helmholtz/experiments/paper_config.h` is the executable
-counterpart. The legacy v1 and active practical types are separate. In particular, v3
+counterpart. The legacy v1 and active practical types are separate. In particular, v4
 rejects legacy `theta_h`, `q_h`, and corrector-fine-refinement fields rather
 than silently retaining them in the PALOD run identity.
 
@@ -36,7 +42,7 @@ case_method_kN_rN_hash
 ```
 
 The final component is the lowercase 16-digit FNV-1a 64-bit hash of the
-canonical JSON configuration. The v3 identity covers reference/ambient mesh
+canonical JSON configuration. The v4 identity covers reference/ambient mesh
 policies, reference epoch, all practical decisions, resource limits, solver
 selection, quadrature/tolerances, Git/build provenance, and the frozen
 manuscript SHA-256. It also covers the trajectory policy, independent absolute
@@ -46,7 +52,7 @@ Every formal run must retain the canonical configuration, Git revision, build
 hash, compiler and dependency metadata, host/thread information, and all
 method parameters. A resumed run must pass checkpoint schema, configuration
 fingerprint, problem identity, and state fingerprint checks.
-The v3 runner compares `manuscript_sha256` with the versioned
+The v4 runner compares `manuscript_sha256` with the versioned
 `MANUSCRIPT_BASELINE.sha256` artifact before doing numerical work.
 
 ## Numeric And Terminal-State Rules
@@ -59,15 +65,23 @@ Resource limits are explicit censored terminal states. They are distinct from
 convergence and from numerical or evidence failures. CALOD and frozen HLOD use
 structured stop codes and never silently fall back to the legacy H-only proxy.
 
-Schema v3 separates two quantities that v2 accidentally conflated:
+Schema v4 retains the v3 separation between two quantities that v2 accidentally conflated:
 
 - `practical_stop_tolerance` is an absolute threshold for `U_prac` and is used
   only with `trajectory_policy=practical_indicator`;
 - `relative_energy_targets` are post-processing targets and never enter
   MARK/STOP;
-- `fixed_work_horizon` ignores the practical threshold and is restricted to
-  non-paper calibration trajectories. Reference-error ratios, logarithmic
+- `fixed_work_horizon` ignores the practical threshold and is used both for
+  calibration and for pre-frozen formal trajectory acquisition. Reference-error ratios, logarithmic
   improvements, and plateau flags remain reporting-only.
+
+A plateau uses the final three points: the two-step geometric-mean ratio must
+be at least 0.9, while the whole window may oscillate by at most 15%. This
+admits a small intermediate increase without confusing strong decay with a
+plateau. Fixed horizons end as `TrajectoryComplete`/`success`; actual resource
+limits remain censored. After a plateau, `bench_helmholtz_reference_adequacy`
+compares the frozen reference with exactly one further uniform NVB level. It
+never reruns or mutates the adaptive trajectory.
 
 ## Timing Ownership
 
@@ -80,10 +94,10 @@ Schema v3 separates two quantities that v2 accidentally conflated:
 
 ## Method Names
 
-`HLOD-proxy` is intentionally a legacy diagnostic method only. It is not a v3
+`HLOD-proxy` is intentionally a legacy diagnostic method only. It is not a v4
 paper comparator and must not be relabelled as PALOD or HLOD-fixed.
 
-The v3 runner executes real `PALOD`, `HLOD-fixed`, `SLOD`, `UFEM`, and
+The v4 runner executes real `PALOD`, `HLOD-fixed`, `SLOD`, `UFEM`, and
 `AFEM` paths.
 `HLOD-fixed` reuses the reference-kernel estimator and H marking with one
 frozen global ell, while skipping the PALOD localization certificate and
@@ -101,6 +115,7 @@ P1 refinement. The runner never relabels an old proxy.
 | v1 certified input/output schemas and strict C++ parsing | Preserved as legacy |
 | v2 practical input/output schemas and strict C++ parsing | Implemented in WP5 |
 | v3 independent stop/calibration policy and plateau reporting | Implemented after resource pilot |
+| v4 oscillation-tolerant plateau, explicit trajectory completion and reference audit | Implemented after extended calibration |
 | Paper case registry, mixed boundaries, sources, and quadrature | Implemented in WP1 |
 | Fixed reference epoch and ambient shadow hierarchy | Implemented in WP1 |
 | Reference/ambient kernel Riesz problems | Implemented in WP2 |
@@ -142,17 +157,18 @@ ctest --test-dir build \
   --output-on-failure
 ```
 
-All five v3 methods have end-to-end smoke tests, and PALOD has a separate
+All five v4 methods have end-to-end smoke tests, and PALOD has a separate
 fixed-horizon calibration-policy smoke:
-`helmholtz_adaptive_paper_v3_smoke`,
-`helmholtz_hlod_fixed_paper_v3_smoke`,
-`helmholtz_palod_fixed_horizon_v3_smoke`,
-`helmholtz_slod_paper_v3_smoke`, `helmholtz_ufem_paper_v3_smoke`, and
-`helmholtz_afem_paper_v3_smoke`. A direct PALOD run has the form:
+`helmholtz_adaptive_paper_v4_smoke`,
+`helmholtz_hlod_fixed_paper_v4_smoke`,
+`helmholtz_palod_fixed_horizon_v4_smoke`,
+`helmholtz_slod_paper_v4_smoke`, `helmholtz_ufem_paper_v4_smoke`, and
+`helmholtz_afem_paper_v4_smoke`. The independent audit gate is
+`helmholtz_reference_adequacy_v4_smoke`. A direct PALOD run has the form:
 
 ```bash
 benchmarks/bench_helmholtz_adaptive_paper \
-  --config=experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v3.json \
+  --config=experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v4.json \
   --output-dir=results/wp5-smoke \
   --reference-cache-dir=results/wp5-reference-cache \
   --manuscript-baseline=experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256

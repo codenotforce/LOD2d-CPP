@@ -1,8 +1,8 @@
 # Helmholtz 自适应 LOD 论文实验服务器操作手册
 
-本手册用于 practical-paper schema v3 实验。4/8/16 worker 资源 pilot 已完成；当前
-只运行延长校准轨迹，收到结果并冻结 `practical_stop_tolerance`/epoch 判据后，才运行
-R2a/S 的五方法主实验。名称含 `pilot` 或 `calibration` 的输出不得写入论文。
+本手册用于 practical-paper schema v4 实验。资源 pilot 和首轮延长校准已完成；当前
+只运行 reference audit、R2a epoch-1 与 S 第六步校准，审阅并冻结 reference epoch 与
+工作 horizon 后才运行 R2a/S 的五方法主实验。名称含 `pilot` 或 `calibration` 的输出不得写入论文。
 
 ## 1. 什么时候能得到论文图表
 
@@ -67,14 +67,25 @@ MODE=smoke PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=8 \
 脚本会构建 Release、执行三个核心测试，再串行运行 R1 五方法 smoke。每个成功案例
 才创建 `.done`；重复相同命令会跳过已有 `.done`。
 
-## 6. R2a/S 延长校准轨迹
+## 6. reference adequacy 与第二轮校准
 
-schema v3 的 `fixed_work_horizon` 忽略 `U_prac` 停止，仅按冻结的 H-step 上限取得
-完整校准轨迹；reference error 只进入报告，不反馈 MARK/STOP。运行 R2a 6 步、S 5 步：
+首轮 v3 结果中，R2a 末三点约为 `0.00651/0.00678/0.00605`，而 S 仍强下降。
+先独立复现 R2a level 10→11 reference audit；该命令只求两个 reference FEM，不重跑
+PALOD：
 
 ```bash
-RESULT_DIR="$PWD/results/adaptive-paper-extended-calibration-v3" \
-MODE=calibration PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=16 \
+chmod +x scripts/run_helmholtz_reference_adequacy_server.sh
+RESULT_DIR="$PWD/results/R2a-reference-adequacy-v4" JOBS=16 \
+  scripts/run_helmholtz_reference_adequacy_server.sh
+```
+
+本地 Release 预检得到 `relative_reference_difference=0.09260`、
+`terminal_error_fraction=15.29`，因此预期 `reference_refresh_recommended=true`。
+服务器复现一致后，运行 R2a/reference-level-11/epoch-1 六步以及 S 的第六步：
+
+```bash
+RESULT_DIR="$PWD/results/adaptive-paper-calibration-v4" \
+MODE=calibration PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=32 \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
@@ -82,13 +93,15 @@ MODE=calibration PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=16 \
 
 ```bash
 grep -H -E 'Elapsed|Percent of CPU|Maximum resident|Swaps' \
-  results/adaptive-paper-extended-calibration-v3/logs/*.time
+  results/adaptive-paper-calibration-v4/logs/*.time
 grep -H 'reference_cache=' \
-  results/adaptive-paper-extended-calibration-v3/logs/*.stdout
+  results/adaptive-paper-calibration-v4/logs/*.stdout
 ```
 
-`run.json` 应显示 `trajectory_policy=fixed_work_horizon`，并报告最后一步误差比、对数改善、
-连续平台步数和 `plateau_observed`。单次误差不降会清零平台计数，不能触发平台结论。
+`run.json` 应显示 `trajectory_policy=fixed_work_horizon`、`status=success` 和
+`driver_state=TrajectoryComplete`。三点窗几何平均比不小于 0.9 且整体波动不超过 15%
+才报告 `plateau_observed=true`；reference error 仍不反馈 MARK/STOP。真正资源上限才使用
+`censored_*` 状态。
 
 ## 7. 运行时监控和停止条件
 
@@ -137,7 +150,7 @@ RESULT_DIR="$PWD/results/adaptive-paper-e1" \
 ```bash
 cd results
 tar --zstd -cf adaptive-paper-server-$(git -C .. rev-parse --short HEAD).tar.zst \
-  adaptive-paper-extended-calibration-v3
+  R2a-reference-adequacy-v4 adaptive-paper-calibration-v4
 sha256sum adaptive-paper-server-*.tar.zst > adaptive-paper-server.SHA256
 ```
 

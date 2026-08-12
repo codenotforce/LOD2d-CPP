@@ -283,48 +283,59 @@ void verify_posterior_convergence_diagnostic() {
                 == PracticalConvergenceRegime::InsufficientData,
             "two posterior error points were treated as a convergence regime");
 
-    std::vector<PracticalIterationRecord> plateau(4);
+    std::vector<PracticalIterationRecord> plateau(3);
     for (std::size_t index = 0; index < plateau.size(); ++index)
         plateau[index].coarse_nodes = 10U << index;
-    plateau[0].reference_energy_error = 0.4;
-    plateau[1].reference_energy_error = 0.38;
-    plateau[2].reference_energy_error = 0.365;
-    plateau[3].reference_energy_error = 0.35;
+    plateau[0].reference_energy_error = 0.0065089109616181615;
+    plateau[1].reference_energy_error = 0.006780966706903111;
+    plateau[2].reference_energy_error = 0.0060549155145160297;
     const PracticalConvergenceDiagnostic plateau_result =
         diagnose_practical_convergence_regime(
-            plateau, {0.9, 3});
+            plateau, {0.9, 0.15, 2});
     require(plateau_result.plateau_observed
-                && plateau_result.consecutive_plateau_steps == 3
+                && plateau_result.window_geometric_mean_ratio
+                && *plateau_result.window_geometric_mean_ratio > 0.9
+                && plateau_result.window_relative_oscillation
+                && *plateau_result.window_relative_oscillation < 0.15
                 && plateau_result.last_error_ratio
                 && plateau_result.last_log_improvement,
-            "three consecutive small improvements did not report a plateau");
-    plateau[3].reference_energy_error = 0.37;
-    const PracticalConvergenceDiagnostic increase_result =
+            "a narrow three-point error floor was not reported as a plateau");
+    plateau[0].reference_energy_error = 0.23450908971165293;
+    plateau[1].reference_energy_error = 0.16914619706071604;
+    plateau[2].reference_energy_error = 0.085608969308680713;
+    const PracticalConvergenceDiagnostic decay_result =
         diagnose_practical_convergence_regime(
-            plateau, {0.9, 3});
-    require(!increase_result.plateau_observed
-                && increase_result.consecutive_plateau_steps == 0
-                && increase_result.last_error_ratio
-                && *increase_result.last_error_ratio > 1.0,
-            "an error increase was misclassified as a reference plateau");
+            plateau, {0.9, 0.15, 2});
+    require(!decay_result.plateau_observed
+                && decay_result.window_geometric_mean_ratio
+                && *decay_result.window_geometric_mean_ratio < 0.9,
+            "strong reference-error decay was misclassified as a plateau");
 }
 
 void verify_fixed_work_horizon_ignores_indicator_tolerance() {
     PracticalDriverConfig config = base_config();
     config.stop_policy = PracticalStopPolicy::FixedWorkHorizon;
+    config.reference_epoch = 3;
     config.tolerance_reference = 1e6;
     config.limits.maximum_H_steps = 1;
     PracticalAdaptiveDriver driver(r1_problem(), config);
     const PracticalDriverResult result = driver.run();
-    require(result.state == PracticalDriverState::WorkLimitReached
+    require(result.state == PracticalDriverState::TrajectoryComplete
                 && result.H_steps == 1
                 && count_action(result, PracticalDriverAction::Complete) == 0
-                && count_action(result, PracticalDriverAction::StopWorkLimit) == 1
+                && count_action(
+                    result, PracticalDriverAction::CompleteTrajectory) == 1
                 && result.stop_reason
-                    == "fixed calibration H-step horizon reached",
+                    == "fixed H-step trajectory complete",
             "fixed work horizon stopped from the practical indicator");
     require(result.journal.back().evaluation_candidate.size() > 0,
             "fixed work horizon did not export its terminal candidate");
+    require(std::all_of(
+                result.journal.begin(), result.journal.end(),
+                [](const PracticalIterationRecord &record) {
+                    return record.reference_epoch == 3;
+                }),
+            "nonzero reference epoch was not preserved in the journal");
 }
 
 void verify_streaming_evaluation_is_one_way() {

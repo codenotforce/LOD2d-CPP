@@ -20,11 +20,11 @@ fi
 case "$MODE" in
   smoke)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v3.json
-      experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v3.json
-      experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v3.json
-      experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v3.json
-      experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v3.json
+      experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v4.json
     )
     ;;
   pilot)
@@ -35,8 +35,8 @@ case "$MODE" in
     ;;
   calibration)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-extended-calibration-v3.json
-      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-extended-calibration-v3.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-epoch1-calibration-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-step6-calibration-v4.json
     )
     ;;
   custom)

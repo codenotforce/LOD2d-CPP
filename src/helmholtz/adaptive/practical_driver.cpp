@@ -86,6 +86,8 @@ const char *practical_driver_state_name(const PracticalDriverState state) {
         return "RefineCoarse";
     case PracticalDriverState::Converged:
         return "Converged";
+    case PracticalDriverState::TrajectoryComplete:
+        return "TrajectoryComplete";
     case PracticalDriverState::ReferenceRefreshRequired:
         return "ReferenceRefreshRequired";
     case PracticalDriverState::WorkLimitReached:
@@ -128,6 +130,8 @@ const char *practical_driver_action_name(const PracticalDriverAction action) {
         return "RefineCoarse";
     case PracticalDriverAction::Complete:
         return "Complete";
+    case PracticalDriverAction::CompleteTrajectory:
+        return "CompleteTrajectory";
     case PracticalDriverAction::StopReferenceRefreshRequired:
         return "StopReferenceRefreshRequired";
     case PracticalDriverAction::StopWorkLimit:
@@ -178,10 +182,12 @@ std::vector<PracticalTargetHit> extract_practical_target_hits(
 PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
     const std::vector<PracticalIterationRecord> &journal,
     const PracticalPlateauDiagnosticConfig plateau) {
-    if (!std::isfinite(plateau.minimum_error_ratio)
-        || !(plateau.minimum_error_ratio > 0.0)
-        || plateau.minimum_error_ratio > 1.0
-        || plateau.minimum_consecutive_steps == 0) {
+    if (!std::isfinite(plateau.minimum_geometric_mean_ratio)
+        || !(plateau.minimum_geometric_mean_ratio > 0.0)
+        || plateau.minimum_geometric_mean_ratio > 1.0
+        || !std::isfinite(plateau.maximum_relative_oscillation)
+        || plateau.maximum_relative_oscillation < 0.0
+        || plateau.window_steps == 0) {
         throw std::invalid_argument(
             "Practical plateau diagnostic configuration is invalid.");
     }
@@ -201,24 +207,36 @@ PracticalConvergenceDiagnostic diagnose_practical_convergence_regime(
 
     PracticalConvergenceDiagnostic result;
     result.distinct_points = points.size();
-    for (std::size_t index = 1; index < points.size(); ++index) {
-        const double ratio = points[index].second / points[index - 1].second;
+    if (points.size() >= 2) {
+        const double ratio = points.back().second
+            / points[points.size() - 2].second;
         if (std::isfinite(ratio) && ratio > 0.0) {
             result.last_error_ratio = ratio;
             result.last_log_improvement = -std::log(ratio);
-        } else {
-            result.last_error_ratio.reset();
-            result.last_log_improvement.reset();
-        }
-        if (std::isfinite(ratio) && ratio >= plateau.minimum_error_ratio
-            && ratio <= 1.0) {
-            ++result.consecutive_plateau_steps;
-        } else {
-            result.consecutive_plateau_steps = 0;
         }
     }
-    result.plateau_observed = result.consecutive_plateau_steps
-        >= plateau.minimum_consecutive_steps;
+    if (points.size() >= plateau.window_steps + 1) {
+        const std::size_t first = points.size() - plateau.window_steps - 1;
+        const double total_ratio = points.back().second / points[first].second;
+        double minimum = points[first].second;
+        double maximum = points[first].second;
+        for (std::size_t index = first + 1; index < points.size(); ++index) {
+            minimum = std::min(minimum, points[index].second);
+            maximum = std::max(maximum, points[index].second);
+        }
+        if (std::isfinite(total_ratio) && total_ratio > 0.0
+            && minimum > 0.0) {
+            result.window_geometric_mean_ratio = std::pow(
+                total_ratio, 1.0 / static_cast<double>(plateau.window_steps));
+            result.window_relative_oscillation = (maximum - minimum) / minimum;
+            result.plateau_observed =
+                *result.window_geometric_mean_ratio
+                    >= plateau.minimum_geometric_mean_ratio
+                && *result.window_geometric_mean_ratio <= 1.0
+                && *result.window_relative_oscillation
+                    <= plateau.maximum_relative_oscillation;
+        }
+    }
     if (points.size() < 3) return result;
     const auto log_slope = [](const auto &coarser, const auto &finer) {
         return -std::log(finer.second / coarser.second)
@@ -251,7 +269,8 @@ PracticalAdaptiveDriver::PracticalAdaptiveDriver(
     hierarchy_ = std::make_unique<ReferenceEpochHierarchy>(
         problem_.initial_mesh,
         config_.initial_coarse_level,
-        config_.reference_level);
+        config_.reference_level,
+        config_.reference_epoch);
     reference_load_ = assemble_helmholtz_load(
         hierarchy_->reference_mesh(),
         problem_.source,
@@ -394,6 +413,7 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
     std::string stop_reason;
     try {
         while (state_ != PracticalDriverState::Converged &&
+               state_ != PracticalDriverState::TrajectoryComplete &&
                state_ != PracticalDriverState::ReferenceRefreshRequired &&
                state_ != PracticalDriverState::WorkLimitReached &&
                state_ != PracticalDriverState::Failed) {
@@ -615,10 +635,10 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 if (config_.stop_policy
                         == PracticalStopPolicy::FixedWorkHorizon
                     && H_steps_ >= config_.limits.maximum_H_steps) {
-                    stop_reason = "fixed calibration H-step horizon reached";
-                    state_ = PracticalDriverState::WorkLimitReached;
+                    stop_reason = "fixed H-step trajectory complete";
+                    state_ = PracticalDriverState::TrajectoryComplete;
                     record.state_after = state_;
-                    record.action = PracticalDriverAction::StopWorkLimit;
+                    record.action = PracticalDriverAction::CompleteTrajectory;
                     record.detail = stop_reason;
                     append_record(std::move(record));
                     break;

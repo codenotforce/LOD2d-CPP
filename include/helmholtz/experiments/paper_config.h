@@ -14,7 +14,7 @@
 namespace lod2d::helmholtz::experiments {
 
 inline constexpr int paper_schema_version = 1;
-inline constexpr int practical_paper_schema_version = 3;
+inline constexpr int practical_paper_schema_version = 4;
 
 enum class PaperCase { R1, R2a, R2b, S };
 enum class PaperMethod {
@@ -191,6 +191,14 @@ enum class PracticalTrajectoryPolicy {
     FixedWorkHorizon,
 };
 
+struct PracticalReferenceAdequacyConfig {
+    bool enabled = false;
+    int refinement_levels = 1;
+    // The reference is adequate when ||u_fine-Iu_ref|| / ||u_fine|| is no
+    // larger than this fraction of the terminal reported method error.
+    double maximum_terminal_error_fraction = 0.25;
+};
+
 struct PracticalPaperConfig {
     int schema_version = practical_paper_schema_version;
     PaperCase case_id = PaperCase::R1;
@@ -216,6 +224,7 @@ struct PracticalPaperConfig {
     // evaluation-reference targets below. Ignored by FixedWorkHorizon.
     double practical_stop_tolerance = 1e-2;
     adaptive::PracticalPlateauDiagnosticConfig plateau_diagnostic;
+    PracticalReferenceAdequacyConfig reference_adequacy;
     HelmholtzPetrovMode petrov_mode = HelmholtzPetrovMode::TwoSided;
     HelmholtzPatchSolverKind patch_solver_kind =
         HelmholtzPatchSolverKind::DirectSaddle;

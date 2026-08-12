@@ -172,7 +172,8 @@ PaperExecution run_uniform_fem_trajectory(
     const PracticalEvaluationSink &evaluation_sink,
     const double &evaluation_seconds_excluded) {
     ReferenceEpochHierarchy hierarchy(
-        data.initial_mesh, config.initial_coarse_level, config.reference_level);
+        data.initial_mesh, config.initial_coarse_level, config.reference_level,
+        config.reference_epoch);
     PaperExecution execution;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
@@ -235,7 +236,10 @@ PaperExecution run_uniform_fem_trajectory(
         solved.sequence = execution.result.journal.size();
         solved.state_before = PracticalDriverState::SolveAndEstimate;
         solved.state_after = refinements >= config.work_limits.maximum_H_steps
-            ? PracticalDriverState::WorkLimitReached
+            ? (config.trajectory_policy
+                       == PracticalTrajectoryPolicy::FixedWorkHorizon
+                   ? PracticalDriverState::TrajectoryComplete
+                   : PracticalDriverState::WorkLimitReached)
             : PracticalDriverState::RefineCoarse;
         solved.action = PracticalDriverAction::SolveUniformFem;
         solved.evaluation_candidate = candidate;
@@ -246,9 +250,14 @@ PaperExecution run_uniform_fem_trajectory(
         execution.result.journal.push_back(std::move(solved));
 
         if (refinements >= config.work_limits.maximum_H_steps) {
-            execution.result.state = PracticalDriverState::WorkLimitReached;
-            execution.result.stop_reason =
-                "completed configured uniform FEM refinement trajectory";
+            execution.result.state = config.trajectory_policy
+                    == PracticalTrajectoryPolicy::FixedWorkHorizon
+                ? PracticalDriverState::TrajectoryComplete
+                : PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason = config.trajectory_policy
+                    == PracticalTrajectoryPolicy::FixedWorkHorizon
+                ? "fixed H-step trajectory complete"
+                : "completed configured uniform FEM refinement trajectory";
             break;
         }
 
@@ -292,7 +301,8 @@ PaperExecution run_adaptive_fem_trajectory(
     const PracticalEvaluationSink &evaluation_sink,
     const double &evaluation_seconds_excluded) {
     ReferenceEpochHierarchy hierarchy(
-        data.initial_mesh, config.initial_coarse_level, config.reference_level);
+        data.initial_mesh, config.initial_coarse_level, config.reference_level,
+        config.reference_epoch);
     PaperExecution execution;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
@@ -372,7 +382,10 @@ PaperExecution run_adaptive_fem_trajectory(
         solved.sequence = execution.result.journal.size();
         solved.state_before = PracticalDriverState::SolveAndEstimate;
         solved.state_after = completed_trajectory
-            ? PracticalDriverState::WorkLimitReached
+            ? (config.trajectory_policy
+                       == PracticalTrajectoryPolicy::FixedWorkHorizon
+                   ? PracticalDriverState::TrajectoryComplete
+                   : PracticalDriverState::WorkLimitReached)
             : PracticalDriverState::RefineCoarse;
         solved.action = PracticalDriverAction::SolveAdaptiveFem;
         solved.evaluation_candidate = candidate;
@@ -390,10 +403,16 @@ PaperExecution run_adaptive_fem_trajectory(
         execution.result.journal.push_back(std::move(solved));
 
         if (completed_trajectory) {
-            execution.result.state = PracticalDriverState::WorkLimitReached;
-            execution.result.stop_reason = marked.empty()
-                ? "adaptive FEM residual indicator vanished"
-                : "completed configured adaptive FEM refinement trajectory";
+            execution.result.state = config.trajectory_policy
+                    == PracticalTrajectoryPolicy::FixedWorkHorizon
+                ? PracticalDriverState::TrajectoryComplete
+                : PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason = config.trajectory_policy
+                    == PracticalTrajectoryPolicy::FixedWorkHorizon
+                ? "fixed H-step trajectory complete"
+                : (marked.empty()
+                    ? "adaptive FEM residual indicator vanished"
+                    : "completed configured adaptive FEM refinement trajectory");
             break;
         }
 
@@ -438,7 +457,8 @@ PaperExecution run_standard_lod_trajectory(
     const double &evaluation_seconds_excluded) {
     const int prior_ell = standard_lod_prior_ell(config.wavenumber);
     ReferenceEpochHierarchy hierarchy(
-        data.initial_mesh, config.initial_coarse_level, config.reference_level);
+        data.initial_mesh, config.initial_coarse_level, config.reference_level,
+        config.reference_epoch);
     const ComplexVector reference_load = assemble_helmholtz_load(
         hierarchy.reference_mesh(), data.source, config.quadrature,
         data.quadrature_context);
@@ -517,7 +537,10 @@ PaperExecution run_standard_lod_trajectory(
         solved.sequence = execution.result.journal.size();
         solved.state_before = PracticalDriverState::SolveAndEstimate;
         solved.state_after = refinements >= config.work_limits.maximum_H_steps
-            ? PracticalDriverState::WorkLimitReached
+            ? (config.trajectory_policy
+                       == PracticalTrajectoryPolicy::FixedWorkHorizon
+                   ? PracticalDriverState::TrajectoryComplete
+                   : PracticalDriverState::WorkLimitReached)
             : PracticalDriverState::RefineCoarse;
         solved.action = PracticalDriverAction::SolveStandardLod;
         solved.evaluation_candidate = candidate;
@@ -534,9 +557,14 @@ PaperExecution run_standard_lod_trajectory(
         execution.result.journal.push_back(std::move(solved));
 
         if (refinements >= config.work_limits.maximum_H_steps) {
-            execution.result.state = PracticalDriverState::WorkLimitReached;
-            execution.result.stop_reason =
-                "completed configured standard LOD refinement trajectory";
+            execution.result.state = config.trajectory_policy
+                    == PracticalTrajectoryPolicy::FixedWorkHorizon
+                ? PracticalDriverState::TrajectoryComplete
+                : PracticalDriverState::WorkLimitReached;
+            execution.result.stop_reason = config.trajectory_policy
+                    == PracticalTrajectoryPolicy::FixedWorkHorizon
+                ? "fixed H-step trajectory complete"
+                : "completed configured standard LOD refinement trajectory";
             break;
         }
 
@@ -606,6 +634,7 @@ PaperRunStatus paper_status(const PracticalDriverState state,
                             const std::string &reason) {
     switch (state) {
     case PracticalDriverState::Converged:
+    case PracticalDriverState::TrajectoryComplete:
         return PaperRunStatus::Success;
     case PracticalDriverState::WorkLimitReached:
         if (reason.find("wall") != std::string::npos)
@@ -832,12 +861,16 @@ void write_run_json(
         << optional_json_number(convergence.last_error_ratio)
         << ",\"last_log_improvement\":"
         << optional_json_number(convergence.last_log_improvement)
-        << ",\"plateau_error_ratio_threshold\":"
-        << numeric(config.plateau_diagnostic.minimum_error_ratio)
-        << ",\"plateau_minimum_consecutive_steps\":"
-        << config.plateau_diagnostic.minimum_consecutive_steps
-        << ",\"consecutive_plateau_steps\":"
-        << convergence.consecutive_plateau_steps
+        << ",\"plateau_minimum_geometric_mean_ratio\":"
+        << numeric(config.plateau_diagnostic.minimum_geometric_mean_ratio)
+        << ",\"plateau_maximum_relative_oscillation\":"
+        << numeric(config.plateau_diagnostic.maximum_relative_oscillation)
+        << ",\"plateau_window_steps\":"
+        << config.plateau_diagnostic.window_steps
+        << ",\"window_geometric_mean_ratio\":"
+        << optional_json_number(convergence.window_geometric_mean_ratio)
+        << ",\"window_relative_oscillation\":"
+        << optional_json_number(convergence.window_relative_oscillation)
         << ",\"plateau_observed\":"
         << (convergence.plateau_observed ? "true" : "false") << "},\n"
         << "  \"timing\":{\"method_seconds\":" << numeric(method_seconds)
@@ -877,7 +910,8 @@ int main(const int argc, char **argv) {
 
         const auto reference_begin = std::chrono::steady_clock::now();
         ReferenceEpochHierarchy reference_hierarchy(
-            data.initial_mesh, config.initial_coarse_level, config.reference_level);
+            data.initial_mesh, config.initial_coarse_level, config.reference_level,
+            config.reference_epoch);
         const HelmholtzOperators reference_operators = assemble_helmholtz_operators(
             reference_hierarchy.reference_mesh(), config.wavenumber, {}, {},
             config.boundary_beta);
@@ -972,6 +1006,14 @@ int main(const int argc, char **argv) {
         const bool fixed_work_horizon =
             config.trajectory_policy
             == PracticalTrajectoryPolicy::FixedWorkHorizon;
+        if (fixed_work_horizon
+            && result.state == PracticalDriverState::WorkLimitReached
+            && (result.H_steps >= config.work_limits.maximum_H_steps
+                || result.stop_reason
+                    == "adaptive FEM residual indicator vanished")) {
+            result.state = PracticalDriverState::TrajectoryComplete;
+            result.stop_reason = "fixed H-step trajectory complete";
+        }
         if (fixed_empirical_trajectory
             && result.state == PracticalDriverState::WorkLimitReached) {
             const double smallest_target = config.relative_energy_targets.back();
@@ -1013,12 +1055,15 @@ int main(const int argc, char **argv) {
         if (arguments.check) {
             const bool acceptable_state =
                 result.state == PracticalDriverState::Converged
+                || result.state == PracticalDriverState::TrajectoryComplete
                 || ((fixed_empirical_trajectory || fixed_work_horizon)
                     && result.state == PracticalDriverState::WorkLimitReached);
             if (!acceptable_state ||
                 std::none_of(result.journal.begin(), result.journal.end(),
                              [](const PracticalIterationRecord &record) {
                                  return record.action == PracticalDriverAction::Complete
+                                     || record.action
+                                         == PracticalDriverAction::CompleteTrajectory
                                      || record.action
                                          == PracticalDriverAction::StopWorkLimit
                                      || record.action
@@ -1048,12 +1093,12 @@ int main(const int argc, char **argv) {
             };
             if (config.method_id == PracticalPaperMethod::Palod) {
                 const bool invalid_completion = fixed_work_horizon
-                    ? (!has_action(PracticalDriverAction::StopWorkLimit)
+                    ? (!has_action(PracticalDriverAction::CompleteTrajectory)
                        || has_action(PracticalDriverAction::Complete)
                        || result.H_steps
                            != config.work_limits.maximum_H_steps
                        || result.stop_reason
-                           != "fixed calibration H-step horizon reached")
+                           != "fixed H-step trajectory complete")
                     : !has_action(PracticalDriverAction::Complete);
                 if (!has_action(PracticalDriverAction::AcceptLocalization)
                     || invalid_completion) {

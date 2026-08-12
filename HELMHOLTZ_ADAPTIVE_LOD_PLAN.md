@@ -135,9 +135,9 @@ V_h^{\mathrm{ref}}\leftarrow V_{\mathrm{amb}}.
 | `ell0` | `2` | 初始全局 oversampling 层数 |
 | `ell_max` | `6` | 防止异常无限增加的工作上限 |
 | `max_H_steps` | `10` | 单条自适应轨迹的粗加密上限 |
-| `trajectory_policy` | `practical_indicator` | 正式算法；延长校准使用 `fixed_work_horizon` |
-| `practical_stop_tolerance` | 待延长校准冻结 | (U_{prac}) 的绝对停止阈值，不等于相对误差目标 |
-| plateau policy | `ratio>=0.9` 连续 3 步 | 只读 reference-error 平台诊断，不反馈 MARK/STOP |
+| `trajectory_policy` | `fixed_work_horizon`（E1 取轨迹） | `practical_indicator` 仅用于独立算法停止研究 |
+| `practical_stop_tolerance` | 独立研究参数 | (U_{prac}) 的绝对停止阈值，不用于 E1 论文曲线截断 |
+| plateau policy | 三点窗：几何平均 ratio `>=0.9`，波动 `<=15%` | 只读 reference-error 平台诊断，不反馈 MARK/STOP |
 
 这些数值是启动配置，不是理论常数。R1 校准后，将同一网格族、插值算子、边界条件和
 波数区间使用的 `theta_loc/C0_usr/C1_usr` 固定下来，主实验中不得逐算例调参。
@@ -172,8 +172,8 @@ rigorous upper bound。
       只重算受影响 correctors 与 ambient Riesz 问题；返回 3。
    禁止执行 reference/fine refinement。
 5. 解 Petrov--Galerkin LOD 问题，计算 eta_{H,T}、eta_H 和 U_prac。
-6. 正式 `practical_indicator` 模式若 U_prac <= practical_stop_tolerance：结束；
-   `fixed_work_horizon` 校准模式忽略该阈值，直到冻结的 H-step 上限。
+6. `practical_indicator` 算法研究模式若 U_prac <= practical_stop_tolerance：结束；
+   E1 与校准的 `fixed_work_horizon` 模式忽略该阈值，直到预先冻结的 H-step 上限。
 7. 按 theta_H 对 eta_{H,T} 做 Dörfler 标记，加密 T_H 并做相容闭包。
 8. 验证 V_H subset V_h^ref；若失败，返回 ReferenceRefreshRequired，
    不得在粗加密函数内部偷偷改变 reference 网格。
@@ -183,8 +183,9 @@ rigorous upper bound。
 必须写状态转换测试，保证任何 `Theta_loc > theta_loc` 的下一动作都是
 `IncreaseGlobalEll`，从状态枚举中删除/禁用 `RefineCorrectorFine` 分支。
 论文相对 reference-energy 目标始终是事后评价量，不得作为在线停止阈值。校准模式可
-报告相邻误差比、负对数改善和 DOF 归一化斜率；只有误差仍单调下降且比值至少 0.9、
-连续 3 个 H-step 成立时才标记 `plateau_observed`。单步不降或反弹必须清零计数。
+报告相邻误差比、负对数改善和 DOF 归一化斜率。schema-v4 固定查看最后三个误差点：
+两步几何平均比值位于 `[0.9,1]` 且窗口 `(max-min)/min<=15%` 时标记
+`plateau_observed`；允许一次小幅反弹，但强下降不得误判为平台。
 
 ## 4. 当前项目差距和代码工作包
 
@@ -633,6 +634,18 @@ R2a 误差 0.190/0.0958/0.0490/0.0189，每步仍改善 49%--61%，明确未平�
 R2a 6 H-step、S 5 H-step，均以 4 worker 串行运行。pilot/calibration 输出不得入论文。
 v2 优化合并后的 Release 全量回归为 48/48；加入 schema-v3、平台诊断与
 fixed-horizon 端到端 gate 后，Release 全量回归为 49/49（2026-08-12）。
+
+延长校准结果（提交 `f3bf6a2`）：R2a 七点误差最终为
+`0.00651/0.00678/0.00605`，三点窗几何平均比约 `0.9645`、相对波动约 `12%`，
+schema-v4 将其识别为经验平台；S 六个已算点最终为 `0.235/0.169/0.0856`，
+几何平均比约 `0.604`，仍处于强下降区。R2a level 10→11 独立 reference audit
+得到相对 reference 差 `0.09260`，是终点报告误差的 `15.29` 倍，远超冻结的 `25%`
+adequacy 门槛，因此必须进入显式 epoch 1，不能把 level-10 平台当作 PALOD 收敛。
+下一 gate 只运行 R2a/reference-level-11/epoch-1 六步校准与 S 的第六个 H-step；
+二者仍是非论文结果。fixed horizon 达到计划步数记为 `TrajectoryComplete/success`，
+只有真实时间、内存、迭代或未知量上限才记作 censored。
+加入 schema-v4、非零 epoch 传播、reference adequacy 独立 gate 后，Release 全量回归为
+50/50（2026-08-12）。
 
 corrector patch cache 的 correctness scaffold 已加入：相同离散状态全命中且与 full
 rebuild 在 corrector、基、粗算子和 LOD 解上逐项一致；PDE 或实际 patch system 改变均
