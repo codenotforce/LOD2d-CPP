@@ -1254,10 +1254,9 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
             "HLOD-fixed requires one frozen ell value (ell0 == ell_max)");
     }
     if (config.method_id == PracticalPaperMethod::Slod) {
-        const int expected_ell = standard_lod_prior_ell(config.wavenumber);
-        if (config.ell0 != expected_ell || config.ell_max != expected_ell) {
+        if (config.ell0 < 1 || config.ell0 != config.ell_max) {
             throw std::invalid_argument(
-                "SLOD requires ell0 == ell_max == ceil(log2(kappa))");
+                "SLOD requires one positive frozen empirical oversampling depth");
         }
     }
     if ((config.method_id == PracticalPaperMethod::Ufem

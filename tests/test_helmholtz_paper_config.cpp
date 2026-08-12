@@ -640,14 +640,18 @@ void verify_practical_v4_contract() {
             "frozen SLOD c_prior=1 policy drifted");
     changed = original;
     changed.method_id = PracticalPaperMethod::Slod;
-    changed.ell0 = standard_lod_prior_ell(changed.wavenumber);
+    changed.ell0 = 2;
     changed.ell_max = changed.ell0;
     validate_practical_paper_config(changed);
     require_invalid([&] { (void)make_practical_driver_config(changed); },
                     "SLOD was silently relabelled as the adaptive LOD backend");
     changed.ell_max += 1;
     require_invalid([&] { validate_practical_paper_config(changed); },
-                    "SLOD accepted an ell that differs from ceil(log2(kappa))");
+                    "SLOD accepted a non-frozen empirical ell");
+    changed.ell0 = 0;
+    changed.ell_max = 0;
+    require_invalid([&] { validate_practical_paper_config(changed); },
+                    "SLOD accepted a nonpositive empirical ell");
     require_invalid([&] { (void)standard_lod_prior_ell(0.0); },
                     "SLOD accepted a nonpositive wavenumber");
 }

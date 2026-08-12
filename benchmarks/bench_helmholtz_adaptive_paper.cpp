@@ -481,7 +481,7 @@ PaperExecution run_standard_lod_trajectory(
     const PaperCaseData &data,
     const PracticalEvaluationSink &evaluation_sink,
     const double &evaluation_seconds_excluded) {
-    const int prior_ell = standard_lod_prior_ell(config.wavenumber);
+    const int prior_ell = config.ell0;
     ReferenceEpochHierarchy hierarchy(
         data.initial_mesh, config.initial_coarse_level, config.reference_level,
         config.reference_epoch);
@@ -1298,8 +1298,7 @@ int main(const int argc, char **argv) {
                     "UFEM smoke did not remain on the uniform conforming FEM path");
             }
             if (config.method_id == PracticalPaperMethod::Slod) {
-                const int expected_ell =
-                    standard_lod_prior_ell(config.wavenumber);
+                const int expected_ell = config.ell0;
                 const bool wrong_ell = std::any_of(
                     result.journal.begin(), result.journal.end(),
                     [expected_ell](const PracticalIterationRecord &record) {
@@ -1322,7 +1321,7 @@ int main(const int argc, char **argv) {
                     || has_action(PracticalDriverAction::FormCoarseMarking)
                     || wrong_ell || missed_synchronized_fine_refinement) {
                     throw std::runtime_error(
-                        "SLOD smoke did not preserve synchronized uniform H/h refinement");
+                        "SLOD smoke did not preserve its empirical ell and synchronized uniform H/h refinement");
                 }
             }
             if (config.method_id == PracticalPaperMethod::Afem) {
