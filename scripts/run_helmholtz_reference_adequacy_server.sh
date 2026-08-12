@@ -6,7 +6,7 @@ BUILD_DIR=${BUILD_DIR:-"$ROOT_DIR/build-adaptive-paper-server"}
 RESULT_DIR=${RESULT_DIR:-"$ROOT_DIR/results/R2a-reference-adequacy-v4"}
 REFERENCE_CACHE_DIR=${REFERENCE_CACHE_DIR:-"$RESULT_DIR/reference-cache"}
 SOURCE_ITERATIONS=${SOURCE_ITERATIONS:-"$ROOT_DIR/results/adaptive-paper-extended-calibration-v3/runs/R2a-palod-k16-extended-calibration-v3/R2a_PALOD_k16_r0_e66e8517f8ac5dad/iterations.csv"}
-TEMPLATE="$ROOT_DIR/experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-reference-audit-v4.json"
+TEMPLATE=${TEMPLATE:-"$ROOT_DIR/experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-reference-audit-v4.json"}
 RUNTIME_CONFIG="$RESULT_DIR/runtime-config.json"
 JOBS=${JOBS:-16}
 
@@ -17,6 +17,10 @@ if ! git -C "$ROOT_DIR" diff --quiet ||
 fi
 if [[ ! -f "$SOURCE_ITERATIONS" ]]; then
   echo "Missing source trajectory: $SOURCE_ITERATIONS" >&2
+  exit 2
+fi
+if [[ ! -f "$TEMPLATE" ]]; then
+  echo "Missing audit config template: $TEMPLATE" >&2
   exit 2
 fi
 
