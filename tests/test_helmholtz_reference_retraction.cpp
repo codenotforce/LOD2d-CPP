@@ -228,6 +228,8 @@ void verify_localization_certificate() {
     }
     require(disabled_fallback_rejected,
             "disabled dense fallback accepted a nonconverged eigen iteration");
+    require(LocalizationEigenConfig{}.maximum_iterations == 1000,
+            "production localization iteration budget regressed");
 
     const HelmholtzLodModel localized = build_reference_model(
         data, hierarchy, 1);

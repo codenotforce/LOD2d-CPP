@@ -284,7 +284,11 @@ LocalizationSpectrum largest_generalized_eigenvalue(
     if (!result.converged) {
         if (dimension > config.dense_fallback_max_dimension) {
             throw std::runtime_error(
-                "localization largest-eigenvalue iteration did not converge");
+                "localization largest-eigenvalue iteration did not converge: "
+                "dimension=" + std::to_string(dimension)
+                + ", iterations=" + std::to_string(result.iterations)
+                + ", relative_residual="
+                + std::to_string(result.relative_residual));
         }
         Eigen::SelfAdjointEigenSolver<ComplexMatrix> dense_solver(whitened);
         if (dense_solver.info() != Eigen::Success)

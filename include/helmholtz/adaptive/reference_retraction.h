@@ -51,7 +51,10 @@ ReferenceRetraction build_reference_retraction(
     const ReferenceEpochHierarchy &hierarchy);
 
 struct LocalizationEigenConfig {
-    int maximum_iterations = 200;
+    // Large production spectra can have a small dominant eigengap.  The
+    // iteration is matrix-vector only after whitening, so prefer additional
+    // iterations to an O(n^3) dense fallback once the coarse dimension grows.
+    int maximum_iterations = 1000;
     double relative_tolerance = 1e-11;
     int dense_cross_check_max_dimension = 64;
     int dense_fallback_max_dimension = 512;
