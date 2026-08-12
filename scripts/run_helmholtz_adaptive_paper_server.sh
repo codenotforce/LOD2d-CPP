@@ -36,7 +36,7 @@ case "$MODE" in
   calibration)
     DEFAULT_CONFIGS=(
       experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-epoch2-level12-calibration-v4.json
-      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-epoch1-level11-step6-calibration-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-palod-k16-epoch2-level12-step6-calibration-v4.json
     )
     ;;
   custom)
