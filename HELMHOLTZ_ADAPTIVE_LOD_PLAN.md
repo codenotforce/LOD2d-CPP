@@ -1,6 +1,6 @@
 # Helmholtz 实用自适应 LOD：论文数值实验最小实施计划
 
-> 状态日期：2026-08-11
+> 状态日期：2026-08-12
 >
 > 对应论文：`../LOD_paper/helmholtz_lod_certified_amsart.tex`，重点对应 Practical simplified adaptive loop 和 Adaptive numerical experiments。
 >
@@ -646,6 +646,36 @@ adequacy 门槛，因此必须进入显式 epoch 1，不能把 level-10 平台�
 只有真实时间、内存、迭代或未知量上限才记作 censored。
 加入 schema-v4、非零 epoch 传播、reference adequacy 独立 gate 后，Release 全量回归为
 50/50（2026-08-12）。
+
+2026-08-12 的服务器结果与后续本地 gate 审计给出了新的阻塞结论。S epoch 2、
+reference level 12 的六步校准经 `.done`、`run.json`、最终 CSV 动作、`.time`、
+前后 `meminfo` 和 14/14 payload 哈希独立核验后，确认为
+`success/TrajectoryComplete`。七个误差点为
+`0.615676/0.496907/0.425012/0.319588/0.238550/0.149087/0.101268`；最后两个比值
+为 `0.624974/0.679256`，几何平均 `0.651550`，不是平台，且严格的 `0.1` 目标尚未命中。
+该进程 peak RSS 约 17.31 GiB、process swaps 为 0；但上传的 build identity 记录
+`PATCH_THREADS=8`，与冻结的 4 线程协议不符，所以只保留作数值校准证据，不作为 4 线程
+资源证据。新脚本对 calibration/custom 的非 4 线程值 fail closed，并生成相对路径
+`SHA256SUMS`，避免服务器绝对路径导致回传后无法直接验证。
+
+S 最终网格把约 99.16% 的 `sum(eta_H_T^2)` 集中在 `r<0.5`，远场保持粗网格；最细区域
+主要落在 cut-off 过渡环 `0.25<r<0.5`，而重入角点相邻六个单元仍为 `h=0.125`。
+因此当前 calibration 支持局部化，但还不能完成 G7 的角点恢复主张。正式 S 结果仍须检查
+角点、两条 Dirichlet 重入边和 Robin 边界附近的网格分布。
+
+epoch-2 的独立 12→13 audits 均失败：R2a 的相邻 reference 差为 `0.0434044`、终点分数
+为 `8.51361`；S 分别为 `0.116608` 和 `1.15148`，都远大于 0.25。R2a 随后在本机继续
+完成 epoch 3/4/5、reference level 13/14/15 的同一六步轨迹，终点误差分别为
+`0.00627629/0.00724420/0.00587381`；相应 13→14、14→15、15→16 audit 分数仍为
+`4.61608/2.93656/2.44423`。level-15 运行 peak RSS 约 8.40 GiB、wall time 约 24:49、
+swap 为 0；level 16 按资源增长已接近 23 GiB WSL 的安全边界，转服务器执行。
+
+当前下一 gate 只包含 R2a epoch 6/reference level 16 与 S epoch 3/reference level 13 的
+六步校准，随后分别做 16→17 和 13→14 reference audit。两条校准在服务器串行运行，
+`PATCH_THREADS=4`，输出仍是 calibration，不得进入论文图表。只有两项最终
+`terminal_error_fraction<=0.25` 才允许冻结十个 E1 配置；当前禁止启动 E1。
+完整逐点数据、run ID、资源记录和判定见
+`experiments/helmholtz_adaptive_paper/calibration/reference-epoch-v4-2026-08-12.md`。
 
 corrector patch cache 的 correctness scaffold 已加入：相同离散状态全命中且与 full
 rebuild 在 corrector、基、粗算子和 LOD 解上逐项一致；PDE 或实际 patch system 改变均

@@ -27,6 +27,11 @@ fixed-horizon calibration. Schema v4 is the active practical paper contract cons
 | `configs/R2a-palod-k16-reference-audit-v4.json` | R2a level 10-to-11 audit without rerunning PALOD |
 | `configs/R2a-palod-k16-epoch1-calibration-v4.json` | Non-paper R2a epoch-1 calibration |
 | `configs/S-palod-k16-step6-calibration-v4.json` | Non-paper S six-step calibration |
+| `calibration/reference-epoch-v4-2026-08-12.md` | Audited epoch-2 through epoch-5 gate record; never paper data |
+| `configs/R2a-palod-k16-epoch6-level16-calibration-v4.json` | Next server-only R2a calibration |
+| `configs/S-palod-k16-epoch3-level13-step6-calibration-v4.json` | Next server-only S calibration |
+| `configs/R2a-palod-k16-epoch6-level16-reference-audit-v4.json` | R2a level 16-to-17 audit after the next calibration |
+| `configs/S-palod-k16-epoch3-level13-reference-audit-v4.json` | S level 13-to-14 audit after the next calibration |
 
 The C++ registry in `helmholtz/experiments/paper_config.h` is the executable
 counterpart. The legacy v1 and active practical types are separate. In particular, v4
@@ -79,9 +84,11 @@ A plateau uses the final three points: the two-step geometric-mean ratio must
 be at least 0.9, while the whole window may oscillate by at most 15%. This
 admits a small intermediate increase without confusing strong decay with a
 plateau. Fixed horizons end as `TrajectoryComplete`/`success`; actual resource
-limits remain censored. After a plateau, `bench_helmholtz_reference_adequacy`
-compares the frozen reference with exactly one further uniform NVB level. It
-never reruns or mutates the adaptive trajectory.
+limits remain censored. After every completed calibration trajectory and before
+an epoch can be frozen, `bench_helmholtz_reference_adequacy` compares the
+reference with exactly one further uniform NVB level. This gate is independent
+of whether a plateau was observed; it never reruns or mutates the adaptive
+trajectory.
 
 ## Timing Ownership
 
@@ -125,7 +132,9 @@ P1 refinement. The runner never relabels an old proxy.
 | HLOD-fixed paper backend without localization/certificate cost | Implemented |
 | UFEM uniform conforming P1 trajectory backend | Implemented |
 | SLOD/AFEM paper backends | Implemented and smoke-tested |
-| Five-method R2a/S production matrix and paper tables/figures | Not run |
+| Epoch-2 adequacy gates | Both failed; explicit deeper epochs required |
+| R2a local epoch-3/4/5 calibrations and adjacent audits | Completed; all audits failed the 0.25 gate |
+| Five-method R2a/S production matrix and paper tables/figures | Blocked; not run |
 
 Reference solutions are cached on disk across method processes using a key
 that binds the assembled reference problem, load, solver format, Git revision,
