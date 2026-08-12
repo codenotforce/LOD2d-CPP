@@ -52,12 +52,24 @@ sudo apt install -y build-essential cmake g++ python3 \
 ## 4. 获取并核对代码
 
 ```bash
-git clone https://github.com/codenotforce/LOD2d-CPP.git
+git clone https://github.com/untitled-dot/LOD2d-CPP.git
 cd LOD2d-CPP
-git switch codex/reference-epoch-hierarchy   # 合并到 main 后改成 main
+git switch codex/reference-epoch-hierarchy
 git pull --ff-only
 git status --short
 git rev-parse HEAD
+```
+
+当前执行提交先推送到 `untitled-dot` fork 的同名分支，因为上游仓库拒绝该账号直接写入。
+若服务器已有从上游克隆的 checkout，不要重克隆，可改为：
+
+```bash
+git remote add fork https://github.com/untitled-dot/LOD2d-CPP.git 2>/dev/null || \
+  git remote set-url fork https://github.com/untitled-dot/LOD2d-CPP.git
+git fetch --prune fork
+git switch -C codex/reference-epoch-hierarchy --track \
+  fork/codex/reference-epoch-hierarchy
+git pull --ff-only
 ```
 
 工作区必须干净。不要用 `git reset --hard` 清理含有未回传结果的服务器目录。
