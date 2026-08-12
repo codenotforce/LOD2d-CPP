@@ -1,6 +1,7 @@
 #include "helmholtz/adaptive/practical_driver.h"
 #include "helmholtz/adaptive/estimator.h"
 #include "helmholtz/benchmarks/paper_cases.h"
+#include "helmholtz/boundary.h"
 #include "helmholtz/experiments/paper_config.h"
 #include "helmholtz/experiments/reference_solution_cache.h"
 #include "helmholtz/operators.h"
@@ -45,6 +46,15 @@ struct Arguments {
 struct PaperExecution {
     PracticalDriverResult result;
     TriMesh final_mesh;
+};
+
+struct PostprocessErrors {
+    double relative_reference_energy = 0.0;
+    double relative_reference_L2 = 0.0;
+    std::optional<double> exact_energy;
+    std::optional<double> exact_L2;
+    std::optional<double> relative_exact_energy;
+    std::optional<double> relative_exact_L2;
 };
 
 std::string read_text(const std::filesystem::path &path) {
@@ -184,6 +194,8 @@ PaperExecution run_uniform_fem_trajectory(
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
         record.reference_epoch = hierarchy.reference_epoch();
         record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
+        record.coarse_dofs = record.coarse_nodes
+            - dirichlet_nodes(hierarchy.coarse_mesh()).size();
         record.reference_nodes = hierarchy.reference_mesh().nodes.size();
         record.coarse_elements = hierarchy.coarse_mesh().elems.size();
         record.ell = 0;
@@ -313,6 +325,8 @@ PaperExecution run_adaptive_fem_trajectory(
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
         record.reference_epoch = hierarchy.reference_epoch();
         record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
+        record.coarse_dofs = record.coarse_nodes
+            - dirichlet_nodes(hierarchy.coarse_mesh()).size();
         record.reference_nodes = hierarchy.reference_mesh().nodes.size();
         record.coarse_elements = hierarchy.coarse_mesh().elems.size();
         record.ell = 0;
@@ -472,6 +486,8 @@ PaperExecution run_standard_lod_trajectory(
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
         record.reference_epoch = hierarchy.reference_epoch();
         record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
+        record.coarse_dofs = record.coarse_nodes
+            - dirichlet_nodes(hierarchy.coarse_mesh()).size();
         record.reference_nodes = hierarchy.reference_mesh().nodes.size();
         record.coarse_elements = hierarchy.coarse_mesh().elems.size();
         record.ell = prior_ell;
@@ -630,6 +646,55 @@ std::pair<double, double> relative_reference_errors(
     };
 }
 
+PostprocessErrors postprocess_errors(
+    const PracticalPaperConfig &config,
+    const PaperCaseData &data,
+    const TriMesh &reference_mesh,
+    const HelmholtzOperators &reference_operators,
+    const ComplexVector &reference_solution,
+    const std::optional<HelmholtzError> &exact_norm,
+    const ComplexVector &candidate,
+    double &reference_error_seconds,
+    double &exact_error_seconds) {
+    const auto reference_begin = std::chrono::steady_clock::now();
+    const auto reference = relative_reference_errors(
+        reference_operators, reference_solution, candidate);
+    reference_error_seconds += elapsed_seconds(
+        reference_begin, std::chrono::steady_clock::now());
+    PostprocessErrors result;
+    result.relative_reference_energy = reference.first;
+    result.relative_reference_L2 = reference.second;
+    if (!exact_norm) return result;
+
+    const auto exact_begin = std::chrono::steady_clock::now();
+    const HelmholtzError exact_error = compute_helmholtz_error(
+        reference_mesh, candidate, config.wavenumber,
+        data.exact, data.exact_gradient,
+        config.quadrature, data.quadrature_context);
+    if (!(exact_norm->energy > 0.0) || !(exact_norm->l2 > 0.0)) {
+        throw std::runtime_error(
+            "manufactured exact solution has a zero norm");
+    }
+    result.exact_energy = exact_error.energy;
+    result.exact_L2 = exact_error.l2;
+    result.relative_exact_energy = exact_error.energy / exact_norm->energy;
+    result.relative_exact_L2 = exact_error.l2 / exact_norm->l2;
+    exact_error_seconds += elapsed_seconds(
+        exact_begin, std::chrono::steady_clock::now());
+    return result;
+}
+
+void assign_postprocess_errors(
+    PracticalIterationRecord &record,
+    const PostprocessErrors &errors) {
+    record.reference_energy_error = errors.relative_reference_energy;
+    record.reference_L2_error = errors.relative_reference_L2;
+    record.exact_energy_error = errors.exact_energy;
+    record.exact_L2_error = errors.exact_L2;
+    record.relative_exact_energy_error = errors.relative_exact_energy;
+    record.relative_exact_L2_error = errors.relative_exact_L2;
+}
+
 PaperRunStatus paper_status(const PracticalDriverState state,
                             const std::string &reason) {
     switch (state) {
@@ -660,8 +725,9 @@ void write_iterations(
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
     out << "schema_version,case,method,kappa,run_id,reference_epoch,iteration,action,stop_reason,"
-           "N_H,N_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,U_prac,"
-           "reference_energy_error,reference_L2_error,reference_error_ratio,"
+           "N_H,DoF_H,N_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,U_prac,"
+           "reference_energy_error,reference_L2_error,exact_energy_error,exact_L2_error,"
+           "relative_exact_energy_error,relative_exact_L2_error,reference_error_ratio,"
            "reference_log_improvement,reference_dof_log_slope,marked_H,rebuilt_correctors,"
            "ambient_refined_elements,time_mesh,time_corrector,time_certificate,time_solve,"
            "time_estimator,time_total_cumulative,peak_memory_mb\n";
@@ -699,7 +765,7 @@ void write_iterations(
             << run_id << ',' << record.reference_epoch << ',' << record.sequence << ','
             << practical_driver_action_name(record.action) << ','
             << csv_string(record.detail) << ',' << record.coarse_nodes << ','
-            << record.reference_nodes << ','
+            << record.coarse_dofs << ',' << record.reference_nodes << ','
             << (localization_method ? std::to_string(record.ambient_nodes) : "")
             << ',' << (ell_method ? std::to_string(record.ell) : "") << ','
             << numeric(record.kappa_H_max) << ",,"
@@ -709,6 +775,10 @@ void write_iterations(
             << (practical_bound_method ? numeric(record.U_practical) : "") << ','
             << optional_numeric(record.reference_energy_error) << ','
             << optional_numeric(record.reference_L2_error) << ','
+            << optional_numeric(record.exact_energy_error) << ','
+            << optional_numeric(record.exact_L2_error) << ','
+            << optional_numeric(record.relative_exact_energy_error) << ','
+            << optional_numeric(record.relative_exact_L2_error) << ','
             << optional_numeric(error_ratio) << ','
             << optional_numeric(log_improvement) << ','
             << optional_numeric(dof_log_slope) << ','
@@ -736,7 +806,7 @@ void write_summary(
     const PracticalDriverResult &result) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
-    out << "target,status,first_iteration,reference_energy_error,U_prac,N_H,ell,"
+    out << "target,status,first_iteration,reference_energy_error,U_prac,N_H,DoF_H,ell,"
            "rebuilt_correctors_cumulative,ambient_refined_elements_cumulative,"
            "time_total_cumulative\n";
     const std::vector<double> targets(
@@ -746,7 +816,7 @@ void write_summary(
          extract_practical_target_hits(result.journal, targets)) {
         out << numeric(target_hit.target) << ',';
         if (!target_hit.journal_index) {
-            out << "not_reached,,,,,,,,\n";
+            out << "not_reached,,,,,,,,,\n";
         } else {
             const auto hit = result.journal.begin() +
                 static_cast<std::ptrdiff_t>(*target_hit.journal_index);
@@ -764,7 +834,7 @@ void write_summary(
             out << "reached," << hit->sequence << ','
                 << numeric(*hit->reference_energy_error) << ','
                 << (adaptive_lod_method ? numeric(hit->U_practical) : "") << ','
-                << hit->coarse_nodes << ','
+                << hit->coarse_nodes << ',' << hit->coarse_dofs << ','
                 << (ell_method ? std::to_string(hit->ell) : "") << ','
                 << rebuilt << ',' << ambient_refined << ','
                 << numeric(hit->time_total_cumulative_seconds)
@@ -823,6 +893,7 @@ void write_run_json(
     const PracticalDriverResult &result,
     const double method_seconds,
     const double reference_seconds,
+    const double exact_seconds,
     const bool reference_cache_hit,
     const std::string &reference_cache_key,
     const double peak_mb) {
@@ -875,7 +946,9 @@ void write_run_json(
         << (convergence.plateau_observed ? "true" : "false") << "},\n"
         << "  \"timing\":{\"method_seconds\":" << numeric(method_seconds)
         << ",\"evaluation_reference_seconds\":" << numeric(reference_seconds)
+        << ",\"evaluation_exact_seconds\":" << numeric(exact_seconds)
         << ",\"evaluation_reference_excluded_from_method_time\":true"
+        << ",\"evaluation_exact_excluded_from_method_time\":true"
         << ",\"reference_solution_cache_hit\":"
         << (reference_cache_hit ? "true" : "false")
         << ",\"reference_solution_cache_key\":"
@@ -943,15 +1016,32 @@ int main(const int argc, char **argv) {
         }
         const auto reference_end = std::chrono::steady_clock::now();
 
-        std::vector<std::optional<std::pair<double, double>>> streamed_errors;
+        std::optional<HelmholtzError> exact_norm;
+        double exact_norm_seconds = 0.0;
+        if (data.exact && data.exact_gradient) {
+            const auto exact_norm_begin = std::chrono::steady_clock::now();
+            exact_norm = compute_helmholtz_error(
+                reference_hierarchy.reference_mesh(),
+                ComplexVector::Zero(reference_solution.size()),
+                config.wavenumber, data.exact, data.exact_gradient,
+                config.quadrature, data.quadrature_context);
+            exact_norm_seconds = elapsed_seconds(
+                exact_norm_begin, std::chrono::steady_clock::now());
+        }
+
+        std::vector<std::optional<PostprocessErrors>> streamed_errors;
         double streamed_evaluation_seconds = 0.0;
+        double reference_error_seconds = 0.0;
+        double exact_error_seconds = 0.0;
         const PracticalEvaluationSink evaluation_sink =
             [&](const std::size_t sequence, const ComplexVector &candidate) {
                 const auto begin = std::chrono::steady_clock::now();
                 if (streamed_errors.size() <= sequence)
                     streamed_errors.resize(sequence + 1);
-                streamed_errors[sequence] = relative_reference_errors(
-                    reference_operators, reference_solution, candidate);
+                streamed_errors[sequence] = postprocess_errors(
+                    config, data, reference_hierarchy.reference_mesh(),
+                    reference_operators, reference_solution, exact_norm,
+                    candidate, reference_error_seconds, exact_error_seconds);
                 streamed_evaluation_seconds += elapsed_seconds(
                     begin, std::chrono::steady_clock::now());
             };
@@ -981,24 +1071,21 @@ int main(const int argc, char **argv) {
         }
         PracticalDriverResult &result = execution.result;
         const auto method_end = std::chrono::steady_clock::now();
-        const auto evaluation_begin = std::chrono::steady_clock::now();
         for (PracticalIterationRecord &record : result.journal) {
             if (record.sequence < streamed_errors.size()
                 && streamed_errors[record.sequence]) {
-                record.reference_energy_error =
-                    streamed_errors[record.sequence]->first;
-                record.reference_L2_error =
-                    streamed_errors[record.sequence]->second;
+                assign_postprocess_errors(
+                    record, *streamed_errors[record.sequence]);
             } else if (record.evaluation_candidate.size() > 0) {
-                const auto errors = relative_reference_errors(
-                    reference_operators, reference_solution,
-                    record.evaluation_candidate);
-                record.reference_energy_error = errors.first;
-                record.reference_L2_error = errors.second;
+                const PostprocessErrors errors = postprocess_errors(
+                    config, data, reference_hierarchy.reference_mesh(),
+                    reference_operators, reference_solution, exact_norm,
+                    record.evaluation_candidate,
+                    reference_error_seconds, exact_error_seconds);
+                assign_postprocess_errors(record, errors);
                 record.evaluation_candidate.resize(0);
             }
         }
-        const auto evaluation_end = std::chrono::steady_clock::now();
         const bool fixed_empirical_trajectory =
             config.method_id == PracticalPaperMethod::Ufem
             || config.method_id == PracticalPaperMethod::Slod
@@ -1046,8 +1133,8 @@ int main(const int argc, char **argv) {
                 0.0, elapsed_seconds(method_begin, method_end)
                     - streamed_evaluation_seconds),
             elapsed_seconds(reference_begin, reference_end) +
-                streamed_evaluation_seconds
-                + elapsed_seconds(evaluation_begin, evaluation_end),
+                reference_error_seconds,
+            exact_norm_seconds + exact_error_seconds,
             reference_cache_hit,
             reference_cache_key,
             peak_mb);
@@ -1083,6 +1170,21 @@ int main(const int argc, char **argv) {
                              })) {
                 throw std::runtime_error(
                     "WP5 smoke did not compute post-run reference errors");
+            }
+            const bool expects_exact = data.exact && data.exact_gradient;
+            const bool has_exact = std::any_of(
+                result.journal.begin(), result.journal.end(),
+                [](const PracticalIterationRecord &record) {
+                    return record.exact_energy_error
+                        && record.exact_L2_error
+                        && record.relative_exact_energy_error
+                        && record.relative_exact_L2_error;
+                });
+            if (expects_exact != has_exact) {
+                throw std::runtime_error(
+                    expects_exact
+                        ? "manufactured paper case did not compute exact errors"
+                        : "non-manufactured paper case unexpectedly reported exact errors");
             }
             const auto has_action = [&](const PracticalDriverAction action) {
                 return std::any_of(

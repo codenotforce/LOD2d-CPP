@@ -114,6 +114,7 @@ struct PracticalIterationRecord {
     std::uint64_t reference_epoch = 0;
     int ell = 0;
     std::size_t coarse_nodes = 0;
+    std::size_t coarse_dofs = 0;
     std::size_t reference_nodes = 0;
     std::size_t ambient_nodes = 0;
     std::size_t coarse_elements = 0;
@@ -128,6 +129,13 @@ struct PracticalIterationRecord {
     double U_practical = 0.0;
     std::optional<double> reference_energy_error;
     std::optional<double> reference_L2_error;
+    // Reporting-only errors against a manufactured solution.  The absolute
+    // errors use the weighted Helmholtz energy and L2 norms; the relative
+    // values are normalized by the corresponding exact-solution norm.
+    std::optional<double> exact_energy_error;
+    std::optional<double> exact_L2_error;
+    std::optional<double> relative_exact_energy_error;
+    std::optional<double> relative_exact_L2_error;
     // Reporting-only candidate exported to WP5 after MARK/STOP has completed.
     // The driver never receives an evaluation reference solution.
     ComplexVector evaluation_candidate;

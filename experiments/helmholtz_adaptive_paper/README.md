@@ -186,5 +186,27 @@ benchmarks/bench_helmholtz_adaptive_paper \
 Each run directory contains `iterations.csv`, `summary.csv`, `run.json`,
 `ell_history.csv`, and `final_mesh.vtu`. Reference solves and post-run
 reference-error evaluation are timed separately and excluded from method time.
+`iterations.csv` reports both `N_H` (coarse nodes) and `DoF_H` (unconstrained
+coarse degrees of freedom). For the manufactured cases R1 and S it also reports
+absolute and relative weighted-energy/L2 errors against the exact solution.
+These exact values use the same quadrature policy as the run and remain a
+one-way post-processing quantity: they cannot affect MARK or STOP. R2a/R2b
+leave the exact-error columns empty.
+
+The two `S-palod-k16-exploratory-e1-*-step2-v4.json` configurations are short,
+explicitly non-paper trajectories for checking this output before the reference
+adequacy gate is frozen. Plot one or more completed epochs with:
+
+```bash
+python3 tools/visualization/plot_helmholtz_adaptive_epochs.py \
+  --run-dir=results/.../epoch-0-run-id \
+  --run-dir=results/.../epoch-1-run-id \
+  --output=results/.../S-PALOD-error-vs-DoF.png
+```
+
+The figure marks the first evaluated point in each supplied epoch and writes a
+provenance CSV beside the image. A recalibration run may restart from the same
+coarse mesh, so coincident epoch-start markers are intentional and must not be
+interpreted as a continued adaptive trajectory.
 For resource pilots and formal server runs, follow
 [../../HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md](../../HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md).

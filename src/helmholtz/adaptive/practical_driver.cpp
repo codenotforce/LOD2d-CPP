@@ -345,6 +345,8 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
     record.reference_epoch = hierarchy_->reference_epoch();
     record.ell = ell_;
     record.coarse_nodes = hierarchy_->coarse_mesh().nodes.size();
+    record.coarse_dofs = record.coarse_nodes
+        - dirichlet_nodes(hierarchy_->coarse_mesh()).size();
     record.reference_nodes = hierarchy_->reference_mesh().nodes.size();
     record.ambient_nodes = hierarchy_->ambient_mesh().nodes.size();
     record.coarse_elements = hierarchy_->coarse_mesh().elems.size();
