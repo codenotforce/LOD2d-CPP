@@ -1,0 +1,6 @@
+run_id=R1_SLOD_k8_r0_8e9ebd5105d50d4e
+state=Converged
+convergence_regime=pre_asymptotic
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/helmholtz_adaptive_paper_server/runs/R1-slod-smoke-v2/R1_SLOD_k8_r0_8e9ebd5105d50d4e

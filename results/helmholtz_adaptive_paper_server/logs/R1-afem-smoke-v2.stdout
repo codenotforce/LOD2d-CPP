@@ -1,0 +1,6 @@
+run_id=R1_AFEM_k8_r0_4f30b9d0f9d38817
+state=WorkLimitReached
+convergence_regime=pre_asymptotic
+reference_cache=hit
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/helmholtz_adaptive_paper_server/runs/R1-afem-smoke-v2/R1_AFEM_k8_r0_4f30b9d0f9d38817

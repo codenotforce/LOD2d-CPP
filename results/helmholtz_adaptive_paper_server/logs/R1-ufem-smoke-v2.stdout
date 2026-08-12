@@ -1,0 +1,6 @@
+run_id=R1_UFEM_k8_r0_0764a0730cfcde3c
+state=Converged
+convergence_regime=observed_stable_decay
+reference_cache=hit
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/helmholtz_adaptive_paper_server/runs/R1-ufem-smoke-v2/R1_UFEM_k8_r0_0764a0730cfcde3c

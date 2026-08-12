@@ -1,0 +1,16 @@
+{
+  "schema_version":2,
+  "run_id":"R1_AFEM_k8_r0_4f30b9d0f9d38817",
+  "config_hash":"4f30b9d0f9d38817",
+  "case":"R1",
+  "method":"AFEM",
+  "status":"censored_work_limit",
+  "claim":"implementation-study",
+  "stop_reason":"completed configured adaptive FEM refinement trajectory",
+  "driver_state":"WorkLimitReached",
+  "config":{"C0_usr":0.49135072057990814,"C1_usr":0.059576473311033412,"ambient_mesh":"reference-shadow","boundary_beta":1,"build_hash":"sha256:39c3a5d991a4923ddd0f314ab125df399bd039d9d4983ddd034fc6ac52cb52c2","c_H":0.5,"case":"R1","ell0":0,"ell_max":0,"git_commit":"4002a084cf242716e2fb7fae378016918fa63610","initial_coarse_level":2,"kernel_riesz_solver":"saddle_point","manuscript_sha256":"03d83e0eb7128aa5ef00002c6dac110f548351e52e92e56d7adf709880854d20","method":"AFEM","patch_solver_kind":"direct_saddle","petrov_mode":"two_sided","quadrature":{"base_triangle_order":7,"gaussian_triangle_order":10,"max_recursive_subdivisions":4,"singular_triangle_order":10},"reference_epoch":0,"reference_level":5,"reference_mesh":"uniform-nvb","relative_energy_targets":[0.10000000000000001,0.050000000000000003,0.02,0.01],"repeat_index":0,"rho_star":0.25,"schema_version":2,"theta_H":0.5,"theta_loc":0.19985934547160381,"timing_repeats":1,"tolerances":{"eigen_relative_residual":1e-10,"interpolation_right_inverse":1.0000000000000001e-09,"linear_relative_residual":1e-10,"prolongation_composition":1e-10},"wavenumber":8,"work_limits":{"maximum_H_steps":3,"maximum_ambient_elements":100000,"maximum_coarse_elements":10000,"maximum_iterations":20,"maximum_unknowns":100000,"maximum_wall_seconds":60}},
+  "files":{"iterations":"iterations.csv","summary":"summary.csv","ell_history":"ell_history.csv","final_mesh":"final_mesh.vtu"},
+  "convergence_diagnostic":{"status":"pre_asymptotic","distinct_points":4,"criterion":"last two positive error-vs-DOF log slopes differ by at most factor 2","previous_log_slope":2.0212342919190771,"last_log_slope":0.93114819829167972},
+  "timing":{"method_seconds":0.0046395839999999995,"evaluation_reference_seconds":0.0017460049999999999,"evaluation_reference_excluded_from_method_time":true,"reference_solution_cache_hit":true,"reference_solution_cache_key":"b4c8ac8bf96adeae"},
+  "hardware":{"hardware_threads":128,"compiler":"11.4.0","peak_memory_mb":5}
+}

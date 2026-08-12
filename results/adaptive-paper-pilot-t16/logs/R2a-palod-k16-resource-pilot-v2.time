@@ -1,0 +1,23 @@
+	Command being timed: "/home/sutai/code/LOD2d-CPP/build-adaptive-paper-server/benchmarks/bench_helmholtz_adaptive_paper --config=/home/sutai/code/LOD2d-CPP/results/adaptive-paper-pilot-t16/runtime-configs/R2a-palod-k16-resource-pilot-v2.json --output-dir=/home/sutai/code/LOD2d-CPP/results/adaptive-paper-pilot-t16/runs/R2a-palod-k16-resource-pilot-v2 --reference-cache-dir=/home/sutai/code/LOD2d-CPP/results/adaptive-paper-pilot-t16/reference-cache --manuscript-baseline=/home/sutai/code/LOD2d-CPP/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256"
+	User time (seconds): 20.77
+	System time (seconds): 0.99
+	Percent of CPU this job got: 235%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:09.24
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 296040
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 236743
+	Voluntary context switches: 21362
+	Involuntary context switches: 1654
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 112
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

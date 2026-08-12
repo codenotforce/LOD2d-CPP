@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<VTKFile type="UnstructuredGrid" version="0.1" byte_order="LittleEndian">
+  <UnstructuredGrid>
+    <Piece NumberOfPoints="17" NumberOfCells="24">
+      <PointData>
+      </PointData>
+      <CellData>
+        <DataArray type="Float64" Name="eta_H_T" NumberOfComponents="1" format="ascii">
+          1.5019327156132731 2.3575922590897598 2.5389712807691147 2.3575922590897602 2.5389712807691143 2.8238197600869039 2.8238197600869039 3.0577524994677887 3.6630085400533843 1.5019327156132731 3.6630085400533852 3.0577524994677887 1.8570478137645425 1.8444762640772612 3.2658424845110847 3.3547304393058264 1.4274375345817107 2.7954441812062005 3.3547304393058259 2.795444181206201 1.4274375345817103 1.8570478137645428 3.2658424845110847 1.8444762640772623 
+        </DataArray>
+        <DataArray type="Int32" Name="eta_H_T_available" NumberOfComponents="1" format="ascii">
+          1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 
+        </DataArray>
+      </CellData>
+      <Points>
+        <DataArray type="Float64" NumberOfComponents="3" format="ascii">
+          0 0 0 1 0 0 1 1 0 0 1 0 0.5 0.5 0 0.5 0 0 0 0.5 0 1 0.5 0 0.5 1 0 0.25 0.25 0 0.75 0.25 0 0.25 0.75 0 0.75 0.75 0 0.25 0.5 0 0.5 0.25 0 0.75 0.5 0 0.5 0.75 0 
+        </DataArray>
+      </Points>
+      <Cells>
+        <DataArray type="Int32" Name="connectivity" format="ascii">
+          10 5 1 11 8 3 9 6 0 9 0 5 11 3 6 10 1 7 12 7 2 13 11 6 13 9 4 12 2 8 13 4 11 13 6 9 14 9 5 15 10 7 14 10 4 16 11 4 16 12 8 15 12 4 14 4 9 15 4 10 14 5 10 16 8 11 16 4 12 15 7 12 
+        </DataArray>
+        <DataArray type="Int32" Name="offsets" format="ascii">
+          3 6 9 12 15 18 21 24 27 30 33 36 39 42 45 48 51 54 57 60 63 66 69 72 
+        </DataArray>
+        <DataArray type="UInt8" Name="types" format="ascii">
+          5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 
+        </DataArray>
+      </Cells>
+    </Piece>
+  </UnstructuredGrid>
+</VTKFile>

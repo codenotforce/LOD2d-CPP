@@ -1,0 +1,4 @@
+iteration,action,ell,Theta_loc,rebuilt_correctors,time_corrector,time_certificate
+2,AcceptLocalization,2,0.08872683734165808,384,0.137320629,7.685195781
+5,AcceptLocalization,2,0.10690223086820624,438,0.163453657,9.9456942399999999
+8,AcceptLocalization,2,0.11650694167392968,510,0.164803332,13.743256704
