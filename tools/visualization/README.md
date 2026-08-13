@@ -41,6 +41,29 @@ successive measured `H`-orders. The metrics CSV contains fitted DOF slopes,
 P1/LOD ratios, fine-reference floors, and residual maxima. When the fine exact
 errors are available, both error panels display the corresponding floor.
 
+`plot_helmholtz_method_comparison.py` compares completed case-S PALOD, SLOD,
+uniform P1 FEM, and adaptive P1 FEM trajectories using the manufactured exact
+solution. It requires every input run to be `success/TrajectoryComplete`,
+checks the common case, wave number, initial coarse level, and initial coarse
+DoF, and by default truncates each comparator at its first evaluated point at
+or below the terminal PALOD exact relative weighted-energy error. Pass
+`--full-trajectories` for a deep fixed-horizon convergence study; its legend
+then reports a last-four-distinct-DoF fit rather than the whole-range fit. The figure
+marks every consecutive PALOD reference-epoch start. Separate $N^{-1/2}$ guides are anchored at
+the terminal PALOD and AFEM points; separate $N^{-1/3}$ guides are anchored at
+the terminal SLOD and standard-FEM points. Each method legend reports a
+whole-displayed-range log-log DoF exponent. Repeated PALOD DoFs retain the
+later epoch value for this fit, so vertical reference-refresh improvements are
+not counted as DoF convergence. The script writes the plotted observations,
+first-crossing summary, whole-range and last-three-point fitted rates, guide
+anchors, and PALOD-versus-$N^{-1/2}$ comparison beside the PNG and PDF outputs;
+none of these post-processing quantities feed MARK or STOP.
+
+`compare_helmholtz_trajectory_prefix.py` checks that a longer common-commit
+run reproduces every exact-error point from an accepted shorter trajectory.
+Use this before replacing the exploratory curve with the complete deep run in
+a paper figure.
+
 The pollution figure uses fixed `kH=1`. Its primary panel uses `kh=1/8`; its
 strict-reference panel uses `kh=1/16`. The coarse P1 FEM exact error is
 independent of the auxiliary fine space. The fine-P1 exact error is included
@@ -67,10 +90,22 @@ cmake --build build --target bench_helmholtz_visualization -j
 python3 tools/visualization/plot_helmholtz_results.py
 python3 tools/visualization/plot_helmholtz_snapshot.py
 python3 tools/visualization/plot_helmholtz_H_convergence.py
+python3 tools/visualization/plot_helmholtz_method_comparison.py \
+  --palod=results/.../S_PALOD_run \
+  --slod=results/.../S_SLOD_run \
+  --ufem=results/.../S_UFEM_run \
+  --afem=results/.../S_AFEM_run \
+  --full-trajectories \
+  --output=results/.../S-k16-error-vs-DoF.png
+python3 tools/visualization/compare_helmholtz_trajectory_prefix.py \
+  --baseline=results/.../old-run \
+  --extended=results/.../deep-run
 python3 -m unittest \
   tools/visualization/test_plot_helmholtz_results.py \
   tools/visualization/test_helmholtz_snapshot.py \
-  tools/visualization/test_helmholtz_H_convergence.py
+  tools/visualization/test_helmholtz_H_convergence.py \
+  tools/visualization/test_plot_helmholtz_method_comparison.py \
+  tools/visualization/test_compare_helmholtz_trajectory_prefix.py
 ```
 
 To generate SVG in addition to PNG/PDF:

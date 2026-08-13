@@ -1,6 +1,7 @@
 #pragma once
 
 #include "helmholtz/adaptive/certified_driver.h"
+#include "helmholtz/adaptive/practical_driver.h"
 #include "helmholtz/quadrature.h"
 
 #include <array>
@@ -13,6 +14,7 @@
 namespace lod2d::helmholtz::experiments {
 
 inline constexpr int paper_schema_version = 1;
+inline constexpr int practical_paper_schema_version = 4;
 
 enum class PaperCase { R1, R2a, R2b, S };
 enum class PaperMethod {
@@ -179,5 +181,84 @@ bool operator==(const TolerancePolicy &lhs, const TolerancePolicy &rhs);
 bool operator==(const NumericalBackendPolicy &lhs,
                 const NumericalBackendPolicy &rhs);
 bool operator==(const PaperConfig &lhs, const PaperConfig &rhs);
+
+// WP5 practical-paper contract.  It is deliberately separate from the
+// legacy certified v1 contract above: theta_h/q_h and certificate evidence
+// fields cannot enter a PALOD run identity through this type.
+enum class PracticalPaperMethod { Palod, HlodFixed, Slod, Ufem, Afem };
+enum class PracticalTrajectoryPolicy {
+    PracticalIndicator,
+    FixedWorkHorizon,
+};
+
+struct PracticalReferenceAdequacyConfig {
+    bool enabled = false;
+    int refinement_levels = 1;
+    // The reference is adequate when ||u_fine-Iu_ref|| / ||u_fine|| is no
+    // larger than this fraction of the terminal reported method error.
+    double maximum_terminal_error_fraction = 0.25;
+};
+
+struct PracticalPaperConfig {
+    int schema_version = practical_paper_schema_version;
+    PaperCase case_id = PaperCase::R1;
+    PracticalPaperMethod method_id = PracticalPaperMethod::Palod;
+    double wavenumber = 16.0;
+    std::string reference_mesh = "uniform-nvb";
+    int reference_level = 6;
+    std::string ambient_mesh = "reference-shadow";
+    std::uint64_t reference_epoch = 0;
+    // Optional cumulative H-step schedule for explicit in-run reference
+    // refreshes.  Empty preserves the original single-epoch v4 protocol.
+    std::vector<std::size_t> reference_refresh_H_steps;
+    int initial_coarse_level = 2;
+    int ell0 = 2;
+    int ell_max = 6;
+    double boundary_beta = 1.0;
+    double c_H = 0.5;
+    double theta_loc = 0.25;
+    double C0_usr = 1.0;
+    double C1_usr = 1.0;
+    double theta_H = 0.5;
+    double rho_star = 0.25;
+    PracticalTrajectoryPolicy trajectory_policy =
+        PracticalTrajectoryPolicy::PracticalIndicator;
+    // Absolute U_prac threshold, deliberately separate from the relative
+    // evaluation-reference targets below. Ignored by FixedWorkHorizon.
+    double practical_stop_tolerance = 1e-2;
+    adaptive::PracticalPlateauDiagnosticConfig plateau_diagnostic;
+    PracticalReferenceAdequacyConfig reference_adequacy;
+    HelmholtzPetrovMode petrov_mode = HelmholtzPetrovMode::TwoSided;
+    HelmholtzPatchSolverKind patch_solver_kind =
+        HelmholtzPatchSolverKind::DirectSaddle;
+    adaptive::KernelRieszSolver kernel_riesz_solver =
+        adaptive::KernelRieszSolver::SaddlePoint;
+    adaptive::PracticalWorkLimits work_limits;
+    int timing_repeats = 1;
+    int repeat_index = 0;
+    std::array<double, 4> relative_energy_targets{{0.1, 0.05, 0.02, 0.01}};
+    QuadraturePolicy quadrature;
+    TolerancePolicy tolerances;
+    std::string git_commit;
+    std::string build_hash;
+    std::string manuscript_sha256;
+};
+
+std::string_view to_string(PracticalPaperMethod id);
+PracticalPaperMethod parse_practical_paper_method(std::string_view text);
+std::string_view to_string(PracticalTrajectoryPolicy policy);
+PracticalTrajectoryPolicy parse_practical_trajectory_policy(
+    std::string_view text);
+// Frozen E1 protocol: c_prior = 1 in ell = ceil(c_prior * log2(kappa)).
+int standard_lod_prior_ell(double wavenumber);
+void validate_practical_paper_config(const PracticalPaperConfig &config);
+adaptive::PracticalDriverConfig make_practical_driver_config(
+    const PracticalPaperConfig &config);
+std::string canonical_json(const PracticalPaperConfig &config);
+PracticalPaperConfig parse_practical_paper_config(std::string_view json);
+std::string canonical_config_hash(const PracticalPaperConfig &config);
+std::string make_run_id(const PracticalPaperConfig &config);
+bool operator==(const PracticalPaperConfig &lhs,
+                const PracticalPaperConfig &rhs);
 
 } // namespace lod2d::helmholtz::experiments

@@ -9,6 +9,10 @@
 
 namespace lod2d::helmholtz {
 
+namespace adaptive {
+class ReferenceEpochHierarchy;
+}
+
 enum class HelmholtzPetrovMode {
     TwoSided,
     CorrectedTestOnly
@@ -100,7 +104,15 @@ public:
         const TriMesh &coarse_mesh,
         const std::vector<int> &coarse_element_levels,
         const TriMesh &fine_mesh,
-        const std::vector<int> &fine_element_levels);
+        const std::vector<int> &fine_element_levels,
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
+    // Reuse the exact, already validated NVB embedding and quasi-interpolation
+    // owned by a fixed reference epoch.  This avoids rebuilding them by a
+    // global geometry search every time an SLOD model is constructed.
+    static HelmholtzLodModel build_adaptive(
+        const HelmholtzProblemConfig &config,
+        const adaptive::ReferenceEpochHierarchy &hierarchy,
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
 
     HelmholtzLodSolution solve_load(const ComplexVector &fine_load) const;
     HelmholtzLodSolution solve_source(const ComplexFunction &source) const;
@@ -123,7 +135,8 @@ private:
     static HelmholtzLodModel build_with_problem(
         HelmholtzProblemConfig config,
         HelmholtzProblemData problem,
-        double mesh_and_interpolation_ms);
+        double mesh_and_interpolation_ms,
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
 
     HelmholtzProblemConfig config_;
     HelmholtzProblemData problem_;

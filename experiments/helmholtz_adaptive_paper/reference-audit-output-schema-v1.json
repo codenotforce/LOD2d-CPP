@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "lod2d.helmholtz-adaptive-paper.reference-adequacy.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "status", "source_run_id", "source_schema_version", "source_iterations_fingerprint", "config_hash", "case", "method", "wavenumber", "base_reference_level", "audit_reference_level", "base_reference_nodes", "audit_reference_nodes", "terminal_reference_error", "relative_reference_difference", "terminal_error_fraction", "maximum_terminal_error_fraction", "reference_refresh_recommended", "base_cache_hit", "audit_cache_hit", "base_cache_key", "audit_cache_key", "evaluation_seconds"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "status": {"enum": ["reference_adequate", "reference_refresh_recommended"]},
+    "source_run_id": {"type": "string", "minLength": 1},
+    "source_schema_version": {"type": "integer", "minimum": 1},
+    "source_iterations_fingerprint": {"type": "string", "pattern": "^fnv1a64:[0-9a-f]{16}$"},
+    "config_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "case": {"enum": ["R1", "R2a", "R2b", "S"]},
+    "method": {"enum": ["PALOD", "HLOD-fixed", "SLOD", "UFEM", "AFEM"]},
+    "wavenumber": {"enum": [8, 16, 32]},
+    "base_reference_level": {"type": "integer", "minimum": 1},
+    "audit_reference_level": {"type": "integer", "minimum": 2},
+    "base_reference_nodes": {"type": "integer", "minimum": 1},
+    "audit_reference_nodes": {"type": "integer", "minimum": 1},
+    "terminal_reference_error": {"type": "number", "exclusiveMinimum": 0},
+    "relative_reference_difference": {"type": "number", "minimum": 0},
+    "terminal_error_fraction": {"type": "number", "minimum": 0},
+    "maximum_terminal_error_fraction": {"type": "number", "exclusiveMinimum": 0},
+    "reference_refresh_recommended": {"type": "boolean"},
+    "base_cache_hit": {"type": "boolean"},
+    "audit_cache_hit": {"type": "boolean"},
+    "base_cache_key": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "audit_cache_key": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
+    "evaluation_seconds": {"type": "number", "minimum": 0}
+  }
+}

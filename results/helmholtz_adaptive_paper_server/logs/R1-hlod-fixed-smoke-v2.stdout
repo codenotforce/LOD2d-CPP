@@ -1,0 +1,6 @@
+run_id=R1_HLOD-fixed_k8_r0_64811848c80e607d
+state=Converged
+convergence_regime=insufficient_data
+reference_cache=hit
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/helmholtz_adaptive_paper_server/runs/R1-hlod-fixed-smoke-v2/R1_HLOD-fixed_k8_r0_64811848c80e607d

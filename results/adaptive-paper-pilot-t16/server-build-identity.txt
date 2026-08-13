@@ -1,0 +1,3 @@
+git_commit=4002a084cf242716e2fb7fae378016918fa63610
+build_hash=sha256:39c3a5d991a4923ddd0f314ab125df399bd039d9d4983ddd034fc6ac52cb52c2
+patch_threads=16

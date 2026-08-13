@@ -1,0 +1,6 @@
+run_id=R1_PALOD_k8_r0_f143dedc1084797a
+state=Converged
+convergence_regime=insufficient_data
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/helmholtz_adaptive_paper_server/runs/R1-palod-smoke-v2/R1_PALOD_k8_r0_f143dedc1084797a

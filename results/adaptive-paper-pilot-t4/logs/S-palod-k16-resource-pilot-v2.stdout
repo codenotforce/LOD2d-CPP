@@ -1,0 +1,6 @@
+run_id=S_PALOD_k16_r0_00bd4f772f9925b1
+state=WorkLimitReached
+convergence_regime=observed_stable_decay
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/adaptive-paper-pilot-t4/runs/S-palod-k16-resource-pilot-v2/S_PALOD_k16_r0_00bd4f772f9925b1

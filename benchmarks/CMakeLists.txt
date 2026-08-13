@@ -71,6 +71,87 @@ endif()
 add_executable(bench_helmholtz_adaptive bench_helmholtz_adaptive.cpp)
 target_link_libraries(bench_helmholtz_adaptive PRIVATE lod2d_core)
 
+add_executable(bench_helmholtz_adaptive_paper
+    bench_helmholtz_adaptive_paper.cpp)
+target_link_libraries(
+    bench_helmholtz_adaptive_paper PRIVATE lod2d_core lod2d_visualization_io)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_adaptive_paper_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-palod-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/adaptive-paper-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_hlod_fixed_paper_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-hlod-fixed-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/hlod-fixed-paper-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_palod_fixed_horizon_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-palod-fixed-horizon-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/palod-fixed-horizon-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_ufem_paper_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-ufem-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/ufem-paper-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_slod_paper_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-slod-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/slod-paper-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    add_test(NAME helmholtz_afem_paper_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-afem-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/afem-paper-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    set_tests_properties(
+        helmholtz_adaptive_paper_v4_smoke
+        helmholtz_hlod_fixed_paper_v4_smoke
+        helmholtz_palod_fixed_horizon_v4_smoke
+        helmholtz_ufem_paper_v4_smoke
+        helmholtz_slod_paper_v4_smoke
+        helmholtz_afem_paper_v4_smoke
+        PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v4")
+    set_tests_properties(
+        helmholtz_slod_paper_v4_smoke PROPERTIES TIMEOUT 120)
+endif()
+
+add_executable(bench_helmholtz_reference_adequacy
+    bench_helmholtz_reference_adequacy.cpp)
+target_link_libraries(bench_helmholtz_reference_adequacy PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_reference_adequacy_v4_smoke
+        COMMAND bench_helmholtz_reference_adequacy
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-reference-adequacy-smoke-v4.json
+            --source-iterations=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/fixtures/R1-reference-audit-source-v3.csv
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/reference-adequacy-v4-smoke
+            --reference-cache-dir=${CMAKE_CURRENT_BINARY_DIR}/reference-adequacy-v4-cache
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
+    set_tests_properties(helmholtz_reference_adequacy_v4_smoke
+        PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v4")
+endif()
+
+add_executable(bench_helmholtz_e0_calibration
+    bench_helmholtz_e0_calibration.cpp)
+target_link_libraries(bench_helmholtz_e0_calibration PRIVATE lod2d_core)
+if(LOD2D_BUILD_TESTS)
+    add_test(NAME helmholtz_e0_R1_k16_calibration
+        COMMAND bench_helmholtz_e0_calibration
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/e0-R1-k16-calibration
+            --check)
+    set_tests_properties(helmholtz_e0_R1_k16_calibration
+        PROPERTIES TIMEOUT 420 LABELS "calibration;helmholtz;practical-paper-v2")
+endif()
+
 add_executable(bench_helmholtz_certified bench_helmholtz_certified.cpp)
 target_link_libraries(bench_helmholtz_certified PRIVATE lod2d_core)
 if(LOD2D_BUILD_TESTS)

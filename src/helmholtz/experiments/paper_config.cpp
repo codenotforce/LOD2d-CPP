@@ -1153,6 +1153,559 @@ std::string make_run_id(const PaperConfig &config) {
     return out.str();
 }
 
+std::string_view to_string(const PracticalPaperMethod id) {
+    switch (id) {
+    case PracticalPaperMethod::Palod: return "PALOD";
+    case PracticalPaperMethod::HlodFixed: return "HLOD-fixed";
+    case PracticalPaperMethod::Slod: return "SLOD";
+    case PracticalPaperMethod::Ufem: return "UFEM";
+    case PracticalPaperMethod::Afem: return "AFEM";
+    }
+    throw std::invalid_argument("unknown practical paper method enum");
+}
+
+PracticalPaperMethod parse_practical_paper_method(const std::string_view text) {
+    for (const PracticalPaperMethod method : {
+             PracticalPaperMethod::Palod,
+             PracticalPaperMethod::HlodFixed,
+             PracticalPaperMethod::Slod,
+             PracticalPaperMethod::Ufem,
+             PracticalPaperMethod::Afem}) {
+        if (to_string(method) == text) return method;
+    }
+    throw std::invalid_argument(
+        "unknown practical paper method: " + std::string(text));
+}
+
+std::string_view to_string(const PracticalTrajectoryPolicy policy) {
+    switch (policy) {
+    case PracticalTrajectoryPolicy::PracticalIndicator:
+        return "practical_indicator";
+    case PracticalTrajectoryPolicy::FixedWorkHorizon:
+        return "fixed_work_horizon";
+    }
+    throw std::invalid_argument("unknown practical trajectory policy enum");
+}
+
+PracticalTrajectoryPolicy parse_practical_trajectory_policy(
+    const std::string_view text) {
+    for (const PracticalTrajectoryPolicy policy : {
+             PracticalTrajectoryPolicy::PracticalIndicator,
+             PracticalTrajectoryPolicy::FixedWorkHorizon}) {
+        if (to_string(policy) == text) return policy;
+    }
+    throw std::invalid_argument(
+        "unknown practical trajectory policy: " + std::string(text));
+}
+
+int standard_lod_prior_ell(const double wavenumber) {
+    if (!std::isfinite(wavenumber) || !(wavenumber > 0.0)) {
+        throw std::invalid_argument(
+            "standard LOD prior requires a positive finite wavenumber");
+    }
+    constexpr double prior_coefficient = 1.0;
+    return std::max(
+        1, static_cast<int>(std::ceil(
+               prior_coefficient * std::log2(wavenumber))));
+}
+
+void validate_practical_paper_config(const PracticalPaperConfig &config) {
+    if (config.schema_version != practical_paper_schema_version) {
+        throw std::invalid_argument("unsupported practical paper schema version");
+    }
+    (void)case_definition(config.case_id);
+    (void)to_string(config.method_id);
+    (void)to_string(config.trajectory_policy);
+    if (!(config.wavenumber == 8.0 || config.wavenumber == 16.0 ||
+          config.wavenumber == 32.0)) {
+        throw std::invalid_argument("practical paper wavenumber must be 8, 16, or 32");
+    }
+    if (config.reference_mesh != "uniform-nvb" ||
+        config.ambient_mesh != "reference-shadow") {
+        throw std::invalid_argument(
+            "v4 requires uniform-nvb reference_mesh and reference-shadow ambient_mesh");
+    }
+    if (config.initial_coarse_level < 0 ||
+        config.reference_level <= config.initial_coarse_level ||
+        config.ell0 < 0 || config.ell_max < config.ell0) {
+        throw std::invalid_argument("practical mesh levels or ell limits are invalid");
+    }
+    std::size_t previous_refresh = 0;
+    for (const std::size_t refresh : config.reference_refresh_H_steps) {
+        if (refresh == 0 || refresh >= config.work_limits.maximum_H_steps
+            || refresh <= previous_refresh) {
+            throw std::invalid_argument(
+                "reference_refresh_H_steps must be strictly increasing and lie in "
+                "[1, maximum_H_steps)");
+        }
+        previous_refresh = refresh;
+    }
+    if (!config.reference_refresh_H_steps.empty()
+        && (config.trajectory_policy
+                != PracticalTrajectoryPolicy::FixedWorkHorizon
+            || (config.method_id != PracticalPaperMethod::Palod
+                && config.method_id != PracticalPaperMethod::HlodFixed))) {
+        throw std::invalid_argument(
+            "scheduled reference refresh is supported only for fixed-horizon PALOD/HLOD-fixed");
+    }
+    if (config.method_id == PracticalPaperMethod::HlodFixed
+        && config.ell0 != config.ell_max) {
+        throw std::invalid_argument(
+            "HLOD-fixed requires one frozen ell value (ell0 == ell_max)");
+    }
+    if (config.method_id == PracticalPaperMethod::Slod) {
+        if (config.ell0 < 1 || config.ell0 != config.ell_max) {
+            throw std::invalid_argument(
+                "SLOD requires one positive frozen empirical oversampling depth");
+        }
+    }
+    if ((config.method_id == PracticalPaperMethod::Ufem
+         || config.method_id == PracticalPaperMethod::Afem)
+        && (config.ell0 != 0 || config.ell_max != 0)) {
+        throw std::invalid_argument(
+            "conforming FEM baselines require ell0 == ell_max == 0");
+    }
+    const std::array<double, 9> positive{
+        config.boundary_beta, config.c_H, config.theta_loc,
+        config.C0_usr, config.C1_usr, config.theta_H, config.rho_star,
+        config.practical_stop_tolerance,
+        config.plateau_diagnostic.minimum_geometric_mean_ratio};
+    if (std::any_of(positive.begin(), positive.end(), [](const double value) {
+            return !std::isfinite(value) || !(value > 0.0);
+        }) || config.theta_H != 0.5 || config.rho_star > 1.0
+        || config.plateau_diagnostic.minimum_geometric_mean_ratio > 1.0
+        || !std::isfinite(
+            config.plateau_diagnostic.maximum_relative_oscillation)
+        || config.plateau_diagnostic.maximum_relative_oscillation < 0.0
+        || config.plateau_diagnostic.window_steps == 0
+        || config.reference_adequacy.refinement_levels != 1
+        || !std::isfinite(
+            config.reference_adequacy.maximum_terminal_error_fraction)
+        || !(config.reference_adequacy.maximum_terminal_error_fraction > 0.0)) {
+        throw std::invalid_argument("practical decision parameters are invalid");
+    }
+    (void)petrov_mode_name(config.petrov_mode);
+    (void)patch_solver_kind_name(config.patch_solver_kind);
+    (void)kernel_solver_name(config.kernel_riesz_solver);
+    if (config.work_limits.maximum_iterations == 0 ||
+        config.work_limits.maximum_unknowns == 0 ||
+        config.work_limits.maximum_coarse_elements == 0 ||
+        config.work_limits.maximum_ambient_elements == 0 ||
+        !std::isfinite(config.work_limits.maximum_wall_seconds) ||
+        config.work_limits.maximum_wall_seconds < 0.0) {
+        throw std::invalid_argument("practical work limits are invalid");
+    }
+    const std::array<std::size_t, 6> integer_limits{
+        config.work_limits.maximum_iterations,
+        config.work_limits.maximum_H_steps,
+        config.work_limits.maximum_unknowns,
+        config.work_limits.maximum_coarse_elements,
+        config.work_limits.maximum_ambient_elements,
+        config.plateau_diagnostic.window_steps};
+    if (std::any_of(integer_limits.begin(), integer_limits.end(), [](const std::size_t value) {
+            return value > max_exact_json_integer;
+        })) {
+        throw std::invalid_argument("practical work limits must be JSON-safe integers");
+    }
+    constexpr std::array<double, 4> targets{{0.1, 0.05, 0.02, 0.01}};
+    if (config.relative_energy_targets != targets) {
+        throw std::invalid_argument("relative energy targets differ from the frozen v2 protocol");
+    }
+    if (!((config.timing_repeats == 1 || config.timing_repeats == 3) &&
+          config.repeat_index >= 0 && config.repeat_index < config.timing_repeats)) {
+        throw std::invalid_argument("practical timing repeat policy is invalid");
+    }
+    if (config.quadrature.base_triangle_order <= 0 ||
+        config.quadrature.gaussian_triangle_order <= 0 ||
+        config.quadrature.singular_triangle_order <= 0 ||
+        config.quadrature.max_recursive_subdivisions < 0) {
+        throw std::invalid_argument("practical quadrature policy is invalid");
+    }
+    const std::array<double, 4> tolerances{
+        config.tolerances.linear_relative_residual,
+        config.tolerances.eigen_relative_residual,
+        config.tolerances.interpolation_right_inverse,
+        config.tolerances.prolongation_composition};
+    if (std::any_of(tolerances.begin(), tolerances.end(), [](const double value) {
+            return !std::isfinite(value) || !(value > 0.0);
+        })) {
+        throw std::invalid_argument("practical tolerances must be positive and finite");
+    }
+    const bool manuscript_hash_valid = config.manuscript_sha256.size() == 64 &&
+        std::all_of(config.manuscript_sha256.begin(), config.manuscript_sha256.end(),
+                    [](const char character) {
+                        return (character >= '0' && character <= '9') ||
+                               (character >= 'a' && character <= 'f');
+                    });
+    if (config.git_commit.empty() || config.build_hash.empty() ||
+        !manuscript_hash_valid) {
+        throw std::invalid_argument("practical provenance is incomplete or malformed");
+    }
+}
+
+adaptive::PracticalDriverConfig make_practical_driver_config(
+    const PracticalPaperConfig &config) {
+    validate_practical_paper_config(config);
+    if (config.method_id != PracticalPaperMethod::Palod
+        && config.method_id != PracticalPaperMethod::HlodFixed) {
+        throw std::invalid_argument(
+            "the practical LOD driver executes only PALOD and HLOD-fixed");
+    }
+    adaptive::PracticalDriverConfig result;
+    result.initial_coarse_level = config.initial_coarse_level;
+    result.reference_level = config.reference_level;
+    result.reference_epoch = config.reference_epoch;
+    result.reference_refresh_H_steps = config.reference_refresh_H_steps;
+    result.ell0 = config.ell0;
+    result.ell_max = config.ell_max;
+    result.wavenumber = config.wavenumber;
+    result.boundary_beta = config.boundary_beta;
+    result.c_H = config.c_H;
+    result.theta_loc = config.theta_loc;
+    result.C0_usr = config.C0_usr;
+    result.C1_usr = config.C1_usr;
+    result.theta_H = config.theta_H;
+    result.rho_star = config.rho_star;
+    result.tolerance_reference = config.practical_stop_tolerance;
+    result.stop_policy = config.trajectory_policy
+            == PracticalTrajectoryPolicy::FixedWorkHorizon
+        ? adaptive::PracticalStopPolicy::FixedWorkHorizon
+        : adaptive::PracticalStopPolicy::IndicatorTolerance;
+    result.localization_policy = config.method_id
+            == PracticalPaperMethod::HlodFixed
+        ? adaptive::PracticalLocalizationPolicy::FixedGlobalEll
+        : adaptive::PracticalLocalizationPolicy::AdaptiveGlobalEll;
+    result.mode = config.petrov_mode;
+    result.patch_solver.kind = config.patch_solver_kind;
+    result.patch_solver.gmres.relative_tolerance =
+        config.tolerances.linear_relative_residual;
+    result.riesz_solver = config.kernel_riesz_solver;
+    result.localization_eigen.relative_tolerance =
+        config.tolerances.eigen_relative_residual;
+    result.limits = config.work_limits;
+    return result;
+}
+
+std::string canonical_json(const PracticalPaperConfig &config) {
+    validate_practical_paper_config(config);
+    std::ostringstream out;
+    out << "{\"C0_usr\":" << number(config.C0_usr)
+        << ",\"C1_usr\":" << number(config.C1_usr)
+        << ",\"ambient_mesh\":" << json_string(config.ambient_mesh)
+        << ",\"boundary_beta\":" << number(config.boundary_beta)
+        << ",\"build_hash\":" << json_string(config.build_hash)
+        << ",\"c_H\":" << number(config.c_H)
+        << ",\"case\":" << json_string(to_string(config.case_id))
+        << ",\"ell0\":" << config.ell0
+        << ",\"ell_max\":" << config.ell_max
+        << ",\"git_commit\":" << json_string(config.git_commit)
+        << ",\"initial_coarse_level\":" << config.initial_coarse_level
+        << ",\"kernel_riesz_solver\":"
+        << json_string(kernel_solver_name(config.kernel_riesz_solver))
+        << ",\"manuscript_sha256\":" << json_string(config.manuscript_sha256)
+        << ",\"method\":" << json_string(to_string(config.method_id))
+        << ",\"patch_solver_kind\":"
+        << json_string(patch_solver_kind_name(config.patch_solver_kind))
+        << ",\"petrov_mode\":" << json_string(petrov_mode_name(config.petrov_mode))
+        << ",\"plateau_diagnostic\":{\"maximum_relative_oscillation\":"
+        << number(config.plateau_diagnostic.maximum_relative_oscillation)
+        << ",\"minimum_geometric_mean_ratio\":"
+        << number(config.plateau_diagnostic.minimum_geometric_mean_ratio)
+        << ",\"window_steps\":"
+        << config.plateau_diagnostic.window_steps << "}"
+        << ",\"practical_stop_tolerance\":"
+        << number(config.practical_stop_tolerance)
+        << ",\"quadrature\":{\"base_triangle_order\":"
+        << config.quadrature.base_triangle_order
+        << ",\"gaussian_triangle_order\":"
+        << config.quadrature.gaussian_triangle_order
+        << ",\"max_recursive_subdivisions\":"
+        << config.quadrature.max_recursive_subdivisions
+        << ",\"singular_triangle_order\":"
+        << config.quadrature.singular_triangle_order << "}"
+        << ",\"reference_epoch\":" << config.reference_epoch;
+    if (!config.reference_refresh_H_steps.empty()) {
+        out << ",\"reference_refresh_H_steps\":[";
+        for (std::size_t index = 0;
+             index < config.reference_refresh_H_steps.size(); ++index) {
+            if (index) out << ',';
+            out << config.reference_refresh_H_steps[index];
+        }
+        out << "]";
+    }
+    out << ",\"reference_adequacy\":{\"enabled\":"
+        << (config.reference_adequacy.enabled ? "true" : "false")
+        << ",\"maximum_terminal_error_fraction\":"
+        << number(config.reference_adequacy.maximum_terminal_error_fraction)
+        << ",\"refinement_levels\":"
+        << config.reference_adequacy.refinement_levels << "}"
+        << ",\"reference_level\":" << config.reference_level
+        << ",\"reference_mesh\":" << json_string(config.reference_mesh)
+        << ",\"relative_energy_targets\":[";
+    for (std::size_t index = 0; index < config.relative_energy_targets.size(); ++index) {
+        if (index) out << ',';
+        out << number(config.relative_energy_targets[index]);
+    }
+    out << "]"
+        << ",\"repeat_index\":" << config.repeat_index
+        << ",\"rho_star\":" << number(config.rho_star)
+        << ",\"schema_version\":" << config.schema_version
+        << ",\"theta_H\":" << number(config.theta_H)
+        << ",\"theta_loc\":" << number(config.theta_loc)
+        << ",\"timing_repeats\":" << config.timing_repeats
+        << ",\"trajectory_policy\":"
+        << json_string(to_string(config.trajectory_policy))
+        << ",\"tolerances\":{\"eigen_relative_residual\":"
+        << number(config.tolerances.eigen_relative_residual)
+        << ",\"interpolation_right_inverse\":"
+        << number(config.tolerances.interpolation_right_inverse)
+        << ",\"linear_relative_residual\":"
+        << number(config.tolerances.linear_relative_residual)
+        << ",\"prolongation_composition\":"
+        << number(config.tolerances.prolongation_composition) << "}"
+        << ",\"wavenumber\":" << number(config.wavenumber)
+        << ",\"work_limits\":{\"maximum_H_steps\":"
+        << config.work_limits.maximum_H_steps
+        << ",\"maximum_ambient_elements\":"
+        << config.work_limits.maximum_ambient_elements
+        << ",\"maximum_coarse_elements\":"
+        << config.work_limits.maximum_coarse_elements
+        << ",\"maximum_iterations\":"
+        << config.work_limits.maximum_iterations
+        << ",\"maximum_unknowns\":"
+        << config.work_limits.maximum_unknowns
+        << ",\"maximum_wall_seconds\":"
+        << number(config.work_limits.maximum_wall_seconds) << "}}";
+    return out.str();
+}
+
+PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
+    const JsonValue parsed_root = JsonParser(json).parse();
+    const JsonObject &root = as_object(parsed_root, "root");
+    const bool has_refresh_schedule =
+        root.contains("reference_refresh_H_steps");
+    if (has_refresh_schedule) {
+        require_keys(root,
+            {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
+             "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
+             "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
+             "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
+             "quadrature", "reference_adequacy", "reference_epoch",
+             "reference_refresh_H_steps", "reference_level", "reference_mesh",
+             "relative_energy_targets", "repeat_index", "rho_star", "schema_version",
+             "theta_H", "theta_loc", "timing_repeats", "tolerances",
+             "trajectory_policy", "wavenumber", "work_limits"}, "root");
+    } else {
+        require_keys(root,
+            {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
+             "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
+             "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
+             "petrov_mode", "plateau_diagnostic", "practical_stop_tolerance",
+             "quadrature", "reference_adequacy", "reference_epoch", "reference_level",
+             "reference_mesh", "relative_energy_targets", "repeat_index", "rho_star",
+             "schema_version", "theta_H", "theta_loc", "timing_repeats", "tolerances",
+             "trajectory_policy", "wavenumber", "work_limits"}, "root");
+    }
+    PracticalPaperConfig config;
+    config.schema_version = as_integer(get(root, "schema_version"), "schema_version");
+    config.case_id = parse_paper_case(as_string(get(root, "case"), "case"));
+    config.method_id = parse_practical_paper_method(
+        as_string(get(root, "method"), "method"));
+    config.wavenumber = as_number(get(root, "wavenumber"), "wavenumber");
+    config.reference_mesh = as_string(get(root, "reference_mesh"), "reference_mesh");
+    config.reference_level = as_integer(get(root, "reference_level"), "reference_level");
+    config.ambient_mesh = as_string(get(root, "ambient_mesh"), "ambient_mesh");
+    config.reference_epoch = as_uint64(get(root, "reference_epoch"), "reference_epoch");
+    if (has_refresh_schedule) {
+        const JsonArray &refreshes = as_array(
+            get(root, "reference_refresh_H_steps"),
+            "reference_refresh_H_steps");
+        config.reference_refresh_H_steps.reserve(refreshes.size());
+        for (const JsonValue &refresh : refreshes) {
+            config.reference_refresh_H_steps.push_back(
+                static_cast<std::size_t>(as_uint64(
+                    refresh, "reference_refresh_H_steps")));
+        }
+    }
+    config.initial_coarse_level = as_integer(
+        get(root, "initial_coarse_level"), "initial_coarse_level");
+    config.ell0 = as_integer(get(root, "ell0"), "ell0");
+    config.ell_max = as_integer(get(root, "ell_max"), "ell_max");
+    config.boundary_beta = as_number(get(root, "boundary_beta"), "boundary_beta");
+    config.c_H = as_number(get(root, "c_H"), "c_H");
+    config.theta_loc = as_number(get(root, "theta_loc"), "theta_loc");
+    config.C0_usr = as_number(get(root, "C0_usr"), "C0_usr");
+    config.C1_usr = as_number(get(root, "C1_usr"), "C1_usr");
+    config.theta_H = as_number(get(root, "theta_H"), "theta_H");
+    config.rho_star = as_number(get(root, "rho_star"), "rho_star");
+    config.trajectory_policy = parse_practical_trajectory_policy(
+        as_string(get(root, "trajectory_policy"), "trajectory_policy"));
+    config.practical_stop_tolerance = as_number(
+        get(root, "practical_stop_tolerance"), "practical_stop_tolerance");
+    config.petrov_mode = parse_petrov_mode(
+        as_string(get(root, "petrov_mode"), "petrov_mode"));
+    config.patch_solver_kind = parse_patch_solver_kind(
+        as_string(get(root, "patch_solver_kind"), "patch_solver_kind"));
+    config.kernel_riesz_solver = parse_kernel_solver(
+        as_string(get(root, "kernel_riesz_solver"), "kernel_riesz_solver"));
+    config.timing_repeats = as_integer(get(root, "timing_repeats"), "timing_repeats");
+    config.repeat_index = as_integer(get(root, "repeat_index"), "repeat_index");
+    config.git_commit = as_string(get(root, "git_commit"), "git_commit");
+    config.build_hash = as_string(get(root, "build_hash"), "build_hash");
+    config.manuscript_sha256 = as_string(
+        get(root, "manuscript_sha256"), "manuscript_sha256");
+
+    const JsonObject &reference_adequacy = as_object(
+        get(root, "reference_adequacy"), "reference_adequacy");
+    require_keys(reference_adequacy,
+        {"enabled", "maximum_terminal_error_fraction", "refinement_levels"},
+        "reference_adequacy");
+    config.reference_adequacy.enabled = as_bool(
+        get(reference_adequacy, "enabled"), "enabled");
+    config.reference_adequacy.maximum_terminal_error_fraction = as_number(
+        get(reference_adequacy, "maximum_terminal_error_fraction"),
+        "maximum_terminal_error_fraction");
+    config.reference_adequacy.refinement_levels = as_integer(
+        get(reference_adequacy, "refinement_levels"), "refinement_levels");
+
+    const JsonObject &plateau = as_object(
+        get(root, "plateau_diagnostic"), "plateau_diagnostic");
+    require_keys(plateau,
+        {"maximum_relative_oscillation", "minimum_geometric_mean_ratio",
+         "window_steps"},
+        "plateau_diagnostic");
+    config.plateau_diagnostic.window_steps =
+        static_cast<std::size_t>(as_uint64(
+            get(plateau, "window_steps"), "window_steps"));
+    config.plateau_diagnostic.minimum_geometric_mean_ratio = as_number(
+        get(plateau, "minimum_geometric_mean_ratio"),
+        "minimum_geometric_mean_ratio");
+    config.plateau_diagnostic.maximum_relative_oscillation = as_number(
+        get(plateau, "maximum_relative_oscillation"),
+        "maximum_relative_oscillation");
+
+    const JsonArray &targets = as_array(
+        get(root, "relative_energy_targets"), "relative_energy_targets");
+    if (targets.size() != config.relative_energy_targets.size()) {
+        throw std::invalid_argument("relative_energy_targets must have four entries");
+    }
+    for (std::size_t index = 0; index < targets.size(); ++index) {
+        config.relative_energy_targets[index] =
+            as_number(targets[index], "relative_energy_targets");
+    }
+    const JsonObject &quadrature = as_object(get(root, "quadrature"), "quadrature");
+    require_keys(quadrature,
+        {"base_triangle_order", "gaussian_triangle_order",
+         "max_recursive_subdivisions", "singular_triangle_order"}, "quadrature");
+    config.quadrature.base_triangle_order = as_integer(
+        get(quadrature, "base_triangle_order"), "base_triangle_order");
+    config.quadrature.gaussian_triangle_order = as_integer(
+        get(quadrature, "gaussian_triangle_order"), "gaussian_triangle_order");
+    config.quadrature.max_recursive_subdivisions = as_integer(
+        get(quadrature, "max_recursive_subdivisions"), "max_recursive_subdivisions");
+    config.quadrature.singular_triangle_order = as_integer(
+        get(quadrature, "singular_triangle_order"), "singular_triangle_order");
+    const JsonObject &tolerances = as_object(get(root, "tolerances"), "tolerances");
+    require_keys(tolerances,
+        {"eigen_relative_residual", "interpolation_right_inverse",
+         "linear_relative_residual", "prolongation_composition"}, "tolerances");
+    config.tolerances.eigen_relative_residual = as_number(
+        get(tolerances, "eigen_relative_residual"), "eigen_relative_residual");
+    config.tolerances.interpolation_right_inverse = as_number(
+        get(tolerances, "interpolation_right_inverse"), "interpolation_right_inverse");
+    config.tolerances.linear_relative_residual = as_number(
+        get(tolerances, "linear_relative_residual"), "linear_relative_residual");
+    config.tolerances.prolongation_composition = as_number(
+        get(tolerances, "prolongation_composition"), "prolongation_composition");
+    const JsonObject &limits = as_object(get(root, "work_limits"), "work_limits");
+    require_keys(limits,
+        {"maximum_H_steps", "maximum_ambient_elements", "maximum_coarse_elements",
+         "maximum_iterations", "maximum_unknowns", "maximum_wall_seconds"},
+        "work_limits");
+    config.work_limits.maximum_H_steps = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_H_steps"), "maximum_H_steps"));
+    config.work_limits.maximum_ambient_elements = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_ambient_elements"), "maximum_ambient_elements"));
+    config.work_limits.maximum_coarse_elements = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_coarse_elements"), "maximum_coarse_elements"));
+    config.work_limits.maximum_iterations = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_iterations"), "maximum_iterations"));
+    config.work_limits.maximum_unknowns = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_unknowns"), "maximum_unknowns"));
+    config.work_limits.maximum_wall_seconds = as_number(
+        get(limits, "maximum_wall_seconds"), "maximum_wall_seconds");
+    validate_practical_paper_config(config);
+    return config;
+}
+
+std::string canonical_config_hash(const PracticalPaperConfig &config) {
+    const std::string canonical = canonical_json(config);
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const unsigned char byte : canonical) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream out;
+    out << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return out.str();
+}
+
+std::string make_run_id(const PracticalPaperConfig &config) {
+    validate_practical_paper_config(config);
+    std::ostringstream out;
+    out << to_string(config.case_id) << '_'
+        << safe_component(to_string(config.method_id))
+        << "_k" << static_cast<int>(config.wavenumber)
+        << "_r" << config.repeat_index << '_'
+        << canonical_config_hash(config);
+    return out.str();
+}
+
+bool operator==(const PracticalPaperConfig &lhs,
+                const PracticalPaperConfig &rhs) {
+    return lhs.schema_version == rhs.schema_version && lhs.case_id == rhs.case_id &&
+        lhs.method_id == rhs.method_id && lhs.wavenumber == rhs.wavenumber &&
+        lhs.reference_mesh == rhs.reference_mesh &&
+        lhs.reference_level == rhs.reference_level &&
+        lhs.ambient_mesh == rhs.ambient_mesh &&
+        lhs.reference_epoch == rhs.reference_epoch &&
+        lhs.reference_refresh_H_steps == rhs.reference_refresh_H_steps &&
+        lhs.initial_coarse_level == rhs.initial_coarse_level &&
+        lhs.ell0 == rhs.ell0 && lhs.ell_max == rhs.ell_max &&
+        lhs.boundary_beta == rhs.boundary_beta && lhs.c_H == rhs.c_H &&
+        lhs.theta_loc == rhs.theta_loc && lhs.C0_usr == rhs.C0_usr &&
+        lhs.C1_usr == rhs.C1_usr && lhs.theta_H == rhs.theta_H &&
+        lhs.rho_star == rhs.rho_star &&
+        lhs.trajectory_policy == rhs.trajectory_policy &&
+        lhs.practical_stop_tolerance == rhs.practical_stop_tolerance &&
+        lhs.plateau_diagnostic.minimum_geometric_mean_ratio ==
+            rhs.plateau_diagnostic.minimum_geometric_mean_ratio &&
+        lhs.plateau_diagnostic.maximum_relative_oscillation ==
+            rhs.plateau_diagnostic.maximum_relative_oscillation &&
+        lhs.plateau_diagnostic.window_steps ==
+            rhs.plateau_diagnostic.window_steps &&
+        lhs.reference_adequacy.enabled == rhs.reference_adequacy.enabled &&
+        lhs.reference_adequacy.refinement_levels ==
+            rhs.reference_adequacy.refinement_levels &&
+        lhs.reference_adequacy.maximum_terminal_error_fraction ==
+            rhs.reference_adequacy.maximum_terminal_error_fraction &&
+        lhs.petrov_mode == rhs.petrov_mode &&
+        lhs.patch_solver_kind == rhs.patch_solver_kind &&
+        lhs.kernel_riesz_solver == rhs.kernel_riesz_solver &&
+        lhs.work_limits.maximum_iterations == rhs.work_limits.maximum_iterations &&
+        lhs.work_limits.maximum_H_steps == rhs.work_limits.maximum_H_steps &&
+        lhs.work_limits.maximum_unknowns == rhs.work_limits.maximum_unknowns &&
+        lhs.work_limits.maximum_coarse_elements == rhs.work_limits.maximum_coarse_elements &&
+        lhs.work_limits.maximum_ambient_elements == rhs.work_limits.maximum_ambient_elements &&
+        lhs.work_limits.maximum_wall_seconds == rhs.work_limits.maximum_wall_seconds &&
+        lhs.timing_repeats == rhs.timing_repeats &&
+        lhs.repeat_index == rhs.repeat_index &&
+        lhs.relative_energy_targets == rhs.relative_energy_targets &&
+        lhs.quadrature == rhs.quadrature && lhs.tolerances == rhs.tolerances &&
+        lhs.git_commit == rhs.git_commit && lhs.build_hash == rhs.build_hash &&
+        lhs.manuscript_sha256 == rhs.manuscript_sha256;
+}
+
 bool operator==(const TolerancePolicy &lhs, const TolerancePolicy &rhs) {
     return lhs.linear_relative_residual == rhs.linear_relative_residual
         && lhs.eigen_relative_residual == rhs.eigen_relative_residual

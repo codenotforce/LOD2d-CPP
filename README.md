@@ -143,8 +143,13 @@ in [BENCHMARK_GUIDE.md](BENCHMARK_GUIDE.md).
 - continuous P1/P2/P3 fine spaces for direct-saddle hp-corrector experiments;
 - globally nested NVB spaces with primal and adjoint localized correctors;
 - two-sided Petrov-Galerkin LOD;
+- patch-batched multi-right-hand-side kernel Riesz solves for practical
+  localization certificates;
 - direct saddle, explicit Schur, and experimental shifted-GMRES patch solvers;
 - experimental two-level hybrid Schwarz solvers;
+- a practical-paper runner with real PALOD, fixed-global-ell HLOD, uniform
+  standard LOD (`SLOD`, frozen `ell=ceil(log2(kappa))`), uniform P1 FEM, and
+  residual-adaptive P1 AFEM trajectories on one evaluation-reference epoch;
 - a legacy fixed-fine-space H-only calibration driver retained as
   `HLOD-proxy` for diagnostics;
 - certified-adaptive WP0-WP5 library infrastructure described below.
@@ -226,6 +231,7 @@ a rebuild.
 | [experiments/helmholtz_adaptive_paper/README.md](experiments/helmholtz_adaptive_paper/README.md) | Versioned experiment schemas, IDs, timing ownership, and current execution boundary |
 | [HELMHOLTZ_HP_SERVER_RUNBOOK.md](HELMHOLTZ_HP_SERVER_RUNBOOK.md) | hp-LOD validation and server runs |
 | [HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md](HELMHOLTZ_POLLUTION_SERVER_RUNBOOK.md) | Staged pollution scans, memory gates, and recovery |
+| [HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md](HELMHOLTZ_ADAPTIVE_PAPER_SERVER_RUNBOOK.md) | Practical adaptive-paper pilots, shared reference cache, memory gates, and result return |
 
 Other `*_PLAN.md` files are retained as scoped design records. Their dated
 status statements are historical unless the active adaptive plan explicitly

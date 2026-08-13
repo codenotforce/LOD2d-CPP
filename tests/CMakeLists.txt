@@ -55,6 +55,12 @@ add_executable(test_helmholtz_corrector test_helmholtz_corrector.cpp)
 target_link_libraries(test_helmholtz_corrector PRIVATE lod2d_core)
 add_test(NAME helmholtz_corrector COMMAND test_helmholtz_corrector)
 
+add_executable(test_helmholtz_corrector_cache
+    test_helmholtz_corrector_cache.cpp)
+target_link_libraries(test_helmholtz_corrector_cache PRIVATE lod2d_core)
+add_test(NAME helmholtz_corrector_cache
+    COMMAND test_helmholtz_corrector_cache)
+
 add_executable(test_helmholtz_model test_helmholtz_model.cpp)
 target_link_libraries(test_helmholtz_model PRIVATE lod2d_core)
 add_test(NAME helmholtz_petrov_galerkin COMMAND test_helmholtz_model)
@@ -63,6 +69,12 @@ add_executable(test_helmholtz_adaptive test_helmholtz_adaptive.cpp)
 target_link_libraries(test_helmholtz_adaptive PRIVATE lod2d_core)
 add_test(NAME helmholtz_adaptive COMMAND test_helmholtz_adaptive)
 
+add_executable(test_helmholtz_reference_epoch_hierarchy
+    test_helmholtz_reference_epoch_hierarchy.cpp)
+target_link_libraries(test_helmholtz_reference_epoch_hierarchy PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_epoch_hierarchy
+    COMMAND test_helmholtz_reference_epoch_hierarchy)
+
 add_executable(test_helmholtz_error_control test_helmholtz_error_control.cpp)
 target_link_libraries(test_helmholtz_error_control PRIVATE lod2d_core)
 add_test(NAME helmholtz_error_control COMMAND test_helmholtz_error_control)
@@ -70,6 +82,18 @@ add_test(NAME helmholtz_error_control COMMAND test_helmholtz_error_control)
 add_executable(test_helmholtz_kernel_residual test_helmholtz_kernel_residual.cpp)
 target_link_libraries(test_helmholtz_kernel_residual PRIVATE lod2d_core)
 add_test(NAME helmholtz_kernel_residual COMMAND test_helmholtz_kernel_residual)
+
+add_executable(test_helmholtz_reference_retraction
+    test_helmholtz_reference_retraction.cpp)
+target_link_libraries(test_helmholtz_reference_retraction PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_retraction
+    COMMAND test_helmholtz_reference_retraction)
+
+add_executable(test_helmholtz_practical_driver
+    test_helmholtz_practical_driver.cpp)
+target_link_libraries(test_helmholtz_practical_driver PRIVATE lod2d_core)
+add_test(NAME helmholtz_practical_driver
+    COMMAND test_helmholtz_practical_driver)
 
 add_executable(test_verified_spectrum test_verified_spectrum.cpp)
 target_link_libraries(test_verified_spectrum PRIVATE lod2d_core)
@@ -90,6 +114,12 @@ add_test(NAME helmholtz_numerical_backend COMMAND test_helmholtz_numerical_backe
 add_executable(test_helmholtz_paper_config test_helmholtz_paper_config.cpp)
 target_link_libraries(test_helmholtz_paper_config PRIVATE lod2d_core)
 add_test(NAME helmholtz_paper_config COMMAND test_helmholtz_paper_config)
+
+add_executable(test_helmholtz_reference_solution_cache
+    test_helmholtz_reference_solution_cache.cpp)
+target_link_libraries(test_helmholtz_reference_solution_cache PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_solution_cache
+    COMMAND test_helmholtz_reference_solution_cache)
 
 add_executable(test_helmholtz_mixed_boundary test_helmholtz_mixed_boundary.cpp)
 target_link_libraries(test_helmholtz_mixed_boundary PRIVATE lod2d_core)

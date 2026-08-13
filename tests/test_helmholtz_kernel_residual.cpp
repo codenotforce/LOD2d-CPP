@@ -4,6 +4,7 @@
 #include "helmholtz/benchmarks/paper_cases.h"
 #include "helmholtz/model.h"
 
+#include <Eigen/Eigenvalues>
 #include <Eigen/QR>
 
 #include <algorithm>
@@ -13,6 +14,10 @@
 #include <stdexcept>
 #include <type_traits>
 #include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace lod2d;
 using namespace lod2d::helmholtz;
@@ -45,6 +50,22 @@ struct AuditProblem {
               hierarchy.cert_audit_mesh(), data.wavenumber)),
           load(assemble_helmholtz_load(
               hierarchy.cert_audit_mesh(), data.source, {}, data.quadrature_context)) {}
+};
+
+struct ReferenceEpochProblem {
+    PaperCaseData data;
+    ReferenceEpochHierarchy hierarchy;
+    HelmholtzOperators reference_operators;
+    ComplexVector reference_load;
+
+    ReferenceEpochProblem(PaperCase id, int coarse_level, int reference_level)
+        : data(make_paper_case(id, 4.0)),
+          hierarchy(data.initial_mesh, coarse_level, reference_level),
+          reference_operators(assemble_helmholtz_operators(
+              hierarchy.reference_mesh(), data.wavenumber)),
+          reference_load(assemble_helmholtz_load(
+              hierarchy.reference_mesh(), data.source, {},
+              data.quadrature_context)) {}
 };
 
 struct LodAuditCandidate {
@@ -221,9 +242,9 @@ void verify_patch_constraints_and_solver_agreement() {
                 "kernel-basis local Riesz energy identity failed");
         ComplexVector saddle_ambient = ComplexVector::Zero(problem.load.size());
         ComplexVector basis_ambient = ComplexVector::Zero(problem.load.size());
-        for (int local = 0; local < static_cast<int>(patch.audit_dofs.size()); ++local) {
-            saddle_ambient(patch.audit_dofs[local]) = saddle_local.local_values(local);
-            basis_ambient(patch.audit_dofs[local]) = basis_local.local_values(local);
+        for (int local = 0; local < static_cast<int>(patch.discrete_dofs.size()); ++local) {
+            saddle_ambient(patch.discrete_dofs[local]) = saddle_local.local_values(local);
+            basis_ambient(patch.discrete_dofs[local]) = basis_local.local_values(local);
         }
         const ComplexVector saddle_full_constraint =
             problem.hierarchy.cert_audit_quasi_interpolation().cast<Complex>()
@@ -250,6 +271,190 @@ void verify_patch_constraints_and_solver_agreement() {
                   "node-to-element eta allocation is not conservative");
     require(saddle.allocation_relative_error <= 1e-12,
             "reported eta allocation residual is too large");
+}
+
+void verify_reference_residual_riesz() {
+    ReferenceEpochProblem problem(PaperCase::R1, 1, 3);
+    const ComplexVector candidate = ComplexVector::Zero(
+        problem.reference_load.size());
+    const ReferenceResidualRiesz saddle = compute_reference_residual_riesz(
+        problem.hierarchy,
+        problem.reference_operators,
+        problem.reference_load,
+        candidate,
+        0.5,
+        KernelRieszSolver::SaddlePoint);
+    const ReferenceResidualRiesz basis = compute_reference_residual_riesz(
+        problem.hierarchy,
+        problem.reference_operators,
+        problem.reference_load,
+        candidate,
+        0.5,
+        KernelRieszSolver::KernelBasisReference);
+
+    require(saddle.space == KernelRieszSpace::ReferenceResidual,
+            "reference Riesz result has the wrong space role");
+    require(saddle.patches.size()
+                == problem.hierarchy.coarse_mesh().nodes.size(),
+            "reference Riesz did not build one patch per coarse node");
+    require(saddle.eta > 0.0,
+            "nonzero reference residual produced a zero eta_H");
+    require(!saddle.marked_elements.empty(),
+            "positive reference eta_H produced no H marking");
+    require(saddle.local_square_sum_relative_error <= 1e-13,
+            "reference eta_H does not equal the local square sum");
+    require(saddle.allocation_relative_error <= 1e-13,
+            "reference node-to-element allocation is not conservative");
+    require_close(saddle.eta, basis.eta, 2e-10,
+                  "reference saddle and kernel-basis eta_H disagree");
+
+    for (int index = 0; index < static_cast<int>(saddle.patches.size()); ++index) {
+        const KernelRieszPatch &patch = saddle.patches[index];
+        const LocalKernelRieszResult &local = saddle.local_results[index];
+        require(local.constraint_relative_residual <= 1e-10,
+                "reference local Riesz solution violates I_H xi_z=0");
+        require(local.riesz_relative_residual <= 1e-10,
+                "reference local Riesz stationarity residual is too large");
+        require(local.energy_identity_relative_error <= 1e-10,
+                "reference local Riesz energy identity failed");
+        require_close(local.eta, basis.local_results[index].eta, 2e-10,
+                      "reference local Riesz solvers disagree");
+
+        ComplexVector extended = ComplexVector::Zero(
+            problem.reference_load.size());
+        for (int local_dof = 0;
+             local_dof < static_cast<int>(patch.discrete_dofs.size());
+             ++local_dof) {
+            extended(patch.discrete_dofs[local_dof]) =
+                local.local_values(local_dof);
+        }
+        const ComplexVector constraint =
+            problem.hierarchy.reference_quasi_interpolation().cast<Complex>()
+            * extended;
+        require(constraint.norm()
+                    <= 1e-10 * std::max(1.0, extended.norm()),
+                "reference zero extension violates the global kernel constraint");
+    }
+
+    const double eta_before_ambient_update = saddle.eta;
+    const AmbientRatioEnforcementResult update =
+        problem.hierarchy.enforce_ambient_ratio(0.2);
+    require(update.changed,
+            "WP2 reference-independence test did not refine ambient shadow");
+    const ReferenceResidualRiesz repeated = compute_reference_residual_riesz(
+        problem.hierarchy,
+        problem.reference_operators,
+        problem.reference_load,
+        candidate,
+        0.5);
+    require_close(repeated.eta, eta_before_ambient_update, 2e-13,
+                  "ambient refinement changed the reference eta_H");
+}
+
+void verify_ambient_defect_riesz_gram() {
+    ReferenceEpochProblem problem(PaperCase::R1, 1, 3);
+    const AmbientRatioEnforcementResult update =
+        problem.hierarchy.enforce_ambient_ratio(0.2);
+    require(update.changed,
+            "ambient defect test did not obtain a distinct ambient space");
+    const HelmholtzOperators ambient_operators = assemble_helmholtz_operators(
+        problem.hierarchy.ambient_mesh(), problem.data.wavenumber);
+    ComplexMatrix defect_rhs = ambient_operators.mass.cast<Complex>()
+        * problem.hierarchy.coarse_to_ambient().cast<Complex>();
+    for (int node : ambient_operators.dirichlet_nodes)
+        defect_rhs.row(node).setZero();
+
+    int original_threads = 1;
+#ifdef _OPENMP
+    original_threads = omp_get_max_threads();
+    omp_set_num_threads(1);
+#endif
+    const AmbientDefectRiesz serial_saddle = compute_ambient_defect_riesz(
+        problem.hierarchy,
+        ambient_operators,
+        defect_rhs,
+        KernelRieszSolver::SaddlePoint);
+#ifdef _OPENMP
+    omp_set_num_threads(std::min(4, omp_get_num_procs()));
+#endif
+    const AmbientDefectRiesz saddle = compute_ambient_defect_riesz(
+        problem.hierarchy,
+        ambient_operators,
+        defect_rhs,
+        KernelRieszSolver::SaddlePoint);
+    const AmbientDefectRiesz basis = compute_ambient_defect_riesz(
+        problem.hierarchy,
+        ambient_operators,
+        defect_rhs,
+        KernelRieszSolver::KernelBasisReference);
+#ifdef _OPENMP
+    omp_set_num_threads(original_threads);
+    require(saddle.parallel_threads == std::min(4, omp_get_num_procs()),
+            "ambient defect Riesz did not use the requested OpenMP threads");
+#endif
+    require(serial_saddle.gram.isApprox(saddle.gram, 0.0),
+            "ambient defect Gram depends on the OpenMP thread count");
+    require(serial_saddle.column_eta_squared.isApprox(
+                saddle.column_eta_squared, 0.0),
+            "ambient defect column norms depend on the OpenMP thread count");
+    const int coarse_nodes = static_cast<int>(
+        problem.hierarchy.coarse_mesh().nodes.size());
+    require(saddle.space == KernelRieszSpace::AmbientDefect,
+            "ambient defect result was mislabeled as a reference estimator");
+    require(saddle.gram.rows() == coarse_nodes
+                && saddle.gram.cols() == coarse_nodes,
+            "ambient G_loc has the wrong coarse-basis dimensions");
+    require(saddle.gram.norm() > 1e-14,
+            "nonzero ambient defect produced a zero Gram matrix");
+    require(saddle.local_square_sum_relative_error <= 2e-11,
+            "ambient Gram diagonal does not equal the local square sum");
+    require(saddle.gram_accumulation_relative_error <= 2e-13,
+            "ambient local Gram contributions do not sum to G_loc");
+    require((saddle.gram - saddle.gram.adjoint()).norm()
+                <= 2e-11 * std::max(1.0, saddle.gram.norm()),
+            "ambient G_loc is not Hermitian");
+    require(saddle.gram.isApprox(basis.gram, 3e-10),
+            "ambient saddle and kernel-basis Gram matrices disagree");
+
+    Eigen::SelfAdjointEigenSolver<ComplexMatrix> eigenproblem(
+        0.5 * (saddle.gram + saddle.gram.adjoint()));
+    require(eigenproblem.info() == Eigen::Success,
+            "ambient G_loc eigensolve failed");
+    require(eigenproblem.eigenvalues().minCoeff()
+                >= -2e-11 * std::max(1.0, saddle.gram.norm()),
+            "ambient G_loc is not positive semidefinite");
+
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(saddle.patches.size());
+         ++patch_index) {
+        const KernelRieszPatch &patch = saddle.patches[patch_index];
+        const AmbientDefectLocalRiesz &local = saddle.local_results[patch_index];
+        require(local.hermitian_relative_error <= 2e-11,
+                "an ambient local Gram contribution is not Hermitian");
+        for (const LocalKernelRieszResult &column : local.columns) {
+            require(column.constraint_relative_residual <= 1e-10,
+                    "ambient local Riesz solution violates I_H zeta_z=0");
+            require(column.riesz_relative_residual <= 1e-10,
+                    "ambient local Riesz stationarity residual is too large");
+            require(column.energy_identity_relative_error <= 1e-10,
+                    "ambient local Riesz energy identity failed");
+        }
+        if (local.columns.empty()) continue;
+        ComplexVector extended = ComplexVector::Zero(
+            problem.hierarchy.ambient_mesh().nodes.size());
+        for (int local_dof = 0;
+             local_dof < static_cast<int>(patch.discrete_dofs.size());
+             ++local_dof) {
+            extended(patch.discrete_dofs[local_dof]) =
+                local.columns.front().local_values(local_dof);
+        }
+        const ComplexVector constraint =
+            problem.hierarchy.ambient_quasi_interpolation().cast<Complex>()
+            * extended;
+        require(constraint.norm()
+                    <= 1e-10 * std::max(1.0, extended.norm()),
+                "ambient zero extension violates the global kernel constraint");
+    }
 }
 
 void verify_explicit_global_kernel_bounds() {
@@ -349,13 +554,15 @@ void verify_equal_mesh_degeneracy() {
 int main() {
     try {
         verify_patch_constraints_and_solver_agreement();
+        verify_reference_residual_riesz();
+        verify_ambient_defect_riesz_gram();
         verify_explicit_global_kernel_bounds();
         verify_effectivity_distribution(PaperCase::R1);
         verify_effectivity_distribution(PaperCase::R2a);
         verify_effectivity_distribution(PaperCase::R2b);
         verify_effectivity_distribution(PaperCase::S);
         verify_equal_mesh_degeneracy();
-        std::cout << "Audit-kernel residual estimator passed\n";
+        std::cout << "Reference and ambient kernel Riesz estimators passed\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_kernel_residual failed: "

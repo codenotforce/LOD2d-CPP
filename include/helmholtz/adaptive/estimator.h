@@ -51,6 +51,20 @@ struct HelmholtzIndicatorSet {
     double global(ResidualEstimatorKind kind) const;
 };
 
+// Standard conforming P1 AFEM estimator on one mesh:
+//   h_T^2 ||f + kappa^2 n u_H||_T^2
+// + h_E ||[A grad u_H . n]||_E^2
+// + h_E ||A grad u_H . n - i kappa beta u_H||_E^2.
+// Interior-edge contributions are split equally between their neighbours.
+struct HelmholtzP1ResidualEstimate {
+    std::vector<double> body_squared;
+    std::vector<double> interior_jump_squared;
+    std::vector<double> robin_boundary_squared;
+    std::vector<double> element_squared;
+    double eta = 0.0;
+    double algebraic_relative_difference = 0.0;
+};
+
 HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
     const HelmholtzProblemData &problem,
     const HelmholtzOperators &operators,
@@ -63,6 +77,15 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
 HelmholtzIndicatorSet build_helmholtz_indicators(
     const HelmholtzProblemData &problem,
     const HelmholtzResidualContributions &contributions);
+
+HelmholtzP1ResidualEstimate estimate_conforming_p1_residual(
+    const TriMesh &mesh,
+    const HelmholtzOperators &operators,
+    const ComplexVector &solution,
+    const ComplexVector &load,
+    const ComplexFunction &source,
+    const QuadraturePolicy &quadrature = {},
+    const QuadratureContext &quadrature_context = {});
 
 // Historical calibration diagnostic. Unlike eta_H, this partitions a broken
 // residual by coarse-element ownership and must never drive paper MARK/STOP.

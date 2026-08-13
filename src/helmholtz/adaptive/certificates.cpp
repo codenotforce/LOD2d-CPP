@@ -752,9 +752,9 @@ Enclosure assemble_total_gram(
     const int columns = static_cast<int>(rhs.midpoint.cols());
     Enclosure gram = zero_square_enclosure(columns);
     for (const AuditKernelPatch &patch : patches) {
-        if (patch.audit_dofs.empty()) continue;
-        const Enclosure local_energy = restrict_square(energy, patch.audit_dofs);
-        const Enclosure local_rhs = restrict_rows(rhs, patch.audit_dofs);
+        if (patch.discrete_dofs.empty()) continue;
+        const Enclosure local_energy = restrict_square(energy, patch.discrete_dofs);
+        const Enclosure local_rhs = restrict_rows(rhs, patch.discrete_dofs);
         const Enclosure constraints = uniform_enclosure(
             patch.constraints.cast<Complex>(),
             evidence.constraint_entry_radius,
