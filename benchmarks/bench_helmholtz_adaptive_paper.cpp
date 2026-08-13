@@ -11,6 +11,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -557,6 +558,26 @@ PaperExecution run_standard_lod_trajectory(
             hierarchy.coarse_mesh(), hierarchy.coarse_levels(),
             hierarchy.reference_mesh(), hierarchy.reference_element_levels());
         const auto build_end = std::chrono::steady_clock::now();
+        if (std::getenv("LOD2D_PROFILE_MODEL_STAGES") != nullptr) {
+            const HelmholtzBuildTimings &timings = model.build_timings();
+            const HelmholtzCorrectorDiagnostics &diagnostics =
+                model.correctors().diagnostics;
+            std::cerr
+                << "LOD2D_MODEL_STAGES method=SLOD"
+                << " refinement=" << refinements
+                << " coarse_nodes=" << hierarchy.coarse_mesh().nodes.size()
+                << " reference_nodes=" << hierarchy.reference_mesh().nodes.size()
+                << " patch_count=" << diagnostics.patch_count
+                << " parallel_threads=" << diagnostics.parallel_threads
+                << " mesh_interpolation_ms="
+                << timings.mesh_and_interpolation_ms
+                << " operators_ms=" << timings.operators_ms
+                << " correctors_ms=" << timings.correctors_ms
+                << " basis_factorization_ms="
+                << timings.basis_and_factorization_ms
+                << " total_ms=" << timings.total_ms
+                << '\n';
+        }
 
         const auto solve_begin = std::chrono::steady_clock::now();
         const ComplexVector candidate = model.solve_load(reference_load).fine_values;

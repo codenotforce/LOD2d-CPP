@@ -9,8 +9,11 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <unordered_map>
@@ -579,25 +582,62 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
         }
     }
 
+    const bool profile_stages =
+        std::getenv("LOD2D_PROFILE_LOCALIZATION_STAGES") != nullptr;
+    const auto total_begin = std::chrono::steady_clock::now();
+    auto stage_begin = total_begin;
+    const auto elapsed_ms = [](const auto begin) {
+        return std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - begin).count();
+    };
+
     ReferenceLocalizationCertificate result;
     result.retraction = build_reference_retraction(hierarchy);
+    const double retraction_ms = elapsed_ms(stage_begin);
+    stage_begin = std::chrono::steady_clock::now();
     const ComplexMatrix localized(localized_adjoint_basis);
     const ComplexMatrix reference_action =
         reference_operators.system.adjoint() * localized;
     result.defect_rhs = result.retraction.matrix().transpose().cast<Complex>()
         * reference_action;
+    const double defect_rhs_ms = elapsed_ms(stage_begin);
+    stage_begin = std::chrono::steady_clock::now();
     result.ambient_riesz = compute_ambient_defect_riesz(
         hierarchy, ambient_operators, result.defect_rhs, riesz_solver);
+    const double ambient_riesz_ms = elapsed_ms(stage_begin);
 
+    stage_begin = std::chrono::steady_clock::now();
     const Eigen::SparseMatrix<double> coarse_basis = select_columns(
         hierarchy.coarse_to_reference(), coarse_basis_nodes);
     const Eigen::SparseMatrix<double> reference_energy =
         energy_matrix(reference_operators);
     result.coarse_energy = ComplexMatrix(
         coarse_basis.transpose() * reference_energy * coarse_basis).cast<Complex>();
+    const double coarse_energy_ms = elapsed_ms(stage_begin);
+    stage_begin = std::chrono::steady_clock::now();
     result.spectrum = largest_generalized_eigenvalue(
         result.ambient_riesz.gram, result.coarse_energy, eigen_config);
+    const double spectrum_ms = elapsed_ms(stage_begin);
     result.theta_loc = std::sqrt(std::max(0.0, result.spectrum.lambda_max));
+    if (profile_stages) {
+        std::cerr
+            << "LOD2D_LOCALIZATION_STAGES"
+            << " reference_nodes=" << reference_nodes
+            << " ambient_nodes=" << ambient_nodes
+            << " coarse_dimension=" << coarse_basis_nodes.size()
+            << " retraction_ms=" << retraction_ms
+            << " defect_rhs_ms=" << defect_rhs_ms
+            << " ambient_riesz_ms=" << ambient_riesz_ms
+            << " coarse_energy_ms=" << coarse_energy_ms
+            << " spectrum_ms=" << spectrum_ms
+            << " spectrum_iterations=" << result.spectrum.iterations
+            << " dense_cross_checked="
+            << (result.spectrum.dense_cross_checked ? 1 : 0)
+            << " dense_fallback="
+            << (result.spectrum.used_dense_fallback ? 1 : 0)
+            << " total_ms=" << elapsed_ms(total_begin)
+            << '\n';
+    }
     return result;
 }
 
