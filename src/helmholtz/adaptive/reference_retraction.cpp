@@ -595,11 +595,15 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     result.retraction = build_reference_retraction(hierarchy);
     const double retraction_ms = elapsed_ms(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
-    const ComplexMatrix localized(localized_adjoint_basis);
-    const ComplexMatrix reference_action =
-        reference_operators.system.adjoint() * localized;
+    const ComplexSparseMatrix reference_action =
+        reference_operators.system.adjoint() * localized_adjoint_basis;
     result.defect_rhs = result.retraction.matrix().transpose().cast<Complex>()
         * reference_action;
+    result.defect_rhs.makeCompressed();
+    result.defect_rhs.prune(
+        [](int, int, const Complex &value) {
+            return value != Complex(0.0, 0.0);
+        });
     const double defect_rhs_ms = elapsed_ms(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
     result.ambient_riesz = compute_ambient_defect_riesz(
@@ -630,6 +634,14 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
             << " ambient_riesz_ms=" << ambient_riesz_ms
             << " ambient_riesz_threads="
             << result.ambient_riesz.parallel_threads
+            << " ambient_patch_count="
+            << result.ambient_riesz.patch_count
+            << " ambient_patch_factorizations="
+            << result.ambient_riesz.patch_factorizations
+            << " ambient_active_rhs_solves="
+            << result.ambient_riesz.right_hand_side_solves
+            << " ambient_max_active_columns="
+            << result.ambient_riesz.maximum_active_columns
             << " coarse_energy_ms=" << coarse_energy_ms
             << " spectrum_ms=" << spectrum_ms
             << " spectrum_iterations=" << result.spectrum.iterations
@@ -660,13 +672,13 @@ double compute_reference_localization_direct_delta(
 
     const Eigen::SparseMatrix<double> reference_energy =
         energy_matrix(reference_operators);
-    const ComplexMatrix localized_dense(localized_adjoint_basis);
-    const ComplexMatrix expected_defect =
+    const ComplexSparseMatrix expected_defect =
         certificate.retraction.matrix().transpose().cast<Complex>()
-        * (reference_operators.system.adjoint() * localized_dense);
+        * (reference_operators.system.adjoint() * localized_adjoint_basis);
     if (expected_defect.rows() != certificate.defect_rhs.rows()
         || expected_defect.cols() != certificate.defect_rhs.cols()
-        || !expected_defect.isApprox(certificate.defect_rhs, 2e-12)) {
+        || sparse_relative_difference(
+               expected_defect, certificate.defect_rhs) > 2e-12) {
         throw std::invalid_argument(
             "localization certificate is stale for the localized basis");
     }
@@ -680,7 +692,7 @@ double compute_reference_localization_direct_delta(
             "localization certificate coarse energy is stale");
     }
     const ComplexMatrix difference = ComplexMatrix(ideal_adjoint_basis)
-        - localized_dense;
+        - ComplexMatrix(localized_adjoint_basis);
     const ComplexMatrix direct_gram = difference.adjoint()
         * reference_energy.cast<Complex>() * difference;
     return std::sqrt(dense_largest_generalized_eigenvalue(
@@ -813,7 +825,11 @@ validate_reference_localization_certificate_small_matrix(
 
     std::vector<Eigen::MatrixXd> local_bases;
     int total_columns = 0;
-    for (const KernelRieszPatch &patch : certificate.ambient_riesz.patches) {
+    const std::vector<KernelRieszPatch> validation_patches =
+        build_kernel_riesz_patches(
+            hierarchy, KernelRieszSpace::AmbientDefect,
+            certificate.ambient_riesz.policy);
+    for (const KernelRieszPatch &patch : validation_patches) {
         Eigen::MatrixXd basis = kernel_basis(patch.constraints);
         if (basis.cols() > 0) {
             const Eigen::MatrixXd local_energy(
@@ -834,7 +850,7 @@ validate_reference_localization_certificate_small_matrix(
          patch_index < static_cast<int>(local_bases.size()); ++patch_index) {
         const Eigen::MatrixXd &basis = local_bases[patch_index];
         const KernelRieszPatch &patch =
-            certificate.ambient_riesz.patches[patch_index];
+            validation_patches[patch_index];
         for (int local = 0;
              local < static_cast<int>(patch.discrete_dofs.size()); ++local) {
             const int row = free_index[patch.discrete_dofs[local]];

@@ -1137,8 +1137,9 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
 AmbientDefectRiesz compute_ambient_defect_riesz(
     const ReferenceEpochHierarchy &hierarchy,
     const HelmholtzOperators &ambient_operators,
-    const ComplexMatrix &defect_rhs,
-    KernelRieszSolver solver) {
+    const ComplexSparseMatrix &defect_rhs,
+    KernelRieszSolver solver,
+    AmbientDefectDetail detail) {
     const int ambient_nodes = static_cast<int>(
         hierarchy.ambient_mesh().nodes.size());
     const int input_columns = static_cast<int>(defect_rhs.cols());
@@ -1151,7 +1152,8 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
         throw std::invalid_argument(
             "ambient defect Riesz inputs do not match ambient_mesh");
     }
-    if (!(ambient_operators.wavenumber > 0.0) || !defect_rhs.allFinite()) {
+    if (!(ambient_operators.wavenumber > 0.0)
+        || !defect_rhs.coeffs().allFinite()) {
         throw std::invalid_argument("ambient defect Riesz inputs are invalid");
     }
 
@@ -1159,50 +1161,90 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     result.policy = kernel_riesz_patch_policy(
         hierarchy, KernelRieszSpace::AmbientDefect);
     result.solver = solver;
-    result.patches = build_kernel_riesz_patches(
+    std::vector<KernelRieszPatch> patches = build_kernel_riesz_patches(
         hierarchy, KernelRieszSpace::AmbientDefect, result.policy);
+    result.patch_count = patches.size();
+    result.local_details_stored =
+        detail == AmbientDefectDetail::StoreLocalDetails;
+    if (result.local_details_stored)
+        result.local_results.resize(patches.size());
     result.gram = ComplexMatrix::Zero(input_columns, input_columns);
     result.column_eta_squared = Eigen::VectorXd::Zero(input_columns);
-    result.local_results.resize(result.patches.size());
-    result.local_gram_contributions.resize(result.patches.size());
 
     const Eigen::SparseMatrix<double> global_energy =
         energy_matrix(ambient_operators);
+    using RowMajorComplexSparse =
+        Eigen::SparseMatrix<Complex, Eigen::RowMajor>;
+    const RowMajorComplexSparse defect_by_row = defect_rhs;
     std::atomic<bool> failed{false};
     std::exception_ptr first_exception;
     std::mutex exception_mutex;
-    const auto solve_patch = [&](int patch_index) {
+
+    struct PatchContribution {
+        AmbientDefectLocalRiesz local;
+    };
+    const auto solve_patch = [&](int patch_index, PatchContribution &output) {
         if (failed.load(std::memory_order_relaxed)) return;
         try {
-            const KernelRieszPatch &patch = result.patches[patch_index];
+            const KernelRieszPatch &patch = patches[patch_index];
+            std::vector<char> active(input_columns, false);
+            for (int ambient_dof : patch.discrete_dofs) {
+                for (RowMajorComplexSparse::InnerIterator it(
+                         defect_by_row, ambient_dof); it; ++it) {
+                    if (it.value() != Complex(0.0, 0.0))
+                        active[it.col()] = true;
+                }
+            }
+            for (int column = 0; column < input_columns; ++column) {
+                if (active[column]) output.local.active_columns.push_back(column);
+            }
+            if (output.local.active_columns.empty()) return;
+
+            std::vector<int> compact_column(input_columns, -1);
+            for (int local_column = 0;
+                 local_column
+                     < static_cast<int>(output.local.active_columns.size());
+                 ++local_column) {
+                compact_column[output.local.active_columns[local_column]] =
+                    local_column;
+            }
+            ComplexMatrix local_right_hand_sides = ComplexMatrix::Zero(
+                patch.discrete_dofs.size(),
+                output.local.active_columns.size());
+            for (int local_row = 0;
+                 local_row < static_cast<int>(patch.discrete_dofs.size());
+                 ++local_row) {
+                const int ambient_dof = patch.discrete_dofs[local_row];
+                for (RowMajorComplexSparse::InnerIterator it(
+                         defect_by_row, ambient_dof); it; ++it) {
+                    const int local_column = compact_column[it.col()];
+                    if (local_column >= 0)
+                        local_right_hand_sides(local_row, local_column) =
+                            it.value();
+                }
+            }
             const Eigen::SparseMatrix<double> local_energy =
                 restrict_sparse_matrix(global_energy, patch.discrete_dofs);
-            ComplexMatrix local_right_hand_sides(
-                patch.discrete_dofs.size(), input_columns);
-            for (int column = 0; column < input_columns; ++column) {
-                local_right_hand_sides.col(column) = restrict_vector(
-                    defect_rhs.col(column), patch.discrete_dofs);
-            }
             std::vector<LocalKernelRieszResult> columns =
                 solve_local_riesz_columns(
                     local_energy, patch.constraints,
                     local_right_hand_sides, solver);
             ComplexMatrix representatives = ComplexMatrix::Zero(
-                patch.discrete_dofs.size(), input_columns);
-            AmbientDefectLocalRiesz local_result;
-            local_result.columns.reserve(input_columns);
-            for (int column = 0; column < input_columns; ++column) {
+                patch.discrete_dofs.size(),
+                output.local.active_columns.size());
+            output.local.columns.reserve(output.local.active_columns.size());
+            for (int column = 0;
+                 column < static_cast<int>(output.local.active_columns.size());
+                 ++column) {
                 LocalKernelRieszResult local = std::move(columns[column]);
                 representatives.col(column) = local.local_values;
-                local_result.columns.push_back(std::move(local));
+                output.local.columns.push_back(std::move(local));
             }
-            local_result.gram = representatives.adjoint()
+            output.local.gram = representatives.adjoint()
                 * local_energy.cast<Complex>() * representatives;
-            local_result.hermitian_relative_error =
-                (local_result.gram - local_result.gram.adjoint()).norm()
-                / std::max(1.0, local_result.gram.norm());
-            result.local_gram_contributions[patch_index] = local_result.gram;
-            result.local_results[patch_index] = std::move(local_result);
+            output.local.hermitian_relative_error =
+                (output.local.gram - output.local.gram.adjoint()).norm()
+                / std::max(1.0, output.local.gram.norm());
         } catch (...) {
             failed.store(true, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(exception_mutex);
@@ -1210,49 +1252,76 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
         }
     };
 
+    int maximum_threads = 1;
 #ifdef _OPENMP
-    #pragma omp parallel
-    {
-        #pragma omp single
-        result.parallel_threads = omp_get_num_threads();
-        #pragma omp for schedule(dynamic, 1)
-        for (int patch_index = 0;
-             patch_index < static_cast<int>(result.patches.size());
-             ++patch_index) {
-            solve_patch(patch_index);
-        }
-    }
-#else
-    for (int patch_index = 0;
-         patch_index < static_cast<int>(result.patches.size());
-         ++patch_index) {
-        solve_patch(patch_index);
-    }
+    maximum_threads = std::max(1, omp_get_max_threads());
 #endif
-    if (first_exception) std::rethrow_exception(first_exception);
+    const std::size_t batch_capacity = std::max<std::size_t>(
+        1, 2 * static_cast<std::size_t>(maximum_threads));
+    for (std::size_t batch_begin = 0;
+         batch_begin < patches.size();
+         batch_begin += batch_capacity) {
+        const std::size_t batch_size = std::min(
+            batch_capacity, patches.size() - batch_begin);
+        std::vector<PatchContribution> contributions(batch_size);
+#ifdef _OPENMP
+        #pragma omp parallel
+        {
+            #pragma omp single
+            result.parallel_threads = omp_get_num_threads();
+            #pragma omp for schedule(dynamic, 1)
+            for (int local_index = 0;
+                 local_index < static_cast<int>(batch_size);
+                 ++local_index) {
+                solve_patch(
+                    static_cast<int>(batch_begin) + local_index,
+                    contributions[local_index]);
+            }
+        }
+#else
+        for (int local_index = 0;
+             local_index < static_cast<int>(batch_size);
+             ++local_index) {
+            solve_patch(
+                static_cast<int>(batch_begin) + local_index,
+                contributions[local_index]);
+        }
+#endif
+        if (first_exception) std::rethrow_exception(first_exception);
 
-    result.patch_factorizations = static_cast<int>(result.patches.size());
-    result.right_hand_side_solves = result.patch_factorizations * input_columns;
-    // Preserve the original patch order for an exactly deterministic
-    // floating-point reduction independent of OpenMP scheduling.
-    for (int patch_index = 0;
-         patch_index < static_cast<int>(result.patches.size());
-         ++patch_index) {
-        const AmbientDefectLocalRiesz &local = result.local_results[patch_index];
-        result.gram += local.gram;
-        for (int column = 0; column < input_columns; ++column) {
-            result.column_eta_squared(column) +=
-                local.columns[column].eta_squared;
+        // Reduce each bounded batch in the original patch order.  Thread
+        // scheduling therefore cannot change a floating-point addition, and
+        // completed local vectors are released before the next batch.
+        for (std::size_t local_index = 0;
+             local_index < batch_size;
+             ++local_index) {
+            const std::size_t patch_index = batch_begin + local_index;
+            AmbientDefectLocalRiesz &local = contributions[local_index].local;
+            result.maximum_active_columns = std::max(
+                result.maximum_active_columns, local.active_columns.size());
+            if (!local.active_columns.empty()) {
+                ++result.patch_factorizations;
+                result.right_hand_side_solves += local.active_columns.size();
+            }
+            for (int local_column = 0;
+                 local_column < static_cast<int>(local.active_columns.size());
+                 ++local_column) {
+                const int global_column = local.active_columns[local_column];
+                result.column_eta_squared(global_column) +=
+                    local.columns[local_column].eta_squared;
+                for (int local_row = 0;
+                     local_row < static_cast<int>(local.active_columns.size());
+                     ++local_row) {
+                    const int global_row = local.active_columns[local_row];
+                    result.gram(global_row, global_column) +=
+                        local.gram(local_row, local_column);
+                }
+            }
+            if (result.local_details_stored)
+                result.local_results[patch_index] = std::move(local);
         }
     }
 
-    ComplexMatrix accumulated = ComplexMatrix::Zero(
-        input_columns, input_columns);
-    for (const ComplexMatrix &contribution : result.local_gram_contributions)
-        accumulated += contribution;
-    result.gram_accumulation_relative_error =
-        (result.gram - accumulated).norm()
-        / std::max(1.0, result.gram.norm());
     for (int column = 0; column < input_columns; ++column) {
         const double gram_diagonal = std::real(result.gram(column, column));
         result.local_square_sum_relative_error = std::max(
@@ -1260,6 +1329,8 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
             std::abs(gram_diagonal - result.column_eta_squared(column))
                 / std::max(1.0, result.column_eta_squared(column)));
     }
+    if (result.local_details_stored)
+        result.patches = std::move(patches);
     return result;
 }
 

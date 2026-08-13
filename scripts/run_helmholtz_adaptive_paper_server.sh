@@ -10,7 +10,6 @@ JOBS=${JOBS:-16}
 PATCH_THREADS=${PATCH_THREADS:-4}
 MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-16}
 VALIDATE=${VALIDATE:-1}
-ALLOW_NONFROZEN_PATCH_THREADS=${ALLOW_NONFROZEN_PATCH_THREADS:-0}
 
 if ! git -C "$ROOT_DIR" diff --quiet ||
    ! git -C "$ROOT_DIR" diff --cached --quiet; then
@@ -49,11 +48,8 @@ case "$MODE" in
     ;;
 esac
 
-if [[ "$MODE" != "smoke" && "$MODE" != "pilot"
-      && "$PATCH_THREADS" != 4
-      && "$ALLOW_NONFROZEN_PATCH_THREADS" != 1 ]]; then
-  echo "Refusing non-frozen PATCH_THREADS=$PATCH_THREADS for $MODE mode; expected 4" >&2
-  echo "Set ALLOW_NONFROZEN_PATCH_THREADS=1 only for an explicitly non-production study" >&2
+if ! [[ "$PATCH_THREADS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PATCH_THREADS must be a positive integer" >&2
   exit 2
 fi
 

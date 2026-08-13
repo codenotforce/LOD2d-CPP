@@ -49,10 +49,9 @@ evaluation from method time.
 
 Corrector construction scales by about 5.8x from 1 to 16 threads, but whole
 method time scales by only 2.0x. From 8 to 16 threads the method improves by
-only 1.6%, while peak memory increases by about 75 MiB. Eight threads is the
-best local exploratory setting on this host. Formal server configurations
-remain at their frozen `PATCH_THREADS=4` unless the resource contract is
-deliberately revised.
+only 1.6%, while peak memory increases by about 75 MiB. Eight threads was the
+best local setting in this measurement; server runs may choose another value
+and must record it in the build identity.
 
 At four threads, optional stage probes give the following cumulative SLOD
 model-build split over the six evaluated meshes:
@@ -135,9 +134,20 @@ certificate time fell from 13.034 s to 4.712 s.  The small one-thread
 difference is timing noise/parallel bookkeeping and not a numerical change.
 
 The old server choice of four patch threads was made while certificate work
-was serial.  It must therefore be re-measured on the server before publishing
-new time comparisons.  Error-versus-DoF data are thread-count independent;
-formal time data must use one newly frozen thread count and common binary.
+was serial.  Error-versus-DoF data are thread-count independent.  A published
+time comparison must record and use a common thread count and binary for all
+methods, but the project does not freeze one global thread count in advance.
+
+The follow-up streaming implementation keeps the defect RHS sparse, solves
+only the columns active on each patch, reduces compact local Gram matrices in
+the original patch order in bounded batches, and discards local vectors after
+each batch.  Full patch/local-solution data are retained only by an explicit
+diagnostic mode.  On the same local four-thread three-step configuration,
+peak RSS fell from about 768 MiB to 211 MiB and wall time from 11.29 s to
+10.31 s.  At the final bounded certificate, 27,787 active RHS columns were
+solved instead of the dense 40,170 patch-column combinations.  Thread count
+is no longer treated as a frozen DoF/error parameter; it must merely be
+recorded and held common within any published timing comparison.
 
 ## Remaining optimization boundary
 

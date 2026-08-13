@@ -84,7 +84,7 @@ struct ReferenceLocalizationCertificate {
     LocalizationCertificateStatus status =
         LocalizationCertificateStatus::ImplementationStudy;
     ReferenceRetraction retraction;
-    ComplexMatrix defect_rhs;
+    ComplexSparseMatrix defect_rhs;
     AmbientDefectRiesz ambient_riesz;
     ComplexMatrix coarse_energy;
     LocalizationSpectrum spectrum;

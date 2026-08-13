@@ -13,6 +13,14 @@ and the same five-level h/H gap by refining H and h together. PALOD uses
 scheduled reference refreshes after H steps 3, 6, and 9; every refresh
 inherits the terminal coarse mesh exactly.
 
+Thus PALOD performs 12 coarse adaptive refinements in four reference epochs:
+each epoch owns three new H-refinement steps.  An epoch evaluates its inherited
+start mesh and the three refined meshes, so the complete journal contains 16
+PALOD solution observations on 13 distinct coarse meshes.  The repeated DoF at
+each of the three epoch boundaries is intentional: it records the effect of
+refreshing the reference space without changing H.  SLOD/UFEM/AFEM do not use
+this PALOD reference-epoch schedule.
+
 ## Status of the existing comparison data
 
 The accepted 2026-08-13 trajectories remain useful for:
@@ -67,11 +75,10 @@ RESULT_DIR="$PWD/results/S-k16-deep-convergence-server" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-Four threads preserve the existing server resource contract. Because the
-PALOD Riesz stage is now parallel, separately repeat the bounded performance
-configs at 4/8/16 threads before producing a new error-versus-time figure.
-Do not mix timings from different thread counts or old binaries. The DoF/error
-figure itself may use the successful four-thread deep run.
+`PATCH_THREADS=4` is a conservative launch value, not a frozen experimental
+parameter.  The DoF/error figure is thread-count independent and may use any
+successful deep run.  For an error-versus-time figure, record the actual
+thread count and do not mix timings from different thread counts or binaries.
 
 ## Independent acceptance
 

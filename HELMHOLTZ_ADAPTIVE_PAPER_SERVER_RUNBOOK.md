@@ -1,5 +1,10 @@
 # Helmholtz 自适应 LOD 论文实验服务器操作手册
 
+> 说明：本手册前半部分保留历史 reference-gate 流程。当前 case-S 深层四方法
+> 收敛实验的直接执行与验收命令见
+> `experiments/helmholtz_adaptive_paper/S_K16_DEEP_CONVERGENCE_SERVER_2026-08-13.md`。
+> 服务器应检出包含流式 Gram 优化的当前提交，不再回退到文中历史分支 SHA。
+
 本手册用于 practical-paper schema v4 实验。资源 pilot、epoch-2 校准和本机可承受的
 R2a 深层 reference gate 已完成；当前只在服务器串行运行 R2a epoch 6/level 16 与
 S epoch 3/level 13 校准，再做相邻 reference audit。两项 audit 都通过后才能冻结
@@ -28,11 +33,11 @@ AMD EPYC 9554 服务器、同一 Release 二进制：
 | 16 | 9.24 s / 289 MiB | 35.74 s / 1.35 GiB | 0 |
 
 三组非计时数值轨迹逐字段一致。4 worker 相对 8 worker 只慢约 1.5%，因此冻结
-`PATCH_THREADS=4`；16 worker 不再使用。certificate 占方法时间约 85%--89%。所有案例
-串行执行，不并行启动多个 benchmark。
-
-脚本现在会拒绝 calibration/custom 模式的非 4 线程值。只有明确标成非生产线程研究时
-才可设置 `ALLOW_NONFROZEN_PATCH_THREADS=1`；该输出不得用于冻结资源口径。
+旧资源 pilot 中 `PATCH_THREADS=4` 与 8/16 的差异很小，但该结论早于 PALOD 并行和流式
+Gram 优化，不再冻结全局线程数。服务器可按机器资源设置任意正整数 `PATCH_THREADS`；
+脚本会把实际值写入 `server-build-identity.txt`。误差--DoF 图不依赖线程数；若制作
+误差--时间图，同一比较内必须使用相同线程数和二进制。所有案例仍应串行执行，不并行
+启动多个 benchmark。
 
 ## 3. 服务器要求
 
@@ -92,7 +97,7 @@ epoch-2 的独立 12→13 audits 已完成且均失败：R2a 的
 的六步校准，但对应相邻 audit 分数仍为 `4.61608/2.93656/2.44423`。level-15 运行 peak
 RSS 为 8.40 GiB、wall time 为 24:49、swap 为 0；level 16 转服务器。S level-12 上传结果
 为 `success/TrajectoryComplete`，但实际用了 8 patch threads；它只用于决定推进 epoch，
-下一层必须恢复冻结的 4 线程。
+下一层应记录实际线程数；若与旧时间结果比较，则保持相同线程数与二进制。
 
 先运行两个 calibration。脚本串行执行配置；建议至少保留 64 GiB `MemAvailable`：
 

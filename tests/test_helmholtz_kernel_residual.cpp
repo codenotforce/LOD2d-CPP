@@ -359,10 +359,9 @@ void verify_ambient_defect_riesz_gram() {
             "ambient defect test did not obtain a distinct ambient space");
     const HelmholtzOperators ambient_operators = assemble_helmholtz_operators(
         problem.hierarchy.ambient_mesh(), problem.data.wavenumber);
-    ComplexMatrix defect_rhs = ambient_operators.mass.cast<Complex>()
+    ComplexSparseMatrix defect_rhs = ambient_operators.mass.cast<Complex>()
         * problem.hierarchy.coarse_to_ambient().cast<Complex>();
-    for (int node : ambient_operators.dirichlet_nodes)
-        defect_rhs.row(node).setZero();
+    defect_rhs.makeCompressed();
 
     int original_threads = 1;
 #ifdef _OPENMP
@@ -381,7 +380,8 @@ void verify_ambient_defect_riesz_gram() {
         problem.hierarchy,
         ambient_operators,
         defect_rhs,
-        KernelRieszSolver::SaddlePoint);
+        KernelRieszSolver::SaddlePoint,
+        AmbientDefectDetail::StoreLocalDetails);
     const AmbientDefectRiesz basis = compute_ambient_defect_riesz(
         problem.hierarchy,
         ambient_operators,
@@ -397,6 +397,14 @@ void verify_ambient_defect_riesz_gram() {
     require(serial_saddle.column_eta_squared.isApprox(
                 saddle.column_eta_squared, 0.0),
             "ambient defect column norms depend on the OpenMP thread count");
+    require(!serial_saddle.local_details_stored
+                && serial_saddle.patches.empty()
+                && serial_saddle.local_results.empty(),
+            "summary ambient defect result retained local diagnostic data");
+    require(saddle.local_details_stored
+                && saddle.patches.size() == saddle.patch_count
+                && saddle.local_results.size() == saddle.patch_count,
+            "full ambient defect diagnostic omitted local data");
     const int coarse_nodes = static_cast<int>(
         problem.hierarchy.coarse_mesh().nodes.size());
     require(saddle.space == KernelRieszSpace::AmbientDefect,
@@ -404,6 +412,12 @@ void verify_ambient_defect_riesz_gram() {
     require(saddle.gram.rows() == coarse_nodes
                 && saddle.gram.cols() == coarse_nodes,
             "ambient G_loc has the wrong coarse-basis dimensions");
+    require(saddle.maximum_active_columns
+                <= static_cast<std::size_t>(defect_rhs.cols())
+                && saddle.right_hand_side_solves
+                    <= saddle.patch_count
+                        * static_cast<std::size_t>(defect_rhs.cols()),
+            "ambient defect active-column accounting exceeds the dense solve");
     require(saddle.gram.norm() > 1e-14,
             "nonzero ambient defect produced a zero Gram matrix");
     require(saddle.local_square_sum_relative_error <= 2e-11,
@@ -415,6 +429,34 @@ void verify_ambient_defect_riesz_gram() {
             "ambient G_loc is not Hermitian");
     require(saddle.gram.isApprox(basis.gram, 3e-10),
             "ambient saddle and kernel-basis Gram matrices disagree");
+
+    // A deliberately inactive appended column exercises the compact solve
+    // independently of whether this tiny physical example happens to couple
+    // every original coarse column to every patch.
+    ComplexSparseMatrix rhs_with_inactive_column(
+        defect_rhs.rows(), defect_rhs.cols() + 1);
+    std::vector<ComplexTriplet> rhs_triplets;
+    rhs_triplets.reserve(defect_rhs.nonZeros());
+    for (int outer = 0; outer < defect_rhs.outerSize(); ++outer) {
+        for (ComplexSparseMatrix::InnerIterator it(defect_rhs, outer); it; ++it)
+            rhs_triplets.emplace_back(it.row(), it.col(), it.value());
+    }
+    rhs_with_inactive_column.setFromTriplets(
+        rhs_triplets.begin(), rhs_triplets.end());
+    const AmbientDefectRiesz compact = compute_ambient_defect_riesz(
+        problem.hierarchy, ambient_operators, rhs_with_inactive_column,
+        KernelRieszSolver::SaddlePoint);
+    require(compact.maximum_active_columns
+                <= static_cast<std::size_t>(defect_rhs.cols())
+                && compact.right_hand_side_solves
+                    <= compact.patch_count
+                        * static_cast<std::size_t>(defect_rhs.cols())
+                && compact.gram.topLeftCorner(
+                       defect_rhs.cols(), defect_rhs.cols())
+                       .isApprox(saddle.gram, 0.0)
+                && compact.gram.row(defect_rhs.cols()).norm() == 0.0
+                && compact.gram.col(defect_rhs.cols()).norm() == 0.0,
+            "ambient defect compact solve did not omit an inactive RHS column");
 
     Eigen::SelfAdjointEigenSolver<ComplexMatrix> eigenproblem(
         0.5 * (saddle.gram + saddle.gram.adjoint()));

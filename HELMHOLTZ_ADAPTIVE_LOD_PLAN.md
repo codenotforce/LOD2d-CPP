@@ -627,7 +627,8 @@ R1 进程已验证第一条 miss、第二条 hit，算法与误差列逐字节�
 服务器资源 pilot（AMD EPYC 9554，非论文数据）比较 4/8/16 worker，三组非计时轨迹
 逐字段一致。R2a wall time 为 9.32/9.17/9.24 秒，RSS 为 247/261/289 MiB；S 为
 35.94/35.42/35.74 秒与 1.29/1.31/1.35 GiB，均无 swap。4 worker 相对 8 worker 只慢
-约 1.5% 且占用更低，因此冻结 `PATCH_THREADS=4`；16 worker 不再使用。certificate
+约 1.5% 且占用更低，因此当时采用 `PATCH_THREADS=4`；该选择后来被 PALOD 并行与流式
+Gram 优化取代，不再作为全局冻结参数。certificate
 占 method time 约 85%--89%，后续性能工作应针对 certificate/eigensolve，不再扩大线程数。
 R2a 误差 0.190/0.0958/0.0490/0.0189，每步仍改善 49%--61%，明确未平台；S 为
 0.578/0.445/0.369，只有两个改善区间，不足以判平台。下一 gate 是 schema-v3 延长校准：
@@ -654,7 +655,7 @@ reference level 12 的六步校准经 `.done`、`run.json`、最终 CSV 动作�
 `0.615676/0.496907/0.425012/0.319588/0.238550/0.149087/0.101268`；最后两个比值
 为 `0.624974/0.679256`，几何平均 `0.651550`，不是平台，且严格的 `0.1` 目标尚未命中。
 该进程 peak RSS 约 17.31 GiB、process swaps 为 0；但上传的 build identity 记录
-`PATCH_THREADS=8`，与冻结的 4 线程协议不符，所以只保留作数值校准证据，不作为 4 线程
+`PATCH_THREADS=8`，与当时采用的 4 线程口径不符，所以只保留作数值校准证据，不作为旧口径
 资源证据。新脚本对 calibration/custom 的非 4 线程值 fail closed，并生成相对路径
 `SHA256SUMS`，避免服务器绝对路径导致回传后无法直接验证。
 

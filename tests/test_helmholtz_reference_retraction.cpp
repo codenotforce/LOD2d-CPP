@@ -196,14 +196,17 @@ void verify_localization_certificate() {
         require(certificate.ambient_riesz.local_square_sum_relative_error
                     <= 3e-11,
                 "certificate ambient local square sum is inconsistent");
-        require(certificate.ambient_riesz.patch_factorizations
-                    == static_cast<int>(
-                        certificate.ambient_riesz.patches.size())
+        require(!certificate.ambient_riesz.local_details_stored
+                    && certificate.ambient_riesz.patches.empty()
+                    && certificate.ambient_riesz.local_results.empty()
+                    && certificate.ambient_riesz.patch_factorizations
+                        <= certificate.ambient_riesz.patch_count
                     && certificate.ambient_riesz.right_hand_side_solves
-                    == static_cast<int>(
-                        certificate.ambient_riesz.patches.size()
-                        * basis_nodes.size()),
-                "ambient defect Riesz did not reuse one factorization per patch");
+                        <= certificate.ambient_riesz.patch_count
+                            * basis_nodes.size()
+                    && certificate.ambient_riesz.maximum_active_columns
+                        <= basis_nodes.size(),
+                "production ambient defect Riesz retained details or exceeded dense work");
         require(certificate.retraction.diagnostics()
                     .kernel_constraint_relative_error <= 2e-13,
                 "certificate used a retraction outside W_ref");

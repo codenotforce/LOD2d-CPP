@@ -154,9 +154,18 @@ struct ReferenceResidualRiesz {
 };
 
 struct AmbientDefectLocalRiesz {
+    // Global defect-RHS column indices represented by columns/gram.  The
+    // entries are strictly increasing, so a compact local Gram can be
+    // scattered into the global matrix deterministically.
+    std::vector<int> active_columns;
     std::vector<LocalKernelRieszResult> columns;
     ComplexMatrix gram;
     double hermitian_relative_error = 0.0;
+};
+
+enum class AmbientDefectDetail {
+    SummaryOnly,
+    StoreLocalDetails,
 };
 
 // Ambient-space operator data needed by WP3 to form G_loc.  defect_rhs has
@@ -168,15 +177,22 @@ struct AmbientDefectRiesz {
     KernelRieszSpace space = KernelRieszSpace::AmbientDefect;
     KernelPatchPolicy policy;
     KernelRieszSolver solver = KernelRieszSolver::SaddlePoint;
+    std::size_t patch_count = 0;
+    bool local_details_stored = false;
+    // Populated only for StoreLocalDetails.  Production localization keeps
+    // neither patch geometry nor local solution vectors after the streamed
+    // Gram reduction.
     std::vector<KernelRieszPatch> patches;
     std::vector<AmbientDefectLocalRiesz> local_results;
-    std::vector<ComplexMatrix> local_gram_contributions;
     ComplexMatrix gram;
     Eigen::VectorXd column_eta_squared;
-    int patch_factorizations = 0;
-    int right_hand_side_solves = 0;
+    std::size_t patch_factorizations = 0;
+    std::size_t right_hand_side_solves = 0;
+    std::size_t maximum_active_columns = 0;
     int parallel_threads = 1;
     double local_square_sum_relative_error = 0.0;
+    // The streamed implementation accumulates every compact patch Gram once
+    // in patch order.  This remains zero unless that invariant is violated.
     double gram_accumulation_relative_error = 0.0;
 };
 
@@ -200,8 +216,9 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
 AmbientDefectRiesz compute_ambient_defect_riesz(
     const ReferenceEpochHierarchy &hierarchy,
     const HelmholtzOperators &ambient_operators,
-    const ComplexMatrix &defect_rhs,
-    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint);
+    const ComplexSparseMatrix &defect_rhs,
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint,
+    AmbientDefectDetail detail = AmbientDefectDetail::SummaryOnly);
 
 // Determine the verified support-propagation radius of I_H and freeze the
 // corresponding D_z/D_z^+ construction in a deterministic policy hash.
