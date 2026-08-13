@@ -70,8 +70,34 @@ The three PALOD epoch-start markers are:
 | 2 | 30 | 460 | 447 | 0.20821022694250013 |
 
 The plotted `N^{-1/2}` segment is a reference slope, not a fitted convergence
-claim. The generated CSV and JSON beside the figure preserve all plotted points
-and the first-crossing records.
+claim. An additional `N^{-1/3}` segment distinguishes the slower rates expected
+when corner singularity or pre-asymptotic effects dominate.
+
+For every displayed method trajectory, the legend reports the least-squares
+exponent `p` in `error = C N^{-p}` over the plotted points. At repeated PALOD
+DoF values, the later epoch value is retained, so a vertical reference-refresh
+improvement is not interpreted as DoF convergence.
+
+| Method | Whole displayed range p | log-log R-squared | Last three distinct DoF p |
+|---|---:|---:|---:|
+| PALOD | 0.891 | 0.996 | 0.726 |
+| SLOD | 0.437 | 0.991 | 0.530 |
+| UFEM | 0.429 | 0.982 | 0.511 |
+| AFEM | 0.826 | 0.976 | 0.619 |
+
+PALOD is steeper than the `N^{-1/2}` reference over this finite comparison
+window: the whole-range exponent exceeds 0.5 by about 0.391, and the final
+three-point exponent exceeds it by about 0.226. This is not evidence of an
+asymptotic super-optimal method. PALOD's horizontal axis counts only coarse
+unknowns and excludes fine-grid correctors and reference work, while its three
+epochs change the corrector/reference discretization. The valid conclusion is
+that PALOD removes much of the observed pre-asymptotic pollution with far fewer
+coarse unknowns; a larger fixed-discretization range would be required to claim
+an asymptotic rate.
+
+The generated CSV and JSON beside the figure preserve all plotted points, the
+first-crossing records, the fitted exponents, and the PALOD versus `N^{-1/2}`
+comparison.
 
 ## Reproduction
 

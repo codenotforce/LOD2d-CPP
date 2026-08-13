@@ -111,6 +111,44 @@ def truncate_at_target(run: MethodRun, target: float) -> tuple[List[Row], bool]:
     return selected, False
 
 
+def fit_dof_rate(
+    rows: Sequence[Row], tail_points: Optional[int] = None
+) -> dict[str, float | int]:
+    """Fit error = C * DoF**(-p), keeping the last value at repeated DoF."""
+    by_dof: Dict[int, float] = {}
+    for row in rows:
+        by_dof[_integer(row, "DoF_H")] = _number(
+            row, "relative_exact_energy_error"
+        )
+    observations = sorted(by_dof.items())
+    if tail_points is not None:
+        if tail_points < 2:
+            raise ValueError("a tail rate fit requires at least two points")
+        observations = observations[-tail_points:]
+    if len(observations) < 2:
+        raise ValueError("at least two distinct DoF values are required for a rate fit")
+    x = [math.log(dof) for dof, _ in observations]
+    y = [math.log(error) for _, error in observations]
+    x_mean = sum(x) / len(x)
+    y_mean = sum(y) / len(y)
+    denominator = sum((value - x_mean) ** 2 for value in x)
+    if denominator <= 0.0:
+        raise ValueError("degenerate DoF range in rate fit")
+    slope = sum(
+        (x_value - x_mean) * (y_value - y_mean)
+        for x_value, y_value in zip(x, y)
+    ) / denominator
+    fitted = [y_mean + slope * (value - x_mean) for value in x]
+    residual = sum((value - estimate) ** 2 for value, estimate in zip(y, fitted))
+    total = sum((value - y_mean) ** 2 for value in y)
+    r_squared = 1.0 - residual / total if total > 0.0 else 1.0
+    return {
+        "exponent": -slope,
+        "r_squared": r_squared,
+        "distinct_dof_points": len(observations),
+    }
+
+
 def validate_comparison(runs: Sequence[MethodRun]) -> None:
     if [run.method for run in runs] != ["PALOD", "SLOD", "UFEM", "AFEM"]:
         raise ValueError("runs must be supplied as PALOD, SLOD, UFEM, AFEM")
@@ -185,6 +223,11 @@ def plot_method_comparison(
     reached: Dict[str, bool] = {"PALOD": True}
     for run in runs[1:]:
         selected[run.method], reached[run.method] = truncate_at_target(run, target)
+    rates = {method: fit_dof_rate(rows) for method, rows in selected.items()}
+    tail_rates = {
+        method: fit_dof_rate(rows, tail_points=3)
+        for method, rows in selected.items()
+    }
 
     apply_paper_style()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -196,8 +239,8 @@ def plot_method_comparison(
         "AFEM": dict(marker="D", linestyle=":", linewidth=1.3),
     }
     labels = {
-        "PALOD": "PALOD (three reference epochs)",
-        "SLOD": r"SLOD ($\ell=2$, fixed fine/coarse level gap)",
+        "PALOD": "PALOD",
+        "SLOD": r"SLOD ($\ell=2$)",
         "UFEM": "standard P1 FEM",
         "AFEM": "adaptive P1 FEM",
     }
@@ -205,8 +248,13 @@ def plot_method_comparison(
         rows = selected[run.method]
         dofs = [_integer(row, "DoF_H") for row in rows]
         errors = [_number(row, "relative_exact_energy_error") for row in rows]
-        suffix = "" if reached[run.method] else " (target not reached)"
-        ax.plot(dofs, errors, label=labels[run.method] + suffix, **styles[run.method])
+        rate = float(rates[run.method]["exponent"])
+        suffix = "" if reached[run.method] else "; target not reached"
+        ax.plot(
+            dofs, errors,
+            label=labels[run.method] + rf" ($p\approx{rate:.2f}$)" + suffix,
+            **styles[run.method],
+        )
 
     seen_epochs = set()
     for row in selected["PALOD"]:
@@ -225,13 +273,21 @@ def plot_method_comparison(
     all_dofs = [_integer(row, "DoF_H") for rows in selected.values() for row in rows]
     slope_x0 = max(min(all_dofs), min(max(all_dofs) / 8.0, max(all_dofs)))
     slope_x1 = min(max(all_dofs), slope_x0 * 4.0)
-    anchor = target * 1.65
-    slope_y1 = anchor * math.sqrt(slope_x0 / slope_x1)
-    ax.plot([slope_x0, slope_x1], [anchor, slope_y1], color="black", linewidth=1.0, label=r"optimal $N^{-1/2}$")
+    anchor = target * 2.0
+    slope_half_y1 = anchor * (slope_x0 / slope_x1) ** 0.5
+    slope_third_y1 = anchor * (slope_x0 / slope_x1) ** (1.0 / 3.0)
+    ax.plot(
+        [slope_x0, slope_x1], [anchor, slope_half_y1], color="black",
+        linewidth=1.0, label=r"optimal $N^{-1/2}$",
+    )
+    ax.plot(
+        [slope_x0, slope_x1], [anchor, slope_third_y1], color="0.35",
+        linewidth=1.0, linestyle=":", label=r"reference $N^{-1/3}$",
+    )
     ax.axhline(target, color="0.35", linewidth=0.8, linestyle="--")
     ax.annotate(
         f"PALOD target {target:.3g}", xy=(max(all_dofs), target),
-        xytext=(-4, 4), textcoords="offset points", ha="right", fontsize=7.3,
+        xytext=(-4, -12), textcoords="offset points", ha="right", fontsize=7.3,
     )
     ax.set_xscale("log")
     ax.set_yscale("log")
@@ -272,6 +328,20 @@ def plot_method_comparison(
         "palod_terminal_target": target,
         "target_reached": reached,
         "first_target_point": first_target_point,
+        "empirical_dof_rate": rates,
+        "empirical_dof_rate_last_three": tail_rates,
+        "palod_vs_optimal_half": {
+            "empirical_exponent": rates["PALOD"]["exponent"],
+            "last_three_exponent": tail_rates["PALOD"]["exponent"],
+            "optimal_exponent": 0.5,
+            "exponent_difference": rates["PALOD"]["exponent"] - 0.5,
+            "last_three_exponent_difference": (
+                tail_rates["PALOD"]["exponent"] - 0.5
+            ),
+            "interpretation": (
+                "finite-range coarse-DoF fit; corrector and reference work excluded"
+            ),
+        },
     }
     output.with_suffix(".json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"

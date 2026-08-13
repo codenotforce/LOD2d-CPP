@@ -72,6 +72,11 @@ class MethodComparisonPlotTest(unittest.TestCase):
             )
             self.assertIsNone(summary["first_target_point"]["UFEM"])
             self.assertEqual(summary["first_target_point"]["AFEM"]["DoF_H"], 304)
+            self.assertIn("empirical_dof_rate", summary)
+            self.assertEqual(
+                summary["empirical_dof_rate"]["PALOD"]["distinct_dof_points"], 3
+            )
+            self.assertIn("empirical_dof_rate_last_three", summary)
             self.assertTrue(output.with_suffix(".csv").is_file())
             self.assertTrue(output.with_suffix(".json").is_file())
             self.assertTrue(output.with_suffix(".pdf").is_file())
@@ -85,6 +90,21 @@ class MethodComparisonPlotTest(unittest.TestCase):
             path.write_text(json.dumps(metadata), encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "not success/TrajectoryComplete"):
                 plots.load_method_run(directory)
+
+    def test_fits_known_dof_rate_and_keeps_last_repeated_dof(self) -> None:
+        rows = [
+            {"DoF_H": "100", "relative_exact_energy_error": "0.2"},
+            {"DoF_H": "100", "relative_exact_energy_error": "0.1"},
+            {"DoF_H": "400", "relative_exact_energy_error": "0.05"},
+            {"DoF_H": "1600", "relative_exact_energy_error": "0.025"},
+        ]
+        fit = plots.fit_dof_rate(rows)
+        self.assertAlmostEqual(fit["exponent"], 0.5, places=12)
+        self.assertAlmostEqual(fit["r_squared"], 1.0, places=12)
+        self.assertEqual(fit["distinct_dof_points"], 3)
+        tail = plots.fit_dof_rate(rows, tail_points=2)
+        self.assertAlmostEqual(tail["exponent"], 0.5, places=12)
+        self.assertEqual(tail["distinct_dof_points"], 2)
 
 
 if __name__ == "__main__":

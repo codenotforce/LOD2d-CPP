@@ -47,9 +47,13 @@ solution. It requires every input run to be `success/TrajectoryComplete`,
 checks the common case, wave number, initial coarse level, and initial coarse
 DoF, and truncates each comparator at its first evaluated point at or below the
 terminal PALOD exact relative weighted-energy error. The figure marks the
-three PALOD reference-epoch starts and includes an $N^{-1/2}$ reference slope.
-It writes the plotted observations and first-crossing summary beside the PNG
-and PDF outputs; none of these post-processing quantities feed MARK or STOP.
+three PALOD reference-epoch starts and includes $N^{-1/2}$ and $N^{-1/3}$
+reference slopes. Each method legend reports a whole-displayed-range log-log
+DoF exponent. Repeated PALOD DoFs retain the later epoch value for this fit, so
+vertical reference-refresh improvements are not counted as DoF convergence.
+The script writes the plotted observations, first-crossing summary, fitted
+rates, and PALOD-versus-$N^{-1/2}$ comparison beside the PNG and PDF outputs;
+none of these post-processing quantities feed MARK or STOP.
 
 The pollution figure uses fixed `kH=1`. Its primary panel uses `kh=1/8`; its
 strict-reference panel uses `kh=1/16`. The coarse P1 FEM exact error is
