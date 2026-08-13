@@ -283,6 +283,7 @@ private:
     std::uint64_t corrector_space_version_ = 0;
 
     void refresh_embeddings();
+    void refresh_embedding_metadata();
     void validate_current_embeddings() const;
 };
 
@@ -297,6 +298,17 @@ NestedFineMesh complete_to_fine_level(
 RefineOutput build_nested_mesh_embedding(
     const TriMesh &parent_mesh,
     const TriMesh &child_mesh);
+
+// Update a nested embedding after one NVB refinement of the parent mesh.
+// The old child-to-parent element map restricts each geometric containment
+// check to the few new descendants of the known old parent, avoiding a global
+// parent-element search.  Sparse prolongations are rebuilt in linear time in
+// the child mesh size because the parent column layout changed.
+RefineOutput update_nested_mesh_embedding_after_parent_refinement(
+    const TriMesh &old_parent_mesh,
+    const RefineOutput &parent_refinement,
+    const TriMesh &child_mesh,
+    const std::vector<int> &old_child_parent_elements);
 
 std::vector<int> refinement_child_levels(
     const TriMesh &parent_mesh,

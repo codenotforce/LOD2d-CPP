@@ -2576,3 +2576,52 @@ paper tables and figures be generated. Until then:
 - unit-test certificate fixtures are not paper evidence;
 - conditional bounds are not verified bounds;
 - no WP0-WP5 result should be described as a completed paper reproduction.
+
+## 34. NVB-Lineage Embedding Updates
+
+The case-S comparison exposed a mesh-management bottleneck that was separate
+from the direct Helmholtz and DirectSchur solves. Before this change,
+`ReferenceEpochHierarchy` rebuilt each nested P1/element/DG embedding by
+testing every child triangle against every possible parent triangle. In the
+recorded comparison this made AFEM mesh updates cost roughly 155--197 seconds
+per step and made the last synchronized SLOD H/h update cost about 5013
+seconds.
+
+One-step NVB already returns the exact new-element-to-old-element map in
+`P_elem`. The hierarchy now combines this map with its cached child-to-old-
+parent ancestry. A fixed reference or ambient child is tested only against the
+few new descendants of its known old parent. This removes the global geometric
+search and gives `O(N_child + N_new-parent)` containment work for bounded NVB
+offspring. The geometry-based full rebuild remains available as the independent
+correctness path.
+
+Ambient refinement also keeps an accumulated old-ambient-to-new-ambient
+prolongation. New reference-to-ambient and coarse-to-ambient matrices are
+obtained by sparse composition, and the coarse-parent arrays are propagated
+through the one-step element ancestry. Promoting an ambient mesh at an epoch
+boundary reuses the cached coarse-to-ambient embedding and installs identity
+reference-to-ambient matrices.
+
+The sparse matrices still have to be materialized because parent refinement
+changes their column dimensions. Thus the implemented optimization is linear
+in the child mesh size, not a claim of constant-time row mutation. It realizes
+the requested lineage/caching principle while preserving the existing
+coordinate, composition, boundary, and quasi-interpolation checks.
+
+`test_helmholtz_reference_epoch_hierarchy` compares incremental nodal,
+element, and DG embeddings with a full geometric rebuild and then exercises
+local H refinement, ambient-ratio enforcement, epoch promotion, and mixed
+boundary tags. The reference hierarchy, practical driver, and paper-config
+regression tests all pass after the change; the complete Release suite records
+50/50 passed tests.
+
+The full case-S level-15 AFEM trajectory was rerun in a new, non-paper result
+directory with a reference-cache hit. It remained
+`success/TrajectoryComplete`; all 15 DoF values and exact-error values were
+identical to the previous run (maximum absolute error difference zero). Method
+time fell from 2463.52 s to 14.92 s. The 14 mesh updates now total 12.78 s,
+average 0.913 s and maximum 0.960 s, compared with roughly 155--197 s per step
+before the change. End-to-end wall time, including excluded evaluation work,
+was 48.50 s with 472 MiB peak RSS and no swap. A separate SLOD smoke completed
+three synchronized H/h refinements with mesh-update times 0.0029, 0.0043, and
+0.0062 s. These timings are implementation evidence, not new paper data.

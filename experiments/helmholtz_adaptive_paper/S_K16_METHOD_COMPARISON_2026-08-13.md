@@ -69,9 +69,10 @@ The three PALOD epoch-start markers are:
 | 1 | 17 | 206 | 195 | 0.46218741735638830 |
 | 2 | 30 | 460 | 447 | 0.20821022694250013 |
 
-The plotted `N^{-1/2}` segment is a reference slope, not a fitted convergence
-claim. An additional `N^{-1/3}` segment distinguishes the slower rates expected
-when corner singularity or pre-asymptotic effects dominate.
+The plot contains two `N^{-1/2}` guides, anchored independently at the terminal
+PALOD and AFEM points, and two `N^{-1/3}` guides, anchored independently at the
+terminal SLOD and standard-FEM points. Each guide spans at most a factor four in
+DoF. They are local visual references, not fitted convergence claims.
 
 For every displayed method trajectory, the legend reports the least-squares
 exponent `p` in `error = C N^{-p}` over the plotted points. At repeated PALOD
@@ -94,6 +95,18 @@ epochs change the corrector/reference discretization. The valid conclusion is
 that PALOD removes much of the observed pre-asymptotic pollution with far fewer
 coarse unknowns; a larger fixed-discretization range would be required to claim
 an asymptotic rate.
+
+The apparent exponents above the nominal references do not contradict the
+approximation theory. The `N^{-1/3}` expectation for uniform P1 refinement is
+an asymptotic rate associated with the L-shaped corner singularity; the present
+UFEM and SLOD samples cover a short transition in which Helmholtz pollution and
+other pre-asymptotic error components are being removed. SLOD also changes its
+fine grid together with H, so its observed error is not a single fixed-space
+power law. For AFEM, the whole-range fit includes the sharp transition out of
+the unresolved regime. Its last-three-point value is 0.619, much closer to
+`1/2`, but three points are insufficient for an asymptotic claim. A sustained
+AFEM exponent above `1/2` is not expected for 2D P1 energy error; a longer
+resolved-range trajectory is needed to test convergence toward `1/2`.
 
 The generated CSV and JSON beside the figure preserve all plotted points, the
 first-crossing records, the fitted exponents, and the PALOD versus `N^{-1/2}`

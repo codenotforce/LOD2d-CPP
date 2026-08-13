@@ -114,6 +114,31 @@ int deepest_coarse_element(const ReferenceEpochHierarchy &hierarchy) {
             hierarchy.coarse_levels().end())));
 }
 
+void verify_incremental_embedding_matches_full_rebuild() {
+    const TriMesh initial = make_helmholtz_unit_square_mesh();
+    const RefineOutput old_parent = refine_mesh_nvb(initial, 2);
+    const RefineOutput child = refine_mesh_nvb(initial, 5);
+    const RefineOutput old_embedding = build_nested_mesh_embedding(
+        old_parent.mesh, child.mesh);
+    const std::vector<int> old_child_parents = fine_element_parents(
+        old_embedding.P_elem,
+        static_cast<int>(child.mesh.elems.size()),
+        static_cast<int>(old_parent.mesh.elems.size()));
+    const RefineOutput parent_step = bisect_newest_vertex(
+        old_parent.mesh, {0, 3, 7});
+    const RefineOutput incremental =
+        update_nested_mesh_embedding_after_parent_refinement(
+            old_parent.mesh, parent_step, child.mesh, old_child_parents);
+    const RefineOutput rebuilt = build_nested_mesh_embedding(
+        parent_step.mesh, child.mesh);
+    require((incremental.P_node - rebuilt.P_node).norm() < 1e-12,
+            "incremental nodal embedding differs from a full rebuild");
+    require((incremental.P_elem - rebuilt.P_elem).norm() < 1e-12,
+            "incremental element embedding differs from a full rebuild");
+    require((incremental.P_dg - rebuilt.P_dg).norm() < 1e-12,
+            "incremental DG embedding differs from a full rebuild");
+}
+
 void verify_fixed_reference_and_ambient_ratio() {
     constexpr double rho_star = 0.45;
     ReferenceEpochHierarchy hierarchy(
@@ -264,6 +289,7 @@ void verify_mixed_boundary_contract() {
 
 int main() {
     try {
+        verify_incremental_embedding_matches_full_rebuild();
         verify_fixed_reference_and_ambient_ratio();
         verify_transactional_refresh_boundary();
         verify_mixed_boundary_contract();

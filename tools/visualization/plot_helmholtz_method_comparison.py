@@ -231,7 +231,7 @@ def plot_method_comparison(
 
     apply_paper_style()
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure, ax = plt.subplots(figsize=(5.4, 3.65))
+    figure, ax = plt.subplots(figsize=(5.6, 4.05))
     styles = {
         "PALOD": dict(marker="o", linestyle="-", linewidth=1.5),
         "SLOD": dict(marker="s", linestyle="--", linewidth=1.3),
@@ -244,17 +244,19 @@ def plot_method_comparison(
         "UFEM": "standard P1 FEM",
         "AFEM": "adaptive P1 FEM",
     }
+    method_colors: Dict[str, str] = {}
     for run in runs:
         rows = selected[run.method]
         dofs = [_integer(row, "DoF_H") for row in rows]
         errors = [_number(row, "relative_exact_energy_error") for row in rows]
         rate = float(rates[run.method]["exponent"])
         suffix = "" if reached[run.method] else "; target not reached"
-        ax.plot(
+        line, = ax.plot(
             dofs, errors,
             label=labels[run.method] + rf" ($p\approx{rate:.2f}$)" + suffix,
             **styles[run.method],
         )
+        method_colors[run.method] = line.get_color()
 
     seen_epochs = set()
     for row in selected["PALOD"]:
@@ -271,19 +273,38 @@ def plot_method_comparison(
         )
 
     all_dofs = [_integer(row, "DoF_H") for rows in selected.values() for row in rows]
-    slope_x0 = max(min(all_dofs), min(max(all_dofs) / 8.0, max(all_dofs)))
-    slope_x1 = min(max(all_dofs), slope_x0 * 4.0)
-    anchor = target * 2.0
-    slope_half_y1 = anchor * (slope_x0 / slope_x1) ** 0.5
-    slope_third_y1 = anchor * (slope_x0 / slope_x1) ** (1.0 / 3.0)
-    ax.plot(
-        [slope_x0, slope_x1], [anchor, slope_half_y1], color="black",
-        linewidth=1.0, label=r"optimal $N^{-1/2}$",
-    )
-    ax.plot(
-        [slope_x0, slope_x1], [anchor, slope_third_y1], color="0.35",
-        linewidth=1.0, linestyle=":", label=r"reference $N^{-1/3}$",
-    )
+    reference_slopes: Dict[str, dict[str, float | int | str]] = {}
+
+    def add_reference_slope(method: str, exponent: float, label: str) -> None:
+        # Anchor each guide at the method's terminal plotted point.  The guide
+        # spans at most a factor four in DoF, so it is a local visual comparator
+        # rather than a fitted or claimed asymptotic rate.
+        by_dof = {
+            _integer(row, "DoF_H"): _number(row, "relative_exact_energy_error")
+            for row in selected[method]
+        }
+        anchor_dof, anchor_error = sorted(by_dof.items())[-1]
+        first_dof = min(by_dof)
+        left_dof = max(first_dof, anchor_dof / 4.0)
+        left_error = anchor_error * (anchor_dof / left_dof) ** exponent
+        ax.plot(
+            [left_dof, anchor_dof], [left_error, anchor_error],
+            color=method_colors[method], linewidth=1.0,
+            linestyle=(0, (4, 2, 1, 2)), alpha=0.72, label=label,
+        )
+        reference_slopes[method] = {
+            "exponent": exponent,
+            "anchor_dof": anchor_dof,
+            "anchor_error": anchor_error,
+            "left_dof": left_dof,
+            "left_error": left_error,
+            "interpretation": "local visual guide anchored at the terminal plotted point",
+        }
+
+    add_reference_slope("PALOD", 0.5, r"$N^{-1/2}$, PALOD anchor")
+    add_reference_slope("AFEM", 0.5, r"$N^{-1/2}$, AFEM anchor")
+    add_reference_slope("SLOD", 1.0 / 3.0, r"$N^{-1/3}$, SLOD anchor")
+    add_reference_slope("UFEM", 1.0 / 3.0, r"$N^{-1/3}$, standard FEM anchor")
     ax.axhline(target, color="0.35", linewidth=0.8, linestyle="--")
     ax.annotate(
         f"PALOD target {target:.3g}", xy=(max(all_dofs), target),
@@ -301,7 +322,7 @@ def plot_method_comparison(
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(True, which="major")
     ax.grid(True, which="minor", alpha=0.12)
-    ax.legend(loc="best", frameon=False)
+    ax.legend(loc="best", frameon=False, ncol=2, fontsize=7.1)
     figure.suptitle(title or f"{palod.case}, $\\kappa={palod.wavenumber:g}$: method comparison")
     figure.tight_layout()
     figure.savefig(output)
@@ -330,6 +351,7 @@ def plot_method_comparison(
         "first_target_point": first_target_point,
         "empirical_dof_rate": rates,
         "empirical_dof_rate_last_three": tail_rates,
+        "reference_slope_guides": reference_slopes,
         "palod_vs_optimal_half": {
             "empirical_exponent": rates["PALOD"]["exponent"],
             "last_three_exponent": tail_rates["PALOD"]["exponent"],

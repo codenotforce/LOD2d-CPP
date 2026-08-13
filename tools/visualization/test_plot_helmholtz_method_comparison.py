@@ -77,6 +77,19 @@ class MethodComparisonPlotTest(unittest.TestCase):
                 summary["empirical_dof_rate"]["PALOD"]["distinct_dof_points"], 3
             )
             self.assertIn("empirical_dof_rate_last_three", summary)
+            self.assertEqual(
+                summary["reference_slope_guides"]["PALOD"]["exponent"], 0.5
+            )
+            self.assertEqual(
+                summary["reference_slope_guides"]["AFEM"]["anchor_dof"], 304
+            )
+            self.assertAlmostEqual(
+                summary["reference_slope_guides"]["SLOD"]["exponent"],
+                1.0 / 3.0,
+            )
+            self.assertEqual(
+                summary["reference_slope_guides"]["UFEM"]["anchor_dof"], 404
+            )
             self.assertTrue(output.with_suffix(".csv").is_file())
             self.assertTrue(output.with_suffix(".json").is_file())
             self.assertTrue(output.with_suffix(".pdf").is_file())
