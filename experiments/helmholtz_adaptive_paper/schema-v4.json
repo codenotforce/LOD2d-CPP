@@ -29,6 +29,7 @@
     "kernel_riesz_solver": {"enum": ["saddle_point", "kernel_basis_reference"]},
     "manuscript_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
     "method": {"enum": ["PALOD", "HLOD-fixed", "SLOD", "UFEM", "AFEM"]},
+    "minimum_reference_level_gap": {"type": "integer", "minimum": 0},
     "patch_solver_kind": {"enum": ["direct_saddle", "direct_schur", "shifted_gmres"]},
     "petrov_mode": {"enum": ["two_sided", "corrected_test_only"]},
     "plateau_diagnostic": {"$ref": "#/$defs/plateauDiagnostic"},

@@ -1,6 +1,6 @@
 # Helmholtz 实用自适应 LOD：论文数值实验最小实施计划
 
-> 状态日期：2026-08-12
+> 状态日期：2026-08-14
 >
 > 对应论文：`../LOD_paper/helmholtz_lod_certified_amsart.tex`，重点对应 Practical simplified adaptive loop 和 Adaptive numerical experiments。
 >
@@ -13,7 +13,8 @@
 本计划与论文数值章节统一采用以下口径：
 
 1. R1 仅在 \(\kappa=16\) 做小规模校准；R2a 和 S 在 \(\kappa=16\) 做五方法
-   主比较，并只对 R2a/S 的代表性三方法补 \(\kappa=8,32\)。
+   主比较。波数补充实验中，R2a 比较 PALOD/AFEM 的 \(k\)-robustness，S 只保留
+   PALOD、SLOD 和代表性 FEM，波数取 \(\kappa=8,16,32\)。
 2. 生产表只列 practical adaptive LOD 及四个基线，不列 fully certified adaptive
    LOD。每步不重复计算 reference inf--sup、\(\widehat\delta_{\mathrm{loc}}\)、
    稳定性余量或分立理论常数。
@@ -503,16 +504,11 @@ Dirichlet 节点，S 处于 blocked 状态；全 Robin 的 L 型替代算例只�
 
 ### E2：最小波数敏感性
 
-不对所有配置做笛卡尔积扫描。只在 R2a 和 S 上补
-\(\kappa\in\{8,32\}\)，比较：
-
-- `PALOD`；
-- `SLOD`；
-- `UFEM` 或 `AFEM` 中在该算例更有代表性的一个。
-
-加上 E1 的 \(\kappa=16\)，即可展示 \(8,16,32\) 的波数趋势。固定 \(\ell\) HLOD
-和两种 FEM 不需要在所有波数重复。R2b（\(\sigma=2^{-6}\)）只在 R2a 的局部性不够
-明显时补做，不是默认生产矩阵。
+不对所有配置做笛卡尔积扫描。R2a 的专门 \(k\)-robustness 实验比较
+`PALOD` 与 `AFEM`；S 在 \(\kappa\in\{8,32\}\) 补 `PALOD`、`SLOD` 与一个
+代表性 FEM。R2a 的 \(\kappa=16\) E1 轨迹只有满足下述单 epoch 合同时才复用，
+否则另跑一条但不再增加 SLOD 的 R2a 波数轨迹。固定 \(\ell\) HLOD 不在所有波数
+重复。R2b（\(\sigma=2^{-6}\)）只在 R2a 的局部性不够明显时补做，不是默认生产矩阵。
 
 因此默认生产规模约为：E0 的 4 个小测试、E1 的 10 条主轨迹、E2 的 12 条补充轨迹，
 总计约 26 条，而不是“所有算例 × 所有波数 × 所有方法 × 所有容差 × 所有参数”的
@@ -520,6 +516,122 @@ Dirichlet 节点，S 处于 blocked 状态；全 Robin 的 L 型替代算例只�
 
 论文数值章节已经同步采用上述分层协议。若以后扩展实验矩阵，应先同时更新论文协议、
 本计划和 manuscript hash，再启动新增计算。
+
+### E2-R2a：单 epoch 的波数鲁棒性曲线（2026-08-14 新增）
+
+本小节是对现有论文协议的新增提案；当前 manuscript baseline 仍是 2026-08-11 的
+`03d83e...854d20`，尚未包含本小节。下面的 development prefix 可以用于资源和
+判据校验，但在生成正式 paper-candidate 配置前，必须先把同一协议写入论文、更新
+`MANUSCRIPT_BASELINE.sha256`，并让全部正式配置引用新 hash。
+
+E2 对 R2a 增加一个独立的、预注册判据的 \(k\)-robustness 实验。目标不是检查
+理论充分条件 \(kH\le c\)，而是从同一个明显偏粗的初始网格出发，直接观测
+PALOD 与 AFEM 的相对 weighted-energy error 轨迹：PALOD 是否在较短预收敛段后
+对波数近似鲁棒，以及标准残差 AFEM 的污染段是否随波数显著延长。该实验不得把
+`kappa_H_max` 或 `c_H` 用作 MARK、STOP 或结果准入门槛；二者只保留为事后诊断列。
+
+#### 冻结的比较合同
+
+- 算例固定为 R2a，
+  \(\kappa\in\{8,16,32\}\)，方法只比较 `PALOD` 与 `AFEM`；
+- 六条轨迹都从 `initial_coarse_level=4` 开始，使用相同
+  \(\theta_H=0.5\)、求积、线性容差和局部 Gaussian 数据；
+- 每条 PALOD 轨迹只含 `reference_epoch=0`，禁止
+  `reference_refresh_H_steps`。reference 在整条轨迹中固定，粗网格和当前全局
+  \(\ell\) 在单 epoch 内正常继承；
+- `theta_loc`、`C0_usr`、`C1_usr`、`rho_star`、`ell0=2`、`ell_max=6`
+  沿用 R1 冻结值，不按波数或观测曲线重新调参。AFEM 使用相同
+  \(\theta_H=0.5\) 的标准残差 Dörfler 标记；
+- 运行采用 `fixed_work_horizon`，reference/exact error 只做 post-processing，
+  不反馈 MARK/STOP。R2a 没有制造精确解，因此 reference 容量耗尽仍结构化返回
+  `ReferenceRefreshRequired`，不允许为了补齐曲线而在运行中刷新 reference；S/R1
+  的 AFEM 则从起点采用 `manufactured-exact-only` 模式，固定 reference 不进入 AFEM
+  算法，也不构造 reference 解，误差直接在每个当前 AFEM 网格上对精确解求积；
+- 六条 R2a (k)-robustness 开发轨迹设置
+  `minimum_reference_level_gap=3`：当当前最深粗单元与固定 reference 只差三层时，
+  在下一次 H 加密之前正常完成轨迹。该 gate 是预注册的 reference 容量保护，不是
+  误差、`c_H` 或后验平台判据；正式实验可在冻结前统一改成 4，但不得按波数或方法
+  单独调节；
+- 正式第一批固定为 PALOD `maximum_H_steps=8`、AFEM
+  `maximum_H_steps=10`。只有六条轨迹全部完成且 reference audit 通过、但稳定区
+  共同原始 DoF 区间仍小于一倍时，才允许预注册地把两种方法各延长 2 步并完整
+  重跑六条轨迹；最多扩展一次，不按已观察到的曲线逐波数选择不同 horizon；
+- 开发前缀使用按每次波数翻倍增加两个 NVB level 的 reference 层
+  \((11,13,15)\)，保持近似相同的 \(\kappa h_{\rm ref}\)。正式服务器候选层
+  为 \((14,16,18)\)，但只有各波数的相邻层审计通过后才冻结；PALOD 与 AFEM
+  必须复用同一个 `(R2a,kappa,reference mesh)` 解和 reference cache；
+- reference adequacy 不由终点误差平台替代。对每个波数，从候选层 \(L\) 额外求
+  \(L+1\)，要求在所有拟用于结论的共同粗网格点上
+  \[
+  \frac{|E_{\kappa,L+1}-E_{\kappa,L}|}
+       {\max(E_{\kappa,L+1},10^{-14})}\le 0.05,
+  \]
+  且结论不因使用 \(L+1\) 改变；不满足时整条该波数曲线标为
+  `reference_unresolved`，不得声称 \(k\)-robust。
+
+#### 横轴、指标和预收敛判据
+
+同一组结果必须给出原始横轴 \(N_H\) 与波长归一化横轴
+\(\widehat N=N_H/\kappa^2\)，但两者回答不同问题：稳定区内原始
+误差--DoF 曲线的常数和斜率用于检查误差的 \(k\)-robustness；归一化横轴用于
+检查跨过分辨率和 pollution 段所需的每波长自由度是否随 \(k\) 恶化。不能只凭
+任一张图下结论。对每种方法报告：
+
+1. 三条 \(E_\kappa^{\rm ref}\)--\(N_H\) 和
+   \(E_\kappa^{\rm ref}\)--\(N_H/\kappa^2\) 完整轨迹；
+2. 共同目标 \(\varepsilon\in\{0.2,0.1,0.05\}\) 的首次命中点，及
+   \(N_\varepsilon(\kappa)/\kappa^2\)；未命中记 `not_reached`；
+3. 在 \(x=\log N_H\)、\(y=\log E_\kappa^{\rm ref}\) 上，
+   只用连续三点窗口计算局部最小二乘斜率。若连续两个窗口均为负，且两斜率的
+   绝对值至少为 `0.25`、相对变化不超过 `35%`，则把第二个窗口末点定义为
+   `stable_decay_entry`；此前点数定义为预收敛长度 \(J_{\rm pre}(\kappa)\)。
+   这是事后分类，不参与驱动；
+4. 从三条曲线各自的 `stable_decay_entry` 之后截取共同原始 DoF 区间，以预先
+   固定的 16 个对数等距节点做线性插值，定义稳定区波数带宽
+   \[
+   B_M^{\rm raw}=\max_x\left(\max_\kappa\log_{10}E_{M,\kappa}(x)
+             -\min_\kappa\log_{10}E_{M,\kappa}(x)\right).
+   \]
+   若共同区间少于一倍原始 \(N_H\)，只报告 `insufficient_overlap`。另报告每个
+   波数的 \(N_{\rm entry}/\kappa^2\) 和 \(N_\varepsilon/\kappa^2\)，它们只判断
+   预收敛代价是否出现超出 \(\kappa^2\) 基准的增长，不要求整条归一化曲线重合；
+5. PALOD 的 `ell`、`Theta_loc` 和全局 `ell++` 次数必须随曲线输出；
+   `iterations.csv` 与 `ell_history.csv` 显式记录 `H_step`，因此绘图时把
+   `IncreaseGlobalEll` 标记附着在同一 (H)-step/同一误差点上，而不是伪造一个
+   新的 DoF 点；AFEM 输出
+   residual indicator 与 `kappa_H_max`，但两者不可冒充真实误差。
+
+只有 reference audit 通过，并且 PALOD 同时满足
+`B_PALOD^raw <= 0.20 decade`，三个稳定区斜率的最大值与最小值之差不超过
+`0.20`，且相对 \(\kappa=8\) 基线，
+\(N_{\rm entry}(\kappa)/\kappa^2\) 与已命中的
+\(N_{0.1}(\kappa)/\kappa^2\) 均不恶化超过 `2` 倍，才允许使用“在测试波数范围内
+观测到 \(k\)-robust”这一有限表述。AFEM 只有在其 `B_AFEM^raw`、归一化命中代价或
+预收敛长度随波数显著恶化时，才允许写“本实验中未观察到 \(k\)-robust”；不得把
+预期结论写成验收条件。如果数据不支持，应原样报告反例或 `inconclusive`。
+
+#### 开发前缀和资源 gate
+
+提交 `99d84b3` 的 WSL 12 GiB 前缀只用于定方案，不能进入论文图表。六份配置为：
+
+- `R2a-palod-k{8,16,32}-krobust-prefix-level{11,13,15}-step5-v4.json`；
+- `R2a-afem-k{8,16,32}-krobust-prefix-level{11,13,15}-step10-v4.json`。
+
+本地实测 PALOD：\(\kappa=8\) 的 wall/RSS 为约 `8.44 s/208 MiB`，
+\(\kappa=16\) 为约 `185 s/2.0 GiB`，均零 swap、`TrajectoryComplete`。
+五次 \(H\)-加密后相对 energy error 分别约为 `0.06270/0.05870`；初始误差
+约为 `0.37163/2.79921`，说明当前前缀已经解析出“粗网格污染后曲线靠拢”的现象，
+但尚无 \(\kappa=32\) 和 reference audit，不能据此宣称鲁棒。
+
+AFEM 前缀在 \(\kappa=8\) 的 level-11 reference 容量于第九次求解后耗尽，
+结构化停在 `ReferenceRefreshRequired`，终点误差约 `0.17433`；
+\(\kappa=16\) 完成十次加密，终点误差约 `0.24371`。这是旧 runner 将 AFEM
+错误地约束在固定 reference 内的诊断结果；R2a 因无精确解仍需要上述三层 gap，
+而 S 的制造解 AFEM 已改为 exact-only，不再受此阻断。按 level 11 到 13 的
+PALOD RSS 约十倍增长外推，\(\kappa=32\)、level 15 已不适合 12 GiB WSL，
+因此下一 gate 转到至少 64 GiB（推荐 96--128 GiB）服务器串行执行：先跑
+`k=32` 开发前缀并测峰值，再决定是否生成正式 \((14,16,18)\) 层及其相邻层审计。
+任何 swap、allocation failure 或非结构化终止都不允许用作数值结论。
 
 ## 6. 共同运行规则
 
@@ -565,7 +677,7 @@ Dirichlet 节点，S 处于 blocked 状态；全 Robin 的 L 型替代算例只�
 
 ```text
 schema_version, case, method, kappa, run_id,
-reference_epoch, iteration, action, stop_reason,
+reference_epoch, H_step, iteration, action, stop_reason,
 N_H, N_ref, N_amb, ell,
 kappa_H_max, mu_H, rho_amb,
 eta_H, Theta_loc, U_prac,
@@ -580,7 +692,9 @@ time_estimator, time_total_cumulative, peak_memory_mb
 - `summary.csv`：每个共同误差目标的首次命中点和累计工作；
 - `run.json`：完整参数、代码 git commit、论文 SHA-256、编译选项、硬件和状态；
 - `final_mesh.vtu`：最终粗网格及 \(\eta_{H,T}\)；
-- `ell_history.csv`：`Theta_loc`、\(\ell\) 和 global corrector rebuild 历史。
+- `ell_history.csv`：`H_step`、`Theta_loc`、\(\ell\) 和 global corrector rebuild
+  历史；`IncreaseGlobalEll` 行用于在误差--DoF 图上标注同一 H-step 内的 oversampling
+  变化。
 
 旧 `theta_total/theta_h/delta_h/q_h` 可以保留在 legacy/debug 文件中，但不得出现在
 practical 主表中造成“仍有 h 分支”的误解。

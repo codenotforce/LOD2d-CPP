@@ -32,6 +32,8 @@ fixed-horizon calibration. Schema v4 is the active practical paper contract cons
 | `configs/S-palod-k16-epoch3-level13-step6-calibration-v4.json` | Next server-only S calibration |
 | `configs/R2a-palod-k16-epoch6-level16-reference-audit-v4.json` | R2a level 16-to-17 audit after the next calibration |
 | `configs/S-palod-k16-epoch3-level13-reference-audit-v4.json` | S level 13-to-14 audit after the next calibration |
+| `configs/R2a-palod-k{8,16,32}-krobust-prefix-level{11,13,15}-step5-v4.json` | Development-only single-epoch PALOD wave-number-robustness prefixes |
+| `configs/R2a-afem-k{8,16,32}-krobust-prefix-level{11,13,15}-step10-v4.json` | Development-only AFEM pollution/pre-asymptotic comparison prefixes |
 
 The C++ registry in `helmholtz/experiments/paper_config.h` is the executable
 counterpart. The legacy v1 and active practical types are separate. In particular, v4
@@ -199,11 +201,22 @@ Each run directory contains `iterations.csv`, `summary.csv`, `run.json`,
 `ell_history.csv`, and `final_mesh.vtu`. Reference solves and post-run
 reference-error evaluation are timed separately and excluded from method time.
 `iterations.csv` reports both `N_H` (coarse nodes) and `DoF_H` (unconstrained
-coarse degrees of freedom). For the manufactured cases R1 and S it also reports
+coarse degrees of freedom), plus an explicit `H_step`. `ell_history.csv` carries
+the same `H_step`, so every `IncreaseGlobalEll` event can be annotated on the
+corresponding error--DoF point. For the manufactured cases R1 and S it also reports
 absolute and relative weighted-energy/L2 errors against the exact solution.
 These exact values use the same quadrature policy as the run and remain a
 one-way post-processing quantity: they cannot affect MARK or STOP. R2a/R2b
 leave the exact-error columns empty.
+
+Manufactured R1/S AFEM runs use `error_evaluation_mode=manufactured-exact-only`:
+they do not construct or embed into a fixed evaluation reference, and evaluate
+the exact error directly on each current adaptive mesh. Non-manufactured R2a/R2b
+AFEM retains the fixed-reference containment contract. The optional
+`minimum_reference_level_gap` (zero means disabled) completes a single-epoch
+fixed-horizon PALOD/AFEM trajectory before the next refinement would reduce the
+remaining reference/coarse NVB-level gap to or below the configured value; the
+R2a k-robust development prefixes freeze it at three.
 
 The two `S-palod-k16-exploratory-e1-*-step2-v4.json` configurations are short,
 explicitly non-paper trajectories for checking this output before the reference

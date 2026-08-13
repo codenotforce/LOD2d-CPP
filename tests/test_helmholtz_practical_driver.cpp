@@ -140,10 +140,13 @@ void verify_g4_localization_only_increases_global_ell() {
     require(increase.state_before == PracticalDriverState::LocalizationCheck &&
                 increase.state_after == PracticalDriverState::LocalizationCheck,
             "G4 ell increase left the localization state");
+    require(increase.H_step == 0,
+            "ell increase was not attached to the current H step");
     const auto next = std::next(
         result.journal.begin(), static_cast<std::ptrdiff_t>(increase.sequence + 1));
     require(next != result.journal.end() &&
-                next->state_before == PracticalDriverState::LocalizationCheck,
+                next->state_before == PracticalDriverState::LocalizationCheck
+                && next->H_step == increase.H_step,
             "the action after a failed localization observation was not another localization check");
 }
 
@@ -338,6 +341,27 @@ void verify_fixed_work_horizon_ignores_indicator_tolerance() {
             "nonzero reference epoch was not preserved in the journal");
 }
 
+void verify_fixed_work_horizon_respects_reference_gap() {
+    PracticalDriverConfig config = base_config();
+    config.stop_policy = PracticalStopPolicy::FixedWorkHorizon;
+    config.reference_level = 4;
+    config.minimum_reference_level_gap = 1;
+    config.tolerance_reference = 1e-14;
+    config.limits.maximum_H_steps = 8;
+    config.limits.maximum_iterations = 30;
+    PracticalAdaptiveDriver driver(r1_problem(), config);
+    const PracticalDriverResult result = driver.run();
+    require(result.state == PracticalDriverState::TrajectoryComplete
+                && result.H_steps == 1
+                && result.stop_reason
+                    == "minimum reference/coarse level gap reached"
+                && count_action(
+                    result, PracticalDriverAction::CompleteTrajectory) == 1
+                && count_action(
+                    result, PracticalDriverAction::RefineCoarse) == 1,
+            "fixed trajectory did not stop before consuming the configured reference gap");
+}
+
 void verify_streaming_evaluation_is_one_way() {
     PracticalDriverConfig config = base_config();
     std::size_t calls = 0;
@@ -413,6 +437,7 @@ int main() {
         verify_one_trajectory_multiple_target_extraction();
         verify_posterior_convergence_diagnostic();
         verify_fixed_work_horizon_ignores_indicator_tolerance();
+        verify_fixed_work_horizon_respects_reference_gap();
         verify_streaming_evaluation_is_one_way();
         verify_scheduled_reference_refresh_inherits_coarse_mesh();
     } catch (const std::exception &error) {

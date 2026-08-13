@@ -483,6 +483,7 @@ PracticalPaperConfig sample_practical_config() {
     config.initial_coarse_level = 2;
     config.reference_level = 6;
     config.reference_epoch = 1;
+    config.minimum_reference_level_gap = 0;
     config.ell0 = 1;
     config.ell_max = 5;
     config.boundary_beta = 1.25;
@@ -531,6 +532,8 @@ void verify_practical_v4_contract() {
     require(driver.initial_coarse_level == original.initial_coarse_level &&
                 driver.reference_level == original.reference_level &&
                 driver.reference_epoch == original.reference_epoch &&
+                driver.minimum_reference_level_gap ==
+                    original.minimum_reference_level_gap &&
                 driver.ell0 == original.ell0 && driver.ell_max == original.ell_max &&
                 driver.theta_loc == original.theta_loc &&
                 driver.C0_usr == original.C0_usr &&
@@ -550,6 +553,10 @@ void verify_practical_v4_contract() {
     changed.reference_level += 1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
             "practical v4 identity ignores reference_mesh level");
+    changed = original;
+    changed.minimum_reference_level_gap = 2;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v4 identity ignores the minimum reference level gap");
     changed = original;
     changed.reference_epoch += 1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),

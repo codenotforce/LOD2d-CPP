@@ -211,6 +211,9 @@ struct PracticalPaperConfig {
     // Optional cumulative H-step schedule for explicit in-run reference
     // refreshes.  Empty preserves the original single-epoch v4 protocol.
     std::vector<std::size_t> reference_refresh_H_steps;
+    // Optional a-priori stop for single-reference-epoch trajectories.  Zero
+    // disables the gate; k-robust runs use three remaining NVB levels.
+    int minimum_reference_level_gap = 0;
     int initial_coarse_level = 2;
     int ell0 = 2;
     int ell_max = 6;

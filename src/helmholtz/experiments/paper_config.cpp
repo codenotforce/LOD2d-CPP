@@ -1227,7 +1227,10 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
     }
     if (config.initial_coarse_level < 0 ||
         config.reference_level <= config.initial_coarse_level ||
-        config.ell0 < 0 || config.ell_max < config.ell0) {
+        config.ell0 < 0 || config.ell_max < config.ell0
+        || config.minimum_reference_level_gap < 0
+        || config.minimum_reference_level_gap
+            >= config.reference_level - config.initial_coarse_level) {
         throw std::invalid_argument("practical mesh levels or ell limits are invalid");
     }
     std::size_t previous_refresh = 0;
@@ -1247,6 +1250,15 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
                 && config.method_id != PracticalPaperMethod::HlodFixed))) {
         throw std::invalid_argument(
             "scheduled reference refresh is supported only for fixed-horizon PALOD/HLOD-fixed");
+    }
+    if (config.minimum_reference_level_gap > 0
+        && (config.trajectory_policy
+                != PracticalTrajectoryPolicy::FixedWorkHorizon
+            || !config.reference_refresh_H_steps.empty()
+            || (config.method_id != PracticalPaperMethod::Palod
+                && config.method_id != PracticalPaperMethod::Afem))) {
+        throw std::invalid_argument(
+            "minimum_reference_level_gap is supported only for single-epoch fixed-horizon PALOD/AFEM");
     }
     if (config.method_id == PracticalPaperMethod::HlodFixed
         && config.ell0 != config.ell_max) {
@@ -1356,6 +1368,8 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
     result.reference_level = config.reference_level;
     result.reference_epoch = config.reference_epoch;
     result.reference_refresh_H_steps = config.reference_refresh_H_steps;
+    result.minimum_reference_level_gap =
+        config.minimum_reference_level_gap;
     result.ell0 = config.ell0;
     result.ell_max = config.ell_max;
     result.wavenumber = config.wavenumber;
@@ -1403,6 +1417,8 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"kernel_riesz_solver\":"
         << json_string(kernel_solver_name(config.kernel_riesz_solver))
         << ",\"manuscript_sha256\":" << json_string(config.manuscript_sha256)
+        << ",\"minimum_reference_level_gap\":"
+        << config.minimum_reference_level_gap
         << ",\"method\":" << json_string(to_string(config.method_id))
         << ",\"patch_solver_kind\":"
         << json_string(patch_solver_kind_name(config.patch_solver_kind))
@@ -1482,10 +1498,14 @@ std::string canonical_json(const PracticalPaperConfig &config) {
 PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     const JsonValue parsed_root = JsonParser(json).parse();
     const JsonObject &root = as_object(parsed_root, "root");
+    const bool has_minimum_reference_level_gap =
+        root.contains("minimum_reference_level_gap");
+    JsonObject contract_root = root;
+    contract_root.erase("minimum_reference_level_gap");
     const bool has_refresh_schedule =
         root.contains("reference_refresh_H_steps");
     if (has_refresh_schedule) {
-        require_keys(root,
+        require_keys(contract_root,
             {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
              "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
              "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
@@ -1496,7 +1516,7 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
              "theta_H", "theta_loc", "timing_repeats", "tolerances",
              "trajectory_policy", "wavenumber", "work_limits"}, "root");
     } else {
-        require_keys(root,
+        require_keys(contract_root,
             {"C0_usr", "C1_usr", "ambient_mesh", "boundary_beta", "build_hash",
              "c_H", "case", "ell0", "ell_max", "git_commit", "initial_coarse_level",
              "kernel_riesz_solver", "manuscript_sha256", "method", "patch_solver_kind",
@@ -1516,6 +1536,11 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     config.reference_level = as_integer(get(root, "reference_level"), "reference_level");
     config.ambient_mesh = as_string(get(root, "ambient_mesh"), "ambient_mesh");
     config.reference_epoch = as_uint64(get(root, "reference_epoch"), "reference_epoch");
+    if (has_minimum_reference_level_gap) {
+        config.minimum_reference_level_gap = as_integer(
+            get(root, "minimum_reference_level_gap"),
+            "minimum_reference_level_gap");
+    }
     if (has_refresh_schedule) {
         const JsonArray &refreshes = as_array(
             get(root, "reference_refresh_H_steps"),
@@ -1670,6 +1695,8 @@ bool operator==(const PracticalPaperConfig &lhs,
         lhs.ambient_mesh == rhs.ambient_mesh &&
         lhs.reference_epoch == rhs.reference_epoch &&
         lhs.reference_refresh_H_steps == rhs.reference_refresh_H_steps &&
+        lhs.minimum_reference_level_gap ==
+            rhs.minimum_reference_level_gap &&
         lhs.initial_coarse_level == rhs.initial_coarse_level &&
         lhs.ell0 == rhs.ell0 && lhs.ell_max == rhs.ell_max &&
         lhs.boundary_beta == rhs.boundary_beta && lhs.c_H == rhs.c_H &&

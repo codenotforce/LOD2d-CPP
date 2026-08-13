@@ -112,6 +112,12 @@ if(LOD2D_BUILD_TESTS)
             --output-dir=${CMAKE_CURRENT_BINARY_DIR}/afem-paper-v4-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
+    add_test(NAME helmholtz_afem_exact_only_reference_exhaustion_v4_smoke
+        COMMAND bench_helmholtz_adaptive_paper
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/S-afem-exact-only-reference-exhaustion-smoke-v4.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/afem-exact-only-reference-exhaustion-v4-smoke
+            --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
+            --check)
     set_tests_properties(
         helmholtz_adaptive_paper_v4_smoke
         helmholtz_hlod_fixed_paper_v4_smoke
@@ -119,6 +125,7 @@ if(LOD2D_BUILD_TESTS)
         helmholtz_ufem_paper_v4_smoke
         helmholtz_slod_paper_v4_smoke
         helmholtz_afem_paper_v4_smoke
+        helmholtz_afem_exact_only_reference_exhaustion_v4_smoke
         PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v4")
     set_tests_properties(
         helmholtz_slod_paper_v4_smoke PROPERTIES TIMEOUT 120)

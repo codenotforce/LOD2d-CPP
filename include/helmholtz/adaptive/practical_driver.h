@@ -107,10 +107,15 @@ struct PracticalDriverConfig {
     // reference epoch is closed and the ambient mesh is promoted to the next
     // reference mesh.  The coarse mesh and H_steps are inherited unchanged.
     std::vector<std::size_t> reference_refresh_H_steps;
+    // Optional fixed-epoch capacity stop.  Zero disables it.  Otherwise the
+    // driver completes before refining once the finest current coarse element
+    // is this many levels below the fixed reference level.
+    int minimum_reference_level_gap = 0;
 };
 
 struct PracticalIterationRecord {
     std::size_t sequence = 0;
+    std::size_t H_step = 0;
     PracticalDriverState state_before =
         PracticalDriverState::CoarseAdmissibility;
     PracticalDriverState state_after =

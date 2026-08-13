@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
@@ -53,8 +54,8 @@ struct PaperExecution {
 };
 
 struct PostprocessErrors {
-    double relative_reference_energy = 0.0;
-    double relative_reference_L2 = 0.0;
+    std::optional<double> relative_reference_energy;
+    std::optional<double> relative_reference_L2;
     std::optional<double> exact_energy;
     std::optional<double> exact_L2;
     std::optional<double> relative_exact_energy;
@@ -201,6 +202,7 @@ PaperExecution run_uniform_fem_trajectory(
         data.initial_mesh, config.initial_coarse_level, config.reference_level,
         config.reference_epoch);
     PaperExecution execution;
+    std::size_t refinements = 0;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
         return std::max(
@@ -208,6 +210,7 @@ PaperExecution run_uniform_fem_trajectory(
                 - evaluation_seconds_excluded);
     };
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
+        record.H_step = refinements;
         record.reference_epoch = hierarchy.reference_epoch();
         record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
         record.coarse_dofs = record.coarse_nodes
@@ -230,7 +233,6 @@ PaperExecution run_uniform_fem_trajectory(
     fill_mesh_fields(initialization);
     execution.result.journal.push_back(std::move(initialization));
 
-    std::size_t refinements = 0;
     while (true) {
         const double wall_seconds = cumulative_seconds();
         const bool wall_limited = config.work_limits.maximum_wall_seconds > 0.0
@@ -327,27 +329,46 @@ PaperExecution run_adaptive_fem_trajectory(
     const PracticalPaperConfig &config,
     const PaperCaseData &data,
     const PracticalEvaluationSink &evaluation_sink,
+    const std::function<void(
+        std::size_t, const TriMesh &, const ComplexVector &)> &
+        detached_exact_evaluation_sink,
     const double &evaluation_seconds_excluded) {
-    ReferenceEpochHierarchy hierarchy(
-        data.initial_mesh, config.initial_coarse_level, config.reference_level,
-        config.reference_epoch);
+    const bool exact_only = data.exact && data.exact_gradient;
+    std::unique_ptr<ReferenceEpochHierarchy> hierarchy;
+    std::optional<TriMesh> detached_mesh;
+    if (exact_only) {
+        RefineOutput initial =
+            refine_mesh_nvb(data.initial_mesh, config.initial_coarse_level);
+        detached_mesh = std::move(initial.mesh);
+    } else {
+        hierarchy = std::make_unique<ReferenceEpochHierarchy>(
+            data.initial_mesh, config.initial_coarse_level,
+            config.reference_level, config.reference_epoch);
+    }
     PaperExecution execution;
+    std::size_t refinements = 0;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
         return std::max(
             0.0, elapsed_seconds(start, std::chrono::steady_clock::now())
                 - evaluation_seconds_excluded);
     };
+    auto current_mesh = [&]() -> const TriMesh & {
+        return detached_mesh ? *detached_mesh : hierarchy->coarse_mesh();
+    };
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
-        record.reference_epoch = hierarchy.reference_epoch();
-        record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
+        record.H_step = refinements;
+        record.reference_epoch = detached_mesh
+            ? config.reference_epoch : hierarchy->reference_epoch();
+        record.coarse_nodes = current_mesh().nodes.size();
         record.coarse_dofs = record.coarse_nodes
-            - dirichlet_nodes(hierarchy.coarse_mesh()).size();
-        record.reference_nodes = hierarchy.reference_mesh().nodes.size();
-        record.coarse_elements = hierarchy.coarse_mesh().elems.size();
+            - dirichlet_nodes(current_mesh()).size();
+        record.reference_nodes = detached_mesh
+            ? 0 : hierarchy->reference_mesh().nodes.size();
+        record.coarse_elements = current_mesh().elems.size();
         record.ell = 0;
         record.kappa_H_max = config.wavenumber
-            * max_element_diameter(hierarchy.coarse_mesh());
+            * max_element_diameter(current_mesh());
         record.time_total_cumulative_seconds = cumulative_seconds();
     };
 
@@ -356,21 +377,21 @@ PaperExecution run_adaptive_fem_trajectory(
     initialization.state_before = PracticalDriverState::CoarseAdmissibility;
     initialization.state_after = PracticalDriverState::SolveAndEstimate;
     initialization.action = PracticalDriverAction::InitializeReferenceEpoch;
-    initialization.detail =
-        "initialized fixed evaluation-reference epoch for conforming P1 AFEM";
+    initialization.detail = exact_only
+        ? "initialized manufactured-exact-only conforming P1 AFEM trajectory"
+        : "initialized fixed evaluation-reference epoch for conforming P1 AFEM";
     fill_mesh_fields(initialization);
     execution.result.journal.push_back(std::move(initialization));
 
-    std::size_t refinements = 0;
     while (true) {
         const double wall_seconds = cumulative_seconds();
         const bool wall_limited = config.work_limits.maximum_wall_seconds > 0.0
             && wall_seconds >= config.work_limits.maximum_wall_seconds;
         if (execution.result.journal.size()
                 >= config.work_limits.maximum_iterations
-            || hierarchy.coarse_mesh().nodes.size()
+            || current_mesh().nodes.size()
                 > config.work_limits.maximum_unknowns
-            || hierarchy.coarse_mesh().elems.size()
+            || current_mesh().elems.size()
                 > config.work_limits.maximum_coarse_elements
             || wall_limited) {
             execution.result.state = PracticalDriverState::WorkLimitReached;
@@ -382,20 +403,21 @@ PaperExecution run_adaptive_fem_trajectory(
 
         const auto solve_begin = std::chrono::steady_clock::now();
         const HelmholtzOperators operators = assemble_helmholtz_operators(
-            hierarchy.coarse_mesh(), config.wavenumber, {}, {},
+            current_mesh(), config.wavenumber, {}, {},
             config.boundary_beta);
         const ComplexVector load = assemble_helmholtz_load(
-            hierarchy.coarse_mesh(), data.source, config.quadrature,
+            current_mesh(), data.source, config.quadrature,
             data.quadrature_context);
         const ComplexVector solution = solve_helmholtz_fem(operators, load);
-        const ComplexVector candidate =
-            hierarchy.coarse_to_reference().cast<Complex>() * solution;
+        const ComplexVector candidate = detached_mesh
+            ? ComplexVector{}
+            : hierarchy->coarse_to_reference().cast<Complex>() * solution;
         const auto solve_end = std::chrono::steady_clock::now();
 
         const auto estimator_begin = std::chrono::steady_clock::now();
         const diagnostics::HelmholtzP1ResidualEstimate estimate =
             diagnostics::estimate_conforming_p1_residual(
-                hierarchy.coarse_mesh(), operators, solution, load,
+                current_mesh(), operators, solution, load,
                 data.source, config.quadrature, data.quadrature_context);
         std::vector<int> marked;
         if (estimate.eta > 0.0) {
@@ -429,7 +451,16 @@ PaperExecution run_adaptive_fem_trajectory(
             "; algebraic residual difference="
             + numeric(estimate.algebraic_relative_difference);
         fill_mesh_fields(solved);
-        stream_evaluation_candidate(solved, hierarchy, evaluation_sink);
+        if (detached_mesh) {
+            if (!detached_exact_evaluation_sink) {
+                throw std::logic_error(
+                    "detached AFEM requires a manufactured-exact evaluation sink");
+            }
+            detached_exact_evaluation_sink(
+                solved.sequence, current_mesh(), solution);
+        } else {
+            stream_evaluation_candidate(solved, *hierarchy, evaluation_sink);
+        }
         execution.result.journal.push_back(std::move(solved));
 
         if (completed_trajectory) {
@@ -446,9 +477,34 @@ PaperExecution run_adaptive_fem_trajectory(
             break;
         }
 
+        if (!detached_mesh && config.minimum_reference_level_gap > 0
+            && config.reference_level
+                    - *std::max_element(
+                        hierarchy->coarse_levels().begin(),
+                        hierarchy->coarse_levels().end())
+                <= config.minimum_reference_level_gap) {
+            execution.result.state = PracticalDriverState::TrajectoryComplete;
+            execution.result.stop_reason =
+                "minimum reference/coarse level gap reached";
+            execution.result.journal.back().state_after =
+                PracticalDriverState::TrajectoryComplete;
+            execution.result.journal.back().detail +=
+                "; minimum reference/coarse level gap reached";
+            break;
+        }
+
         const auto mesh_begin = std::chrono::steady_clock::now();
-        const ReferenceEpochRefinementResult refined =
-            hierarchy.refine_coarse_preserving_reference(marked);
+        ReferenceEpochRefinementResult refined;
+        if (detached_mesh) {
+            RefineOutput detached =
+                bisect_newest_vertex(*detached_mesh, marked);
+            detached_mesh = std::move(detached.mesh);
+            refined.status = ReferenceEpochRefinementStatus::Refined;
+            refined.detail =
+                "locally refined detached exact-error AFEM mesh";
+        } else {
+            refined = hierarchy->refine_coarse_preserving_reference(marked);
+        }
         const auto mesh_end = std::chrono::steady_clock::now();
         if (refined.status
             == ReferenceEpochRefinementStatus::ReferenceRefreshRequired) {
@@ -476,7 +532,7 @@ PaperExecution run_adaptive_fem_trajectory(
         execution.result.journal.push_back(std::move(refined_record));
     }
     execution.result.H_steps = refinements;
-    execution.final_mesh = hierarchy.coarse_mesh();
+    execution.final_mesh = current_mesh();
     return execution;
 }
 
@@ -494,6 +550,7 @@ PaperExecution run_standard_lod_trajectory(
         data.quadrature_context);
     const double fixed_fine_to_coarse_ratio = hierarchy.ambient_ratio();
     PaperExecution execution;
+    std::size_t refinements = 0;
     const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
         return std::max(
@@ -501,6 +558,7 @@ PaperExecution run_standard_lod_trajectory(
                 - evaluation_seconds_excluded);
     };
     auto fill_mesh_fields = [&](PracticalIterationRecord &record) {
+        record.H_step = refinements;
         record.reference_epoch = hierarchy.reference_epoch();
         record.coarse_nodes = hierarchy.coarse_mesh().nodes.size();
         record.coarse_dofs = record.coarse_nodes
@@ -523,7 +581,6 @@ PaperExecution run_standard_lod_trajectory(
     fill_mesh_fields(initialization);
     execution.result.journal.push_back(std::move(initialization));
 
-    std::size_t refinements = 0;
     while (true) {
         const double wall_seconds = cumulative_seconds();
         const bool wall_limited = config.work_limits.maximum_wall_seconds > 0.0
@@ -759,6 +816,38 @@ void assign_postprocess_errors(
     record.relative_exact_L2_error = errors.relative_exact_L2;
 }
 
+PostprocessErrors postprocess_exact_errors(
+    const PracticalPaperConfig &config,
+    const PaperCaseData &data,
+    const TriMesh &mesh,
+    const ComplexVector &candidate,
+    double &exact_error_seconds) {
+    if (!data.exact || !data.exact_gradient) {
+        throw std::logic_error(
+            "exact-only postprocessing requires a manufactured solution");
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    const HelmholtzError candidate_error = compute_helmholtz_error(
+        mesh, candidate, config.wavenumber, data.exact, data.exact_gradient,
+        config.quadrature, data.quadrature_context);
+    const HelmholtzError exact_norm = compute_helmholtz_error(
+        mesh, ComplexVector::Zero(candidate.size()), config.wavenumber,
+        data.exact, data.exact_gradient, config.quadrature,
+        data.quadrature_context);
+    if (!(exact_norm.energy > 0.0) || !(exact_norm.l2 > 0.0)) {
+        throw std::runtime_error(
+            "manufactured exact solution has a zero norm");
+    }
+    PostprocessErrors result;
+    result.exact_energy = candidate_error.energy;
+    result.exact_L2 = candidate_error.l2;
+    result.relative_exact_energy = candidate_error.energy / exact_norm.energy;
+    result.relative_exact_L2 = candidate_error.l2 / exact_norm.l2;
+    exact_error_seconds += elapsed_seconds(
+        begin, std::chrono::steady_clock::now());
+    return result;
+}
+
 PaperRunStatus paper_status(const PracticalDriverState state,
                             const std::string &reason) {
     switch (state) {
@@ -788,7 +877,7 @@ void write_iterations(
     const double peak_mb) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
-    out << "schema_version,case,method,kappa,run_id,reference_epoch,iteration,action,stop_reason,"
+    out << "schema_version,case,method,kappa,run_id,reference_epoch,H_step,iteration,action,stop_reason,"
            "N_H,DoF_H,N_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,U_prac,"
            "reference_energy_error,reference_L2_error,exact_energy_error,exact_L2_error,"
            "relative_exact_energy_error,relative_exact_L2_error,reference_error_ratio,"
@@ -826,7 +915,8 @@ void write_iterations(
         }
         out << config.schema_version << ',' << to_string(config.case_id) << ','
             << to_string(config.method_id) << ',' << numeric(config.wavenumber) << ','
-            << run_id << ',' << record.reference_epoch << ',' << record.sequence << ','
+            << run_id << ',' << record.reference_epoch << ',' << record.H_step
+            << ',' << record.sequence << ','
             << practical_driver_action_name(record.action) << ','
             << csv_string(record.detail) << ',' << record.coarse_nodes << ','
             << record.coarse_dofs << ',' << record.reference_nodes << ','
@@ -913,13 +1003,14 @@ void write_ell_history(
     const PracticalDriverResult &result) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
-    out << "iteration,action,ell,Theta_loc,rebuilt_correctors,time_corrector,time_certificate\n";
+    out << "H_step,iteration,action,ell,Theta_loc,rebuilt_correctors,time_corrector,time_certificate\n";
     for (const PracticalIterationRecord &record : result.journal) {
         if (record.state_before != PracticalDriverState::LocalizationCheck
             && record.action != PracticalDriverAction::SolveStandardLod) {
             continue;
         }
-        out << record.sequence << ',' << practical_driver_action_name(record.action) << ','
+        out << record.H_step << ',' << record.sequence << ','
+            << practical_driver_action_name(record.action) << ','
             << record.ell << ','
             << (config.method_id == PracticalPaperMethod::Palod
                     ? numeric(record.theta_loc) : "") << ','
@@ -960,6 +1051,7 @@ void write_run_json(
     const double exact_seconds,
     const bool reference_cache_hit,
     const std::string &reference_cache_key,
+    const bool exact_only_afem,
     const double peak_mb) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
@@ -980,6 +1072,10 @@ void write_run_json(
         << "  \"stop_reason\":" << json_string(result.stop_reason) << ",\n"
         << "  \"driver_state\":"
         << json_string(practical_driver_state_name(result.state)) << ",\n"
+        << "  \"error_evaluation_mode\":"
+        << json_string(exact_only_afem
+                ? "manufactured-exact-only" : "fixed-reference")
+        << ",\n"
         << "  \"config\":" << canonical_json(config) << ",\n"
         << "  \"files\":{\"iterations\":\"iterations.csv\","
            "\"summary\":\"summary.csv\",\"ell_history\":\"ell_history.csv\","
@@ -1058,7 +1154,7 @@ int main(const int argc, char **argv) {
         double reference_construction_seconds = 0.0;
         double exact_norm_seconds = 0.0;
         bool reference_cache_hit = true;
-        std::string reference_cache_key;
+        std::string reference_cache_key = "not-applicable";
         const auto ensure_evaluation_reference =
             [&](const ReferenceEpochHierarchy &hierarchy)
                 -> const EvaluationReference & {
@@ -1111,10 +1207,16 @@ int main(const int argc, char **argv) {
             return *inserted.first->second;
         };
 
-        ReferenceEpochHierarchy initial_evaluation_hierarchy(
-            data.initial_mesh, config.initial_coarse_level, config.reference_level,
-            config.reference_epoch);
-        (void)ensure_evaluation_reference(initial_evaluation_hierarchy);
+        const bool exact_only_afem =
+            config.method_id == PracticalPaperMethod::Afem
+            && data.exact && data.exact_gradient;
+        if (exact_only_afem) reference_cache_hit = false;
+        if (!exact_only_afem) {
+            ReferenceEpochHierarchy initial_evaluation_hierarchy(
+                data.initial_mesh, config.initial_coarse_level,
+                config.reference_level, config.reference_epoch);
+            (void)ensure_evaluation_reference(initial_evaluation_hierarchy);
+        }
 
         std::vector<std::optional<PostprocessErrors>> streamed_errors;
         double streamed_evaluation_seconds = 0.0;
@@ -1136,6 +1238,18 @@ int main(const int argc, char **argv) {
                 streamed_evaluation_seconds += elapsed_seconds(
                     begin, std::chrono::steady_clock::now());
             };
+        const auto detached_exact_evaluation_sink =
+            [&](const std::size_t sequence,
+                const TriMesh &mesh,
+                const ComplexVector &candidate) {
+                const auto begin = std::chrono::steady_clock::now();
+                if (streamed_errors.size() <= sequence)
+                    streamed_errors.resize(sequence + 1);
+                streamed_errors[sequence] = postprocess_exact_errors(
+                    config, data, mesh, candidate, exact_error_seconds);
+                streamed_evaluation_seconds += elapsed_seconds(
+                    begin, std::chrono::steady_clock::now());
+            };
 
         const auto method_begin = std::chrono::steady_clock::now();
         PaperExecution execution;
@@ -1144,7 +1258,9 @@ int main(const int argc, char **argv) {
                 config, data, evaluation_sink, streamed_evaluation_seconds);
         } else if (config.method_id == PracticalPaperMethod::Afem) {
             execution = run_adaptive_fem_trajectory(
-                config, data, evaluation_sink, streamed_evaluation_seconds);
+                config, data, evaluation_sink,
+                detached_exact_evaluation_sink,
+                streamed_evaluation_seconds);
         } else if (config.method_id == PracticalPaperMethod::Slod) {
             execution = run_standard_lod_trajectory(
                 config, data, evaluation_sink, streamed_evaluation_seconds);
@@ -1194,7 +1310,7 @@ int main(const int argc, char **argv) {
             result.state = PracticalDriverState::TrajectoryComplete;
             result.stop_reason = "fixed H-step trajectory complete";
         }
-        if (fixed_empirical_trajectory
+        if (fixed_empirical_trajectory && !exact_only_afem
             && result.state == PracticalDriverState::WorkLimitReached) {
             const double smallest_target = config.relative_energy_targets.back();
             const bool reached = std::any_of(
@@ -1229,6 +1345,7 @@ int main(const int argc, char **argv) {
             exact_norm_seconds + exact_error_seconds,
             reference_cache_hit,
             reference_cache_key,
+            exact_only_afem,
             peak_mb);
 
         if (arguments.check) {
@@ -1255,13 +1372,17 @@ int main(const int argc, char **argv) {
                 throw std::runtime_error(
                     "paper smoke did not complete a real method chain");
             }
-            if (std::none_of(result.journal.begin(), result.journal.end(),
-                             [](const PracticalIterationRecord &record) {
-                                 return record.reference_energy_error &&
-                                        record.reference_L2_error;
-                             })) {
+            const bool has_reference_error = std::any_of(
+                result.journal.begin(), result.journal.end(),
+                [](const PracticalIterationRecord &record) {
+                    return record.reference_energy_error
+                        && record.reference_L2_error;
+                });
+            if (has_reference_error == exact_only_afem) {
                 throw std::runtime_error(
-                    "WP5 smoke did not compute post-run reference errors");
+                    exact_only_afem
+                        ? "manufactured-exact-only AFEM unexpectedly used fixed-reference errors"
+                        : "WP5 smoke did not compute post-run reference errors");
             }
             const bool expects_exact = data.exact && data.exact_gradient;
             const bool has_exact = std::any_of(

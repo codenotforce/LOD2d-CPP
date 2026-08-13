@@ -19,7 +19,10 @@ start mesh and the three refined meshes, so the complete journal contains 16
 PALOD solution observations on 13 distinct coarse meshes.  The repeated DoF at
 each of the three epoch boundaries is intentional: it records the effect of
 refreshing the reference space without changing H.  SLOD/UFEM/AFEM do not use
-this PALOD reference-epoch schedule.
+this PALOD reference-epoch schedule. In particular, S-AFEM now runs in
+`manufactured-exact-only` mode: its current adaptive mesh is not required to be
+contained in a fixed reference mesh, and its plotted exact error is integrated
+directly on that mesh.
 
 ## Status of the existing comparison data
 
@@ -55,13 +58,19 @@ figures for R2a or the general formal E1 matrix.
 | AFEM | `configs/S-afem-k16-deep-convergence-level18-step28-v4.json` | 28 adaptive steps | fourteen additional adaptive points |
 
 These are paper-candidate exact-error trajectories, not certified error-bound
-runs. A work limit, reference-containment failure, allocation failure, or
-non-`TrajectoryComplete` terminal state fails closed and must not be plotted as
-a completed curve.
+runs. A work limit, allocation failure, or non-`TrajectoryComplete` terminal
+state fails closed and must not be plotted as a completed curve. A reference-
+containment failure remains invalid for PALOD/SLOD but is not an AFEM condition
+for manufactured case S.
 
 The templates can be parsed without starting an experiment by passing
 `--validate-only` together with `--config` and `--manuscript-baseline` to
 `bench_helmholtz_adaptive_paper`.
+
+The previously interrupted AFEM directory cannot be resumed because the mesh
+trajectory contract changed. Rerun the AFEM template from its initial mesh in a
+new `RESULT_DIR` (or remove only that interrupted directory and its absent
+`.done` marker); do not concatenate the old 42 records with the new run.
 
 ## Server command
 
@@ -95,8 +104,11 @@ grep -H -E 'state=|convergence_regime=|reference_cache=' logs/*.stdout
 For every `run.json`, require `status=success`,
 `driver_state=TrajectoryComplete`, and
 `stop_reason="fixed H-step trajectory complete"`. The final CSV action must
-be `CompleteTrajectory`; swap must be zero. Inspect PALOD epoch starts and the
-AFEM final VTU near the re-entrant corner and mixed-boundary junctions.
+be `CompleteTrajectory`; swap must be zero. Additionally require
+`error_evaluation_mode="manufactured-exact-only"` for AFEM, with blank
+`reference_*_error` columns and populated `relative_exact_*_error` columns.
+Inspect PALOD epoch starts and the AFEM final VTU near the re-entrant corner and
+mixed-boundary junctions.
 
 ## Prefix validation and consolidated plot
 

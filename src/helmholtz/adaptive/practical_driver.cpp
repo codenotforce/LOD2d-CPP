@@ -351,6 +351,16 @@ void PracticalAdaptiveDriver::validate_config() const {
         throw std::invalid_argument(
             "Scheduled reference refresh requires a fixed H-step trajectory.");
     }
+    if (config_.minimum_reference_level_gap < 0
+        || config_.minimum_reference_level_gap
+            >= config_.reference_level - config_.initial_coarse_level
+        || (config_.minimum_reference_level_gap > 0
+            && (config_.stop_policy
+                    != PracticalStopPolicy::FixedWorkHorizon
+                || !config_.reference_refresh_H_steps.empty()))) {
+        throw std::invalid_argument(
+            "Minimum reference/coarse level gap requires a single-reference fixed H-step trajectory and must fit between the initial levels.");
+    }
 }
 
 void PracticalAdaptiveDriver::invalidate_discrete_cache() {
@@ -361,6 +371,7 @@ void PracticalAdaptiveDriver::invalidate_discrete_cache() {
 
 void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
     record.sequence = journal_.size();
+    record.H_step = H_steps_;
     record.reference_epoch = hierarchy_->reference_epoch();
     record.ell = ell_;
     record.coarse_nodes = hierarchy_->coarse_mesh().nodes.size();
@@ -713,6 +724,22 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         == PracticalStopPolicy::FixedWorkHorizon
                     && H_steps_ >= config_.limits.maximum_H_steps) {
                     stop_reason = "fixed H-step trajectory complete";
+                    state_ = PracticalDriverState::TrajectoryComplete;
+                    record.state_after = state_;
+                    record.action = PracticalDriverAction::CompleteTrajectory;
+                    record.detail = stop_reason;
+                    append_record(std::move(record));
+                    break;
+                }
+                if (config_.stop_policy
+                        == PracticalStopPolicy::FixedWorkHorizon
+                    && config_.minimum_reference_level_gap > 0
+                    && config_.reference_level
+                            - *std::max_element(
+                                hierarchy_->coarse_levels().begin(),
+                                hierarchy_->coarse_levels().end())
+                        <= config_.minimum_reference_level_gap) {
+                    stop_reason = "minimum reference/coarse level gap reached";
                     state_ = PracticalDriverState::TrajectoryComplete;
                     record.state_after = state_;
                     record.action = PracticalDriverAction::CompleteTrajectory;

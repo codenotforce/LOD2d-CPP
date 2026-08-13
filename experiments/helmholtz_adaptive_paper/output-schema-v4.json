@@ -15,6 +15,7 @@
     "claim": {"const": "implementation-study"},
     "stop_reason": {"type": "string"},
     "driver_state": {"enum": ["Converged", "TrajectoryComplete", "ReferenceRefreshRequired", "WorkLimitReached", "Failed"]},
+    "error_evaluation_mode": {"enum": ["fixed-reference", "manufactured-exact-only"]},
     "config": {"$ref": "schema-v4.json"},
     "files": {
       "type": "object",
@@ -50,13 +51,15 @@
     "timing": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["method_seconds", "evaluation_reference_seconds", "evaluation_reference_excluded_from_method_time", "reference_solution_cache_hit", "reference_solution_cache_key"],
+      "required": ["method_seconds", "evaluation_reference_seconds", "evaluation_exact_seconds", "evaluation_reference_excluded_from_method_time", "evaluation_exact_excluded_from_method_time", "reference_solution_cache_hit", "reference_solution_cache_key"],
       "properties": {
         "method_seconds": {"type": "number", "minimum": 0},
         "evaluation_reference_seconds": {"type": "number", "minimum": 0},
+        "evaluation_exact_seconds": {"type": "number", "minimum": 0},
         "evaluation_reference_excluded_from_method_time": {"const": true},
+        "evaluation_exact_excluded_from_method_time": {"const": true},
         "reference_solution_cache_hit": {"type": "boolean"},
-        "reference_solution_cache_key": {"type": "string", "pattern": "^[0-9a-f]{16}$"}
+        "reference_solution_cache_key": {"type": "string", "pattern": "^([0-9a-f]{16}|not-applicable)$"}
       }
     },
     "hardware": {
