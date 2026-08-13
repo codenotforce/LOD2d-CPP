@@ -51,6 +51,41 @@ HelmholtzLodModel build_reference_model(
         hierarchy.reference_element_levels());
 }
 
+void verify_cached_hierarchy_model_build() {
+    const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
+    ReferenceEpochHierarchy hierarchy(data.initial_mesh, 1, 3);
+    HelmholtzProblemConfig config;
+    config.H = 1;
+    config.h = 3;
+    config.ell = 1;
+    config.wavenumber = data.wavenumber;
+    config.initial_mesh = data.initial_mesh;
+    config.quadrature_context = data.quadrature_context;
+
+    HelmholtzLodModel rebuilt = HelmholtzLodModel::build_adaptive(
+        config,
+        hierarchy.coarse_mesh(), hierarchy.coarse_levels(),
+        hierarchy.reference_mesh(), hierarchy.reference_element_levels());
+    HelmholtzLodModel reused = HelmholtzLodModel::build_adaptive(
+        config, hierarchy);
+
+    require(rebuilt.problem().coarse_to_fine.isApprox(
+                reused.problem().coarse_to_fine, 0.0),
+            "cached hierarchy changed the nodal embedding");
+    require(rebuilt.problem().fine_element_prolongation.isApprox(
+                reused.problem().fine_element_prolongation, 0.0),
+            "cached hierarchy changed the element embedding");
+    require(rebuilt.problem().fine_dg_prolongation.isApprox(
+                reused.problem().fine_dg_prolongation, 0.0),
+            "cached hierarchy changed the DG embedding");
+    require(rebuilt.problem().quasi_interpolation.isApprox(
+                reused.problem().quasi_interpolation, 2e-14),
+            "cached hierarchy changed quasi-interpolation");
+    require(rebuilt.coarse_operator().isApprox(
+                reused.coarse_operator(), 2e-13),
+            "cached hierarchy changed the SLOD coarse operator");
+}
+
 void verify_retraction_identities() {
     const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
     ReferenceEpochHierarchy hierarchy(data.initial_mesh, 1, 3);
@@ -327,6 +362,7 @@ void verify_localization_certificate() {
 
 int main() {
     try {
+        verify_cached_hierarchy_model_build();
         verify_retraction_identities();
         verify_localization_certificate();
         std::cout << "Ambient-to-reference retraction and certificate passed\n";

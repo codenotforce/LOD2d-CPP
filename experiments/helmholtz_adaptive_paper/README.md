@@ -156,6 +156,10 @@ command, is recorded in
 The bounded PALOD/SLOD thread-scaling and stage-profile study, including the
 post-NVB-optimization bottlenecks and recommended next optimizations, is in
 [`S_K16_PALOD_SLOD_BOTTLENECK_2026-08-13.md`](S_K16_PALOD_SLOD_BOTTLENECK_2026-08-13.md).
+The common-commit deep manufactured-solution convergence configurations,
+server acceptance rules, old-prefix validation, and full-trajectory plotting
+command are recorded in
+[`S_K16_DEEP_CONVERGENCE_SERVER_2026-08-13.md`](S_K16_DEEP_CONVERGENCE_SERVER_2026-08-13.md).
 
 ## Validation
 

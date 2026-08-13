@@ -115,21 +115,37 @@ currently loops over ambient patches serially, assembles each dense local
 energy/RHS block, solves the local Riesz columns, and accumulates a dense Gram
 matrix. This stage is about 79% of the complete profiled PALOD method time.
 
-## Recommended next optimization
+## Implemented optimizations and measured result
 
-1. For SLOD, pass the hierarchy's already maintained
-   `coarse_to_reference`/element/DG prolongations into model construction and
-   cache or incrementally refresh quasi-interpolation data. This targets the
-   remaining 8.9 s geometric/interpolation rebuild without changing the
-   numerical method.
-2. For PALOD, parallelize the independent ambient-patch Riesz loop with
-   thread-local Gram contributions followed by a deterministic reduction.
-   Cache invariant patch topology/local energy factorizations when the
-   ambient hierarchy version is unchanged, including a retry at larger
-   `ell` on the same mesh.
-3. Re-run these same bounded configurations after each change. Require
-   identical trajectories/certificates within the existing tolerances, then
-   compare method time rather than post-processing wall time.
+The hierarchy-owned nodal/element/DG prolongations and quasi-interpolation are
+now consumed directly by SLOD model construction.  The retained algebraic
+dimension, element-level, DG-consistency and right-inverse checks replace the
+redundant global geometry search.  At four threads, cumulative in-model
+mesh/interpolation time fell from 9.194 s to 0.227 s (97.5%), and method time
+fell from 25.993 s to 17.137 s (34.1%).  The eight-thread method time is
+14.711 s.  The exact-error trajectory is unchanged.
+
+The ambient-defect Riesz patches are now solved in parallel.  Each worker
+writes to a fixed patch-index slot and the Gram matrix and column norms are
+reduced afterwards in the original patch order.  One- and four-thread test
+results are bitwise identical.  The bounded PALOD method times changed from
+19.441/15.842/16.269 s at 1/4/8 threads before the optimization to
+20.113/7.610/6.697 s afterwards; 16 threads takes 5.207 s.  At four threads,
+certificate time fell from 13.034 s to 4.712 s.  The small one-thread
+difference is timing noise/parallel bookkeeping and not a numerical change.
+
+The old server choice of four patch threads was made while certificate work
+was serial.  It must therefore be re-measured on the server before publishing
+new time comparisons.  Error-versus-DoF data are thread-count independent;
+formal time data must use one newly frozen thread count and common binary.
+
+## Remaining optimization boundary
+
+SLOD is now dominated by local correctors and the external synchronized NVB
+hierarchy update.  PALOD may still benefit from caching invariant ambient
+patch topology and local energy factorizations across an `ell` retry on the
+same hierarchy version, but that is a separate cache-lifetime change and is
+not required for the present deep-convergence runs.
 
 ## Reproduction inputs and optional probes
 

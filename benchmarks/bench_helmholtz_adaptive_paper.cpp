@@ -44,6 +44,7 @@ struct Arguments {
     std::filesystem::path manuscript_baseline;
     std::filesystem::path reference_cache_directory;
     bool check = false;
+    bool validate_only = false;
 };
 
 struct PaperExecution {
@@ -93,17 +94,19 @@ Arguments parse_arguments(const int argc, char **argv) {
             result.reference_cache_directory = value("--reference-cache-dir=");
         } else if (argument == "--check") {
             result.check = true;
+        } else if (argument == "--validate-only") {
+            result.validate_only = true;
         } else {
             throw std::invalid_argument("unknown argument: " + argument);
         }
     }
-    if (result.config.empty() || result.output_directory.empty() ||
-        result.manuscript_baseline.empty()) {
+    if (result.config.empty() || result.manuscript_baseline.empty()
+        || (!result.validate_only && result.output_directory.empty())) {
         throw std::invalid_argument(
             "required: --config=FILE --output-dir=DIR --manuscript-baseline=FILE "
-            "[--reference-cache-dir=DIR]");
+            "[--reference-cache-dir=DIR] [--validate-only]");
     }
-    if (result.reference_cache_directory.empty())
+    if (!result.validate_only && result.reference_cache_directory.empty())
         result.reference_cache_directory =
             result.output_directory / "_reference_cache";
     return result;
@@ -554,9 +557,7 @@ PaperExecution run_standard_lod_trajectory(
         model_config.quadrature_context = data.quadrature_context;
         const auto build_begin = std::chrono::steady_clock::now();
         HelmholtzLodModel model = HelmholtzLodModel::build_adaptive(
-            model_config,
-            hierarchy.coarse_mesh(), hierarchy.coarse_levels(),
-            hierarchy.reference_mesh(), hierarchy.reference_element_levels());
+            model_config, hierarchy);
         const auto build_end = std::chrono::steady_clock::now();
         if (std::getenv("LOD2D_PROFILE_MODEL_STAGES") != nullptr) {
             const HelmholtzBuildTimings &timings = model.build_timings();
@@ -1043,6 +1044,11 @@ int main(const int argc, char **argv) {
                 "config manuscript_sha256 does not match the frozen baseline artifact");
         }
         const PaperCaseData data = make_paper_case(config.case_id, config.wavenumber);
+        if (arguments.validate_only) {
+            std::cout << "config=valid\n"
+                      << "run_id=" << make_run_id(config) << '\n';
+            return 0;
+        }
 
         const std::string reference_identity =
             "reference-sparse-lu-v1/" + config.git_commit + "/"

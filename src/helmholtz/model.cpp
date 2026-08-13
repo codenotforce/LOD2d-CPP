@@ -123,7 +123,8 @@ HelmholtzProblemData finish_problem_data(
     int ell,
     std::vector<TriMesh> hierarchy_meshes,
     std::vector<Eigen::SparseMatrix<double>> node_level_prolongations,
-    std::vector<Eigen::SparseMatrix<double>> element_level_prolongations) {
+    std::vector<Eigen::SparseMatrix<double>> element_level_prolongations,
+    const Eigen::SparseMatrix<double> *precomputed_quasi_interpolation = nullptr) {
     if (ell < 0) throw std::invalid_argument("Helmholtz oversampling level must be nonnegative");
 
     HelmholtzProblemData problem;
@@ -154,13 +155,24 @@ HelmholtzProblemData finish_problem_data(
         cg_to_dg * problem.coarse_to_fine;
     if ((dg_from_coarse - dg_from_fine).norm() > 1e-10)
         throw std::runtime_error("DG and nodal prolongations represent different coarse P1 functions");
-    problem.quasi_interpolation = build_quasi_interp(
-        problem.coarse,
-        problem.fine,
-        problem.fine_dg_prolongation,
-        cg_to_dg,
-        static_cast<int>(problem.fine.nodes.size()),
-        static_cast<int>(problem.coarse.nodes.size()));
+    if (precomputed_quasi_interpolation != nullptr) {
+        if (precomputed_quasi_interpolation->rows()
+                != static_cast<int>(problem.coarse.nodes.size())
+            || precomputed_quasi_interpolation->cols()
+                != static_cast<int>(problem.fine.nodes.size())) {
+            throw std::invalid_argument(
+                "precomputed quasi-interpolation dimensions do not match the meshes");
+        }
+        problem.quasi_interpolation = *precomputed_quasi_interpolation;
+    } else {
+        problem.quasi_interpolation = build_quasi_interp(
+            problem.coarse,
+            problem.fine,
+            problem.fine_dg_prolongation,
+            cg_to_dg,
+            static_cast<int>(problem.fine.nodes.size()),
+            static_cast<int>(problem.coarse.nodes.size()));
+    }
 
     const Eigen::MatrixXd projection_check = Eigen::MatrixXd(
         problem.quasi_interpolation * problem.coarse_to_fine);
@@ -339,6 +351,46 @@ HelmholtzLodModel HelmholtzLodModel::build_adaptive(
     const auto mesh_start = std::chrono::steady_clock::now();
     HelmholtzProblemData problem = build_adaptive_helmholtz_problem_data(
         coarse_mesh, coarse_element_levels, fine_mesh, fine_element_levels, resolved.ell);
+    return build_with_problem(
+        std::move(resolved), std::move(problem), elapsed_ms(mesh_start),
+        corrector_cache);
+}
+
+HelmholtzLodModel HelmholtzLodModel::build_adaptive(
+    const HelmholtzProblemConfig &config,
+    const adaptive::ReferenceEpochHierarchy &hierarchy,
+    HelmholtzCorrectorPatchCache *corrector_cache) {
+    if (config.wavenumber <= 0.0)
+        throw std::invalid_argument("Helmholtz wavenumber must be positive");
+    HelmholtzProblemConfig resolved = config;
+    if (!hierarchy.coarse_levels().empty()) {
+        resolved.H = *std::min_element(
+            hierarchy.coarse_levels().begin(),
+            hierarchy.coarse_levels().end());
+    }
+    if (!hierarchy.reference_element_levels().empty()) {
+        resolved.h = *std::min_element(
+            hierarchy.reference_element_levels().begin(),
+            hierarchy.reference_element_levels().end());
+    }
+
+    const auto mesh_start = std::chrono::steady_clock::now();
+    RefineOutput embedding;
+    embedding.mesh = hierarchy.reference_mesh();
+    embedding.P_node = hierarchy.coarse_to_reference();
+    embedding.P_elem = hierarchy.coarse_elements_to_reference();
+    embedding.P_dg = hierarchy.coarse_dg_to_reference();
+    const std::vector<int> derived_levels = adaptive::refinement_child_levels(
+        hierarchy.coarse_mesh(), hierarchy.coarse_levels(), embedding);
+    if (derived_levels != hierarchy.reference_element_levels()) {
+        throw std::invalid_argument(
+            "cached reference element levels are inconsistent with the NVB embedding");
+    }
+    HelmholtzProblemData problem = finish_problem_data(
+        hierarchy.coarse_mesh(), std::move(embedding),
+        hierarchy.coarse_levels(), hierarchy.reference_element_levels(),
+        resolved.ell, {}, {}, {},
+        &hierarchy.reference_quasi_interpolation());
     return build_with_problem(
         std::move(resolved), std::move(problem), elapsed_ms(mesh_start),
         corrector_cache);

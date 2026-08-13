@@ -628,6 +628,8 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
             << " retraction_ms=" << retraction_ms
             << " defect_rhs_ms=" << defect_rhs_ms
             << " ambient_riesz_ms=" << ambient_riesz_ms
+            << " ambient_riesz_threads="
+            << result.ambient_riesz.parallel_threads
             << " coarse_energy_ms=" << coarse_energy_ms
             << " spectrum_ms=" << spectrum_ms
             << " spectrum_iterations=" << result.spectrum.iterations

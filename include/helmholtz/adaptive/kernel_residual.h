@@ -175,6 +175,7 @@ struct AmbientDefectRiesz {
     Eigen::VectorXd column_eta_squared;
     int patch_factorizations = 0;
     int right_hand_side_solves = 0;
+    int parallel_threads = 1;
     double local_square_sum_relative_error = 0.0;
     double gram_accumulation_relative_error = 0.0;
 };

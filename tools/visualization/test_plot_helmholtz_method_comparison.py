@@ -45,7 +45,7 @@ class MethodComparisonPlotTest(unittest.TestCase):
                 writer.writerow(
                     {
                         "iteration": index,
-                        "reference_epoch": min(index, 2) if method == "PALOD" else 0,
+                        "reference_epoch": min(index, 3) if method == "PALOD" else 0,
                         "N_H": 113 + 100 * index,
                         "DoF_H": 104 + 100 * index,
                         "relative_exact_energy_error": error,
@@ -93,6 +93,45 @@ class MethodComparisonPlotTest(unittest.TestCase):
             self.assertTrue(output.with_suffix(".csv").is_file())
             self.assertTrue(output.with_suffix(".json").is_file())
             self.assertTrue(output.with_suffix(".pdf").is_file())
+
+    def test_full_trajectories_keep_post_target_points_and_four_epochs(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runs = [
+                plots.load_method_run(
+                    self._run(root, "PALOD", [0.8, 0.4, 0.2, 0.1])
+                ),
+                plots.load_method_run(
+                    self._run(root, "SLOD", [0.9, 0.3, 0.08, 0.04])
+                ),
+                plots.load_method_run(
+                    self._run(root, "UFEM", [1.1, 0.7, 0.15, 0.07])
+                ),
+                plots.load_method_run(
+                    self._run(root, "AFEM", [1.0, 0.5, 0.09, 0.03])
+                ),
+            ]
+            output = root / "deep-comparison.png"
+            summary = plots.plot_method_comparison(
+                runs,
+                output,
+                truncate_to_palod_target=False,
+                legend_tail_points=4,
+            )
+            self.assertEqual(
+                summary["trajectory_display_policy"], "full_fixed_horizon"
+            )
+            self.assertEqual(
+                summary["legend_rate_policy"], "last_4_distinct_dof_points"
+            )
+            self.assertEqual(summary["first_target_point"]["SLOD"]["DoF_H"], 304)
+            with output.with_suffix(".csv").open(
+                "r", encoding="utf-8", newline=""
+            ) as stream:
+                rows = list(csv.DictReader(stream))
+            self.assertEqual(
+                sum(row["method"] == "SLOD" for row in rows), 4
+            )
 
     def test_rejects_noncompleted_run(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

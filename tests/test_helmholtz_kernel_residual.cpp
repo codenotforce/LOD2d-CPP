@@ -15,6 +15,10 @@
 #include <type_traits>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using namespace lod2d;
 using namespace lod2d::helmholtz;
 using namespace lod2d::helmholtz::adaptive;
@@ -360,6 +364,19 @@ void verify_ambient_defect_riesz_gram() {
     for (int node : ambient_operators.dirichlet_nodes)
         defect_rhs.row(node).setZero();
 
+    int original_threads = 1;
+#ifdef _OPENMP
+    original_threads = omp_get_max_threads();
+    omp_set_num_threads(1);
+#endif
+    const AmbientDefectRiesz serial_saddle = compute_ambient_defect_riesz(
+        problem.hierarchy,
+        ambient_operators,
+        defect_rhs,
+        KernelRieszSolver::SaddlePoint);
+#ifdef _OPENMP
+    omp_set_num_threads(std::min(4, omp_get_num_procs()));
+#endif
     const AmbientDefectRiesz saddle = compute_ambient_defect_riesz(
         problem.hierarchy,
         ambient_operators,
@@ -370,6 +387,16 @@ void verify_ambient_defect_riesz_gram() {
         ambient_operators,
         defect_rhs,
         KernelRieszSolver::KernelBasisReference);
+#ifdef _OPENMP
+    omp_set_num_threads(original_threads);
+    require(saddle.parallel_threads == std::min(4, omp_get_num_procs()),
+            "ambient defect Riesz did not use the requested OpenMP threads");
+#endif
+    require(serial_saddle.gram.isApprox(saddle.gram, 0.0),
+            "ambient defect Gram depends on the OpenMP thread count");
+    require(serial_saddle.column_eta_squared.isApprox(
+                saddle.column_eta_squared, 0.0),
+            "ambient defect column norms depend on the OpenMP thread count");
     const int coarse_nodes = static_cast<int>(
         problem.hierarchy.coarse_mesh().nodes.size());
     require(saddle.space == KernelRieszSpace::AmbientDefect,

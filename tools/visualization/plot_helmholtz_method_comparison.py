@@ -180,8 +180,10 @@ def validate_comparison(runs: Sequence[MethodRun]) -> None:
     palod_epochs = sorted(
         {_integer(row, "reference_epoch") for row in runs[0].rows}
     )
-    if palod_epochs != [0, 1, 2]:
-        raise ValueError("PALOD comparison must contain reference epochs 0, 1, and 2")
+    if palod_epochs != list(range(len(palod_epochs))):
+        raise ValueError(
+            "PALOD reference epochs must be consecutive and start at zero"
+        )
 
 
 def _write_plot_data(
@@ -214,7 +216,11 @@ def _write_plot_data(
 
 
 def plot_method_comparison(
-    runs: Sequence[MethodRun], output: Path, title: Optional[str] = None
+    runs: Sequence[MethodRun],
+    output: Path,
+    title: Optional[str] = None,
+    truncate_to_palod_target: bool = True,
+    legend_tail_points: Optional[int] = None,
 ) -> dict[str, object]:
     validate_comparison(runs)
     palod = runs[0]
@@ -222,12 +228,25 @@ def plot_method_comparison(
     selected: Dict[str, List[Row]] = {"PALOD": list(palod.rows)}
     reached: Dict[str, bool] = {"PALOD": True}
     for run in runs[1:]:
-        selected[run.method], reached[run.method] = truncate_at_target(run, target)
+        target_rows, reached[run.method] = truncate_at_target(run, target)
+        selected[run.method] = (
+            target_rows if truncate_to_palod_target else list(run.rows)
+        )
     rates = {method: fit_dof_rate(rows) for method, rows in selected.items()}
     tail_rates = {
         method: fit_dof_rate(rows, tail_points=3)
         for method, rows in selected.items()
     }
+    if legend_tail_points is not None and legend_tail_points < 2:
+        raise ValueError("legend_tail_points must be at least two")
+    legend_rates = (
+        {
+            method: fit_dof_rate(rows, tail_points=legend_tail_points)
+            for method, rows in selected.items()
+        }
+        if legend_tail_points is not None
+        else rates
+    )
 
     apply_paper_style()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -249,11 +268,18 @@ def plot_method_comparison(
         rows = selected[run.method]
         dofs = [_integer(row, "DoF_H") for row in rows]
         errors = [_number(row, "relative_exact_energy_error") for row in rows]
-        rate = float(rates[run.method]["exponent"])
+        rate = float(legend_rates[run.method]["exponent"])
+        rate_name = (
+            rf"p_{{\rm tail,{legend_tail_points}}}"
+            if legend_tail_points is not None
+            else "p"
+        )
         suffix = "" if reached[run.method] else "; target not reached"
         line, = ax.plot(
             dofs, errors,
-            label=labels[run.method] + rf" ($p\approx{rate:.2f}$)" + suffix,
+            label=labels[run.method]
+            + rf" (${rate_name}\approx{rate:.2f}$)"
+            + suffix,
             **styles[run.method],
         )
         method_colors[run.method] = line.get_color()
@@ -332,25 +358,43 @@ def plot_method_comparison(
     _write_plot_data(runs, selected, target, output.with_suffix(".csv"))
     first_target_point = {}
     for method, rows in selected.items():
-        if not reached[method]:
+        crossing = next(
+            (
+                row
+                for row in rows
+                if _number(row, "relative_exact_energy_error") <= target
+            ),
+            None,
+        )
+        if crossing is None:
             first_target_point[method] = None
             continue
-        row = rows[-1]
         first_target_point[method] = {
-            "reference_epoch": _integer(row, "reference_epoch"),
-            "iteration": _integer(row, "iteration"),
-            "N_H": _integer(row, "N_H"),
-            "DoF_H": _integer(row, "DoF_H"),
+            "reference_epoch": _integer(crossing, "reference_epoch"),
+            "iteration": _integer(crossing, "iteration"),
+            "N_H": _integer(crossing, "N_H"),
+            "DoF_H": _integer(crossing, "DoF_H"),
             "relative_exact_energy_error": _number(
-                row, "relative_exact_energy_error"
+                crossing, "relative_exact_energy_error"
             ),
         }
     summary = {
         "palod_terminal_target": target,
         "target_reached": reached,
+        "trajectory_display_policy": (
+            "truncate_at_palod_target"
+            if truncate_to_palod_target
+            else "full_fixed_horizon"
+        ),
         "first_target_point": first_target_point,
         "empirical_dof_rate": rates,
         "empirical_dof_rate_last_three": tail_rates,
+        "legend_dof_rate": legend_rates,
+        "legend_rate_policy": (
+            f"last_{legend_tail_points}_distinct_dof_points"
+            if legend_tail_points is not None
+            else "whole_displayed_range"
+        ),
         "reference_slope_guides": reference_slopes,
         "palod_vs_optimal_half": {
             "empirical_exponent": rates["PALOD"]["exponent"],
@@ -381,6 +425,14 @@ def parse_arguments() -> argparse.Namespace:
         )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--title")
+    parser.add_argument(
+        "--full-trajectories",
+        action="store_true",
+        help=(
+            "plot every fixed-horizon point instead of truncating comparator "
+            "curves at their first PALOD-target crossing"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -392,7 +444,13 @@ def main() -> None:
         )
         for method in ("palod", "slod", "ufem", "afem")
     ]
-    summary = plot_method_comparison(runs, arguments.output, arguments.title)
+    summary = plot_method_comparison(
+        runs,
+        arguments.output,
+        arguments.title,
+        truncate_to_palod_target=not arguments.full_trajectories,
+        legend_tail_points=4 if arguments.full_trajectories else None,
+    )
     print(json.dumps(summary, sort_keys=True))
 
 
