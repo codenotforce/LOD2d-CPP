@@ -55,7 +55,7 @@ case "$MODE" in
     ;;
   s-corner-wave-366g)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-366g-step18-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-366g-step24-v4.json
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-366g-step40-v4.json
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-slod-k16-366g-step10-v4.json
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-366g-level22-v4.json

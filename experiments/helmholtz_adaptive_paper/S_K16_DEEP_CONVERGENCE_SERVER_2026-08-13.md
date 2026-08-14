@@ -221,8 +221,8 @@ with, or silently substituted for, the historical trajectories.
 
 For a 366 GiB server, the frozen main comparison uses the following horizons:
 
-- PALOD: 18 adaptive H steps in six inherited-coarse-grid epochs, with
-  refreshes after steps 3, 6, 9, 12, and 15;
+- PALOD: 24 adaptive H steps in eight inherited-coarse-grid epochs, with
+  refreshes after steps 3, 6, 9, 12, 15, 18, and 21;
 - AFEM: at most 40 adaptive steps, with a 16-million-unknown fail-safe;
 - SLOD: 10 synchronized H/h steps at fixed `ell=2`;
 - UFEM: level 22, i.e. 17 uniform H-refinement steps from level 5 and about
@@ -248,6 +248,12 @@ peak range is more honest than a point prediction. Level 23 can plausibly use
 optional follow-up rather than part of the four-method contract. Likewise,
 the accepted SLOD step-9 run used about 45 GiB; step 10 is expected to remain
 inside the machine, while step 11 has too little margin for the primary run.
+The accepted PALOD step-12 mesh had 2,303 coarse and 37,437 ambient nodes.
+Extrapolating its adaptive growth places step 24 near the largest useful
+trajectory that should remain below the 16-million-ambient-node guard. The
+step-18 six-epoch configuration remains available as a restart fallback if
+the new manufactured load grows substantially faster than that accepted
+trajectory.
 
 The script checks available memory before every method, validates the build
 and output contract, skips completed `.done` cases on restart, and records
