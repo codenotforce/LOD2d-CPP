@@ -1,0 +1,11 @@
+H_step,iteration,action,ell,Theta_loc,rebuilt_correctors,time_corrector,time_certificate
+0,1,SolveStandardLod,2,,192,0.048831696000000001,0
+1,3,SolveStandardLod,2,,384,0.076695834000000004,0
+2,5,SolveStandardLod,2,,768,0.15813719399999998,0
+3,7,SolveStandardLod,2,,1536,0.33533616399999999,0
+4,9,SolveStandardLod,2,,3072,0.68280668799999999,0
+5,11,SolveStandardLod,2,,6144,1.3776274499999999,0
+6,13,SolveStandardLod,2,,12288,2.751893361,0
+7,15,SolveStandardLod,2,,24576,5.5121760359999996,0
+8,17,SolveStandardLod,2,,49152,11.144566666000001,0
+9,19,SolveStandardLod,2,,98304,22.347785439999999,0

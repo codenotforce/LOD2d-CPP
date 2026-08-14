@@ -1,0 +1,5 @@
+target,status,first_iteration,reference_energy_error,U_prac,N_H,DoF_H,ell,rebuilt_correctors_cumulative,ambient_refined_elements_cumulative,time_total_cumulative
+0.10000000000000001,reached,15,0.072438395999657915,,12545,12416,2,48960,780288,63.429974873999996
+0.050000000000000003,reached,17,0.038700677646737763,,24833,24704,2,98112,1566720,145.562888816
+0.02,not_reached,,,,,,,,,
+0.01,not_reached,,,,,,,,,

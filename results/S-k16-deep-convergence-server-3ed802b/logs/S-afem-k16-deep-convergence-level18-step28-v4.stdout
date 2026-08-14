@@ -1,0 +1,6 @@
+run_id=S_AFEM_k16_r0_f8c83a05b5f7041a
+state=WorkLimitReached
+convergence_regime=insufficient_data
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-k16-deep-convergence-server-3ed802b/runs/S-afem-k16-deep-convergence-level18-step28-v4/S_AFEM_k16_r0_f8c83a05b5f7041a

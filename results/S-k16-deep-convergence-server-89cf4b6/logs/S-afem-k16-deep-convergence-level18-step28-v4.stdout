@@ -1,0 +1,6 @@
+run_id=S_AFEM_k16_r0_4e46685d11b0a31a
+state=TrajectoryComplete
+convergence_regime=insufficient_data
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-k16-deep-convergence-server-89cf4b6/runs/S-afem-k16-deep-convergence-level18-step28-v4/S_AFEM_k16_r0_4e46685d11b0a31a

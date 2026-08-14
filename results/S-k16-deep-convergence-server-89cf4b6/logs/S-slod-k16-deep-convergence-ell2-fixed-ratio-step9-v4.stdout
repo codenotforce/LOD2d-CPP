@@ -1,0 +1,6 @@
+run_id=S_SLOD_k16_r0_d0b11feb5a136b46
+state=TrajectoryComplete
+convergence_regime=observed_stable_decay
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-k16-deep-convergence-server-89cf4b6/runs/S-slod-k16-deep-convergence-ell2-fixed-ratio-step9-v4/S_SLOD_k16_r0_d0b11feb5a136b46

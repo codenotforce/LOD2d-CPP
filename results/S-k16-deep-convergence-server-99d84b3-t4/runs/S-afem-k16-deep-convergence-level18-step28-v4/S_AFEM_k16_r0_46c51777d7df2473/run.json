@@ -1,0 +1,16 @@
+{
+  "schema_version":4,
+  "run_id":"S_AFEM_k16_r0_46c51777d7df2473",
+  "config_hash":"46c51777d7df2473",
+  "case":"S",
+  "method":"AFEM",
+  "status":"interrupted",
+  "claim":"implementation-study",
+  "stop_reason":"candidate coarse mesh is not contained in the fixed reference mesh: refined parent mesh is not contained in the fixed child mesh",
+  "driver_state":"ReferenceRefreshRequired",
+  "config":{"C0_usr":0.49135072057990814,"C1_usr":0.059576473311033412,"ambient_mesh":"reference-shadow","boundary_beta":1,"build_hash":"sha256:d5bab749f890a1a3c601535c8fc119ab553d53abbc30d269f82341bfae067e2f","c_H":0.5,"case":"S","ell0":0,"ell_max":0,"git_commit":"99d84b331022946bc395740f378c62106265b105","initial_coarse_level":5,"kernel_riesz_solver":"saddle_point","manuscript_sha256":"03d83e0eb7128aa5ef00002c6dac110f548351e52e92e56d7adf709880854d20","method":"AFEM","patch_solver_kind":"direct_saddle","petrov_mode":"two_sided","plateau_diagnostic":{"maximum_relative_oscillation":0.14999999999999999,"minimum_geometric_mean_ratio":0.90000000000000002,"window_steps":2},"practical_stop_tolerance":0.01,"quadrature":{"base_triangle_order":7,"gaussian_triangle_order":10,"max_recursive_subdivisions":4,"singular_triangle_order":10},"reference_epoch":0,"reference_adequacy":{"enabled":false,"maximum_terminal_error_fraction":0.25,"refinement_levels":1},"reference_level":18,"reference_mesh":"uniform-nvb","relative_energy_targets":[0.10000000000000001,0.050000000000000003,0.02,0.01],"repeat_index":0,"rho_star":0.25,"schema_version":4,"theta_H":0.5,"theta_loc":0.19985934547160381,"timing_repeats":1,"trajectory_policy":"fixed_work_horizon","tolerances":{"eigen_relative_residual":1e-10,"interpolation_right_inverse":1.0000000000000001e-09,"linear_relative_residual":1e-10,"prolongation_composition":1e-10},"wavenumber":16,"work_limits":{"maximum_H_steps":28,"maximum_ambient_elements":2000000,"maximum_coarse_elements":300000,"maximum_iterations":200,"maximum_unknowns":2000000,"maximum_wall_seconds":21600}},
+  "files":{"iterations":"iterations.csv","summary":"summary.csv","ell_history":"ell_history.csv","final_mesh":"final_mesh.vtu"},
+  "convergence_diagnostic":{"status":"observed_stable_decay","distinct_points":21,"criterion":"last two positive error-vs-DOF log slopes differ by at most factor 2","previous_log_slope":0.67544979315439813,"last_log_slope":0.7401950662385246,"last_error_ratio":0.79467743096609444,"last_log_improvement":0.22981899387793811,"plateau_minimum_geometric_mean_ratio":0.90000000000000002,"plateau_maximum_relative_oscillation":0.14999999999999999,"plateau_window_steps":2,"window_geometric_mean_ratio":0.79856022844991492,"window_relative_oscillation":0.56813932681382939,"plateau_observed":false},
+  "timing":{"method_seconds":311.15309959399997,"evaluation_reference_seconds":17.315049570999999,"evaluation_exact_seconds":438.01978151399993,"evaluation_reference_excluded_from_method_time":true,"evaluation_exact_excluded_from_method_time":true,"reference_solution_cache_hit":true,"reference_solution_cache_key":"6e967243e52e93e5"},
+  "hardware":{"hardware_threads":128,"compiler":"11.4.0","peak_memory_mb":3494.94921875}
+}

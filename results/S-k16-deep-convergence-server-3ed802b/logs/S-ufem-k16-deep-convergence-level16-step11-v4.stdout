@@ -1,0 +1,6 @@
+run_id=S_UFEM_k16_r0_8a7a77afda523bf5
+state=TrajectoryComplete
+convergence_regime=observed_stable_decay
+reference_cache=hit
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-k16-deep-convergence-server-3ed802b/runs/S-ufem-k16-deep-convergence-level16-step11-v4/S_UFEM_k16_r0_8a7a77afda523bf5

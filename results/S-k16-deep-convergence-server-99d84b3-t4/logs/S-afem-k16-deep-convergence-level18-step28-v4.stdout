@@ -1,0 +1,6 @@
+run_id=S_AFEM_k16_r0_46c51777d7df2473
+state=ReferenceRefreshRequired
+convergence_regime=observed_stable_decay
+reference_cache=hit
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-k16-deep-convergence-server-99d84b3-t4/runs/S-afem-k16-deep-convergence-level18-step28-v4/S_AFEM_k16_r0_46c51777d7df2473

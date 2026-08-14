@@ -1,0 +1,6 @@
+run_id=S_PALOD_k16_r0_9ca5f6851fd79703
+state=TrajectoryComplete
+convergence_regime=observed_stable_decay
+reference_cache=miss
+claim=implementation-study
+output=/home/sutai/code/LOD2d-CPP/results/S-k16-deep-convergence-server-99d84b3-t4/runs/S-palod-k16-deep-convergence-step12-v4/S_PALOD_k16_r0_9ca5f6851fd79703

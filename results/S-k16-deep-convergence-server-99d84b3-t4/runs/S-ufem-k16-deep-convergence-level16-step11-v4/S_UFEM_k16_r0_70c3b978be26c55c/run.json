@@ -1,0 +1,16 @@
+{
+  "schema_version":4,
+  "run_id":"S_UFEM_k16_r0_70c3b978be26c55c",
+  "config_hash":"70c3b978be26c55c",
+  "case":"S",
+  "method":"UFEM",
+  "status":"success",
+  "claim":"implementation-study",
+  "stop_reason":"fixed H-step trajectory complete",
+  "driver_state":"TrajectoryComplete",
+  "config":{"C0_usr":0.49135072057990814,"C1_usr":0.059576473311033412,"ambient_mesh":"reference-shadow","boundary_beta":1,"build_hash":"sha256:d5bab749f890a1a3c601535c8fc119ab553d53abbc30d269f82341bfae067e2f","c_H":0.5,"case":"S","ell0":0,"ell_max":0,"git_commit":"99d84b331022946bc395740f378c62106265b105","initial_coarse_level":5,"kernel_riesz_solver":"saddle_point","manuscript_sha256":"03d83e0eb7128aa5ef00002c6dac110f548351e52e92e56d7adf709880854d20","method":"UFEM","patch_solver_kind":"direct_saddle","petrov_mode":"two_sided","plateau_diagnostic":{"maximum_relative_oscillation":0.14999999999999999,"minimum_geometric_mean_ratio":0.90000000000000002,"window_steps":2},"practical_stop_tolerance":0.01,"quadrature":{"base_triangle_order":7,"gaussian_triangle_order":10,"max_recursive_subdivisions":4,"singular_triangle_order":10},"reference_epoch":0,"reference_adequacy":{"enabled":false,"maximum_terminal_error_fraction":0.25,"refinement_levels":1},"reference_level":16,"reference_mesh":"uniform-nvb","relative_energy_targets":[0.10000000000000001,0.050000000000000003,0.02,0.01],"repeat_index":0,"rho_star":0.25,"schema_version":4,"theta_H":0.5,"theta_loc":0.19985934547160381,"timing_repeats":1,"trajectory_policy":"fixed_work_horizon","tolerances":{"eigen_relative_residual":1e-10,"interpolation_right_inverse":1.0000000000000001e-09,"linear_relative_residual":1e-10,"prolongation_composition":1e-10},"wavenumber":16,"work_limits":{"maximum_H_steps":11,"maximum_ambient_elements":1000000,"maximum_coarse_elements":500000,"maximum_iterations":160,"maximum_unknowns":1000000,"maximum_wall_seconds":14400}},
+  "files":{"iterations":"iterations.csv","summary":"summary.csv","ell_history":"ell_history.csv","final_mesh":"final_mesh.vtu"},
+  "convergence_diagnostic":{"status":"observed_stable_decay","distinct_points":11,"criterion":"last two positive error-vs-DOF log slopes differ by at most factor 2","previous_log_slope":0.64120652809349077,"last_log_slope":0.74818057298689888,"last_error_ratio":0.59766481837699248,"last_log_improvement":0.5147251865591107,"plateau_minimum_geometric_mean_ratio":0.90000000000000002,"plateau_maximum_relative_oscillation":0.14999999999999999,"plateau_window_steps":2,"window_geometric_mean_ratio":0.61904247706192717,"window_relative_oscillation":1.609510806119997,"plateau_observed":false},
+  "timing":{"method_seconds":46.122995425999981,"evaluation_reference_seconds":3.6577015990000001,"evaluation_exact_seconds":64.702307507,"evaluation_reference_excluded_from_method_time":true,"evaluation_exact_excluded_from_method_time":true,"reference_solution_cache_hit":true,"reference_solution_cache_key":"8e698b0a25aeae94"},
+  "hardware":{"hardware_threads":128,"compiler":"11.4.0","peak_memory_mb":1452.02734375}
+}
