@@ -703,7 +703,12 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         hierarchy_->reference_mesh(), problem_.source,
                         problem_.quadrature, problem_.quadrature_context);
                     pending_marking_.clear();
-                    localization_warm_start_.resize(0);
+                    // The refresh promotes the ambient mesh but leaves the
+                    // coarse mesh, basis ordering, and ell unchanged.  The
+                    // dominant vector therefore remains a valid coarse-space
+                    // initial guess.  Keeping it is essential when a repeated
+                    // eigenvalue cluster makes a cold power iteration stall
+                    // at the first solve of the new epoch.
                     invalidate_discrete_cache();
                     ++next_reference_refresh_;
                     state_ = PracticalDriverState::CoarseAdmissibility;

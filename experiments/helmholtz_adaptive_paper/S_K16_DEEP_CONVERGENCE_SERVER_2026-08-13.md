@@ -219,41 +219,42 @@ They may differ from their historical defaults only for case S. These runs are
 a separate manufactured-solution experiment and must not be concatenated
 with, or silently substituted for, the historical trajectories.
 
-For a 366 GiB server, the frozen main comparison uses the following horizons:
+The first 24-step attempt reached `epoch=5,H_step=15` and then failed because
+the cold localization power iteration did not meet its tolerance in 1,000
+iterations at dimension 17,448. The preceding solve on the identical inherited
+coarse space had already computed a valid dominant vector, but the epoch
+refresh discarded it. The driver now preserves this coarse-coordinate warm
+start across a reference-only refresh; it is still cleared whenever H changes
+and the vector dimension is no longer compatible.
 
-- PALOD: 24 adaptive H steps in eight inherited-coarse-grid epochs, with
-  refreshes after steps 3, 6, 9, 12, 15, 18, and 21;
-- AFEM: at most 40 adaptive steps, with a 16-million-unknown fail-safe;
+The revised 366 GiB comparison deliberately uses the requested smaller
+horizons:
+
+- PALOD: 18 adaptive H steps in six inherited-coarse-grid epochs, with
+  refreshes after steps 3, 6, 9, 12, and 15;
+- AFEM: at most 28 adaptive steps, with a 4-million-unknown fail-safe;
 - SLOD: 10 synchronized H/h steps at fixed `ell=2`;
-- UFEM: level 22, i.e. 17 uniform H-refinement steps from level 5 and about
-  12.6 million final unknowns by extrapolation from the accepted level-16 run.
+- UFEM: level 20, i.e. 15 uniform H-refinement steps from level 5 and about
+  3.2 million final unknowns by extrapolation from the accepted level-16 run.
 
-All four runs are serial. The LOD configurations additionally freeze four
-simultaneous patch solves. The order runs the lower-memory adaptive methods
+All four runs are serial. The configurations allow 16 simultaneous patch
+solves. The order runs the lower-memory adaptive methods
 first and leaves SLOD/UFEM, whose final sparse factorizations dominate memory,
 until last. Start the frozen suite with:
 
 ```bash
-MODE=s-corner-wave-366g PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=256 \
-RESULT_DIR="$PWD/results/S-corner-wave-k16-366g" \
+MODE=s-corner-wave-366g PATCH_THREADS=16 JOBS=16 MIN_AVAILABLE_GIB=128 \
+RESULT_DIR="$PWD/results/S-corner-wave-k16-six-epoch" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-The level-22 UFEM choice is intentionally the highest main-run level with a
-credible safety margin. The accepted level-16 run used 1.32 GiB at about
-197,000 unknowns. Six further NVB levels give roughly 64 times as many
-unknowns; sparse-direct storage is superlinear enough that a broad 80--180 GiB
-peak range is more honest than a point prediction. Level 23 can plausibly use
-250--350 GiB and can also exceed the 48-hour per-run budget, so it is an
-optional follow-up rather than part of the four-method contract. Likewise,
-the accepted SLOD step-9 run used about 45 GiB; step 10 is expected to remain
-inside the machine, while step 11 has too little margin for the primary run.
-The accepted PALOD step-12 mesh had 2,303 coarse and 37,437 ambient nodes.
-Extrapolating its adaptive growth places step 24 near the largest useful
-trajectory that should remain below the 16-million-ambient-node guard. The
-step-18 six-epoch configuration remains available as a restart fallback if
-the new manufactured load grows substantially faster than that accepted
-trajectory.
+The accepted level-16 UFEM run used 1.32 GiB at about 197,000 unknowns. Four
+further NVB levels give about 16 times as many unknowns; level 20 therefore
+keeps a substantial margin below the failed level-22 ambition. The accepted
+SLOD step-9 run used about 45 GiB, so SLOD step 10 remains the expected memory
+leader of this revised suite. The older step-24 PALOD, level-22 UFEM, and
+step-40 AFEM templates remain archived, but the named server mode no longer
+selects them.
 
 The script checks available memory before every method, validates the build
 and output contract, skips completed `.done` cases on restart, and records
