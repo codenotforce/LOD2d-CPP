@@ -410,6 +410,8 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
     record.coarse_dofs = record.coarse_nodes
         - dirichlet_nodes(hierarchy_->coarse_mesh()).size();
     record.reference_nodes = hierarchy_->reference_mesh().nodes.size();
+    record.reference_dofs = record.reference_nodes
+        - dirichlet_nodes(hierarchy_->reference_mesh()).size();
     record.ambient_nodes = hierarchy_->ambient_mesh().nodes.size();
     record.coarse_elements = hierarchy_->coarse_mesh().elems.size();
     record.ambient_elements = hierarchy_->ambient_mesh().elems.size();
@@ -450,6 +452,17 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
             << " warm_start="
             << (record.localization_used_warm_start ? 1 : 0)
             << " patch_threads=" << record.localization_patch_threads
+            << " model_total_ms="
+            << 1000.0 * record.time_model_total_seconds
+            << " model_corrector_ms="
+            << 1000.0 * record.time_corrector_seconds
+            << " certificate_ms="
+            << 1000.0 * record.time_certificate_seconds
+            << " ambient_patch_solve_ms="
+            << 1000.0
+                * record.time_localization_ambient_patch_solve_seconds
+            << " spectrum_ms="
+            << 1000.0 * record.time_localization_spectrum_seconds
             << " cumulative_seconds="
             << record.time_total_cumulative_seconds
             << std::endl;
@@ -551,6 +564,8 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 model_config.wavenumber = config_.wavenumber;
                 model_config.boundary_beta = config_.boundary_beta;
                 model_config.mode = config_.mode;
+                model_config.progress =
+                    std::getenv("LOD2D_PROGRESS") != nullptr;
                 model_config.initial_mesh = problem_.initial_mesh;
                 model_config.patch_solver = config_.patch_solver;
                 model_config.quadrature = problem_.quadrature;
@@ -565,8 +580,11 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 const auto corrector_end = std::chrono::steady_clock::now();
 
                 const auto certificate_begin = std::chrono::steady_clock::now();
+                double ambient_operator_assembly_seconds = 0.0;
                 if (config_.localization_policy
                     == PracticalLocalizationPolicy::AdaptiveGlobalEll) {
+                    const auto ambient_operator_begin =
+                        std::chrono::steady_clock::now();
                     const HelmholtzOperators ambient_operators =
                         assemble_helmholtz_operators(
                             hierarchy_->ambient_mesh(),
@@ -578,6 +596,9 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                                 model_->operators().refractive_index,
                                 hierarchy_->ambient_parent_reference_elements()),
                             config_.boundary_beta);
+                    ambient_operator_assembly_seconds = elapsed_seconds(
+                        ambient_operator_begin,
+                        std::chrono::steady_clock::now());
                     localization_ =
                         std::make_unique<ReferenceLocalizationCertificate>(
                             compute_reference_localization_certificate(
@@ -606,8 +627,24 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
 
                 PracticalIterationRecord record;
                 record.state_before = PracticalDriverState::LocalizationCheck;
+                const HelmholtzBuildTimings &model_timings =
+                    model_->build_timings();
+                record.time_model_mesh_interpolation_seconds =
+                    model_timings.mesh_and_interpolation_ms / 1000.0;
+                record.time_operator_assembly_seconds =
+                    model_timings.operators_ms / 1000.0;
                 record.time_corrector_seconds =
+                    model_timings.correctors_ms / 1000.0;
+                record.time_basis_assembly_seconds =
+                    model_timings.corrected_basis_ms / 1000.0;
+                record.time_coarse_operator_seconds =
+                    model_timings.coarse_operator_ms / 1000.0;
+                record.time_coarse_factorization_seconds =
+                    model_timings.coarse_factorization_ms / 1000.0;
+                record.time_model_total_seconds =
                     elapsed_seconds(corrector_begin, corrector_end);
+                record.time_localization_ambient_operator_assembly_seconds =
+                    ambient_operator_assembly_seconds;
                 record.time_certificate_seconds =
                     config_.localization_policy
                             == PracticalLocalizationPolicy::AdaptiveGlobalEll
@@ -625,6 +662,28 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         localization_->spectrum.used_warm_start;
                     record.localization_patch_threads =
                         localization_->ambient_riesz.parallel_threads;
+                    record.localization_ambient_patch_count =
+                        localization_->ambient_riesz.patch_count;
+                    record.localization_ambient_patch_factorizations =
+                        localization_->ambient_riesz.patch_factorizations;
+                    record.localization_ambient_rhs_solves =
+                        localization_->ambient_riesz.right_hand_side_solves;
+                    record.localization_ambient_max_active_columns =
+                        localization_->ambient_riesz.maximum_active_columns;
+                    record.time_localization_retraction_seconds =
+                        localization_->timings.retraction_seconds;
+                    record.time_localization_defect_rhs_seconds =
+                        localization_->timings.defect_rhs_seconds;
+                    record.time_localization_ambient_riesz_seconds =
+                        localization_->timings.ambient_riesz_seconds;
+                    record.time_localization_ambient_patch_solve_seconds =
+                        localization_->ambient_riesz.patch_solve_seconds;
+                    record.time_localization_ambient_gram_reduction_seconds =
+                        localization_->ambient_riesz.gram_reduction_seconds;
+                    record.time_localization_coarse_energy_seconds =
+                        localization_->timings.coarse_energy_seconds;
+                    record.time_localization_spectrum_seconds =
+                        localization_->timings.spectrum_seconds;
                 }
                 std::string operation_limit;
                 if (work_limit_exceeded(operation_limit)) {

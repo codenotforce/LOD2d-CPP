@@ -81,6 +81,15 @@ enum class LocalizationCertificateStatus {
     ImplementationStudy,
 };
 
+struct LocalizationCertificateTimings {
+    double retraction_seconds = 0.0;
+    double defect_rhs_seconds = 0.0;
+    double ambient_riesz_seconds = 0.0;
+    double coarse_energy_seconds = 0.0;
+    double spectrum_seconds = 0.0;
+    double total_seconds = 0.0;
+};
+
 // Practical ambient-to-reference localization certificate for one localized
 // adjoint corrected basis.  localized_adjoint_basis has one column for every
 // entry in coarse_basis_nodes (normally the free coarse nodes).
@@ -96,6 +105,7 @@ struct ReferenceLocalizationCertificate {
     Eigen::SparseMatrix<double> coarse_energy_operator;
     ComplexMatrix coarse_energy;
     LocalizationSpectrum spectrum;
+    LocalizationCertificateTimings timings;
     double theta_loc = 0.0;
 };
 

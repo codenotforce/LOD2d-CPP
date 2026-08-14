@@ -143,6 +143,10 @@ struct PracticalIterationRecord {
     bool localization_sparse_generalized = false;
     bool localization_used_warm_start = false;
     int localization_patch_threads = 0;
+    std::size_t localization_ambient_patch_count = 0;
+    std::size_t localization_ambient_patch_factorizations = 0;
+    std::size_t localization_ambient_rhs_solves = 0;
+    std::size_t localization_ambient_max_active_columns = 0;
     HelmholtzPatchSolverKind patch_solver_kind_used =
         HelmholtzPatchSolverKind::DirectSaddle;
     bool slod_auto_direct_schur = false;
@@ -176,6 +180,15 @@ struct PracticalIterationRecord {
     double time_basis_assembly_seconds = 0.0;
     double time_coarse_operator_seconds = 0.0;
     double time_coarse_factorization_seconds = 0.0;
+    double time_model_total_seconds = 0.0;
+    double time_localization_ambient_operator_assembly_seconds = 0.0;
+    double time_localization_retraction_seconds = 0.0;
+    double time_localization_defect_rhs_seconds = 0.0;
+    double time_localization_ambient_riesz_seconds = 0.0;
+    double time_localization_ambient_patch_solve_seconds = 0.0;
+    double time_localization_ambient_gram_reduction_seconds = 0.0;
+    double time_localization_coarse_energy_seconds = 0.0;
+    double time_localization_spectrum_seconds = 0.0;
     double time_certificate_seconds = 0.0;
     double time_solve_seconds = 0.0;
     double time_estimator_seconds = 0.0;

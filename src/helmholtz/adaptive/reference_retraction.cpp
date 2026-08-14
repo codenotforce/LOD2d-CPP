@@ -754,14 +754,14 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
         std::getenv("LOD2D_PROFILE_LOCALIZATION_STAGES") != nullptr;
     const auto total_begin = std::chrono::steady_clock::now();
     auto stage_begin = total_begin;
-    const auto elapsed_ms = [](const auto begin) {
-        return std::chrono::duration<double, std::milli>(
+    const auto elapsed_seconds = [](const auto begin) {
+        return std::chrono::duration<double>(
             std::chrono::steady_clock::now() - begin).count();
     };
 
     ReferenceLocalizationCertificate result;
     result.retraction = build_reference_retraction(hierarchy);
-    const double retraction_ms = elapsed_ms(stage_begin);
+    result.timings.retraction_seconds = elapsed_seconds(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
     const ComplexSparseMatrix reference_action =
         reference_operators.system.adjoint() * localized_adjoint_basis;
@@ -772,12 +772,12 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
         [](int, int, const Complex &value) {
             return value != Complex(0.0, 0.0);
         });
-    const double defect_rhs_ms = elapsed_ms(stage_begin);
+    result.timings.defect_rhs_seconds = elapsed_seconds(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
     result.ambient_riesz = compute_ambient_defect_riesz(
         hierarchy, ambient_operators, result.defect_rhs, riesz_solver,
         AmbientDefectDetail::SummaryOnly, maximum_parallel_patch_solves);
-    const double ambient_riesz_ms = elapsed_ms(stage_begin);
+    result.timings.ambient_riesz_seconds = elapsed_seconds(stage_begin);
 
     stage_begin = std::chrono::steady_clock::now();
     const Eigen::SparseMatrix<double> coarse_basis = select_columns(
@@ -798,23 +798,27 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     } else {
         result.coarse_energy.resize(0, 0);
     }
-    const double coarse_energy_ms = elapsed_ms(stage_begin);
+    result.timings.coarse_energy_seconds = elapsed_seconds(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
     result.spectrum = largest_generalized_eigenvalue(
         result.ambient_riesz.gram,
         result.coarse_energy_operator,
         eigen_config);
-    const double spectrum_ms = elapsed_ms(stage_begin);
+    result.timings.spectrum_seconds = elapsed_seconds(stage_begin);
     result.theta_loc = std::sqrt(std::max(0.0, result.spectrum.lambda_max));
+    result.timings.total_seconds = elapsed_seconds(total_begin);
     if (profile_stages) {
         std::cerr
             << "LOD2D_LOCALIZATION_STAGES"
             << " reference_nodes=" << reference_nodes
             << " ambient_nodes=" << ambient_nodes
             << " coarse_dimension=" << coarse_basis_nodes.size()
-            << " retraction_ms=" << retraction_ms
-            << " defect_rhs_ms=" << defect_rhs_ms
-            << " ambient_riesz_ms=" << ambient_riesz_ms
+            << " retraction_ms="
+            << 1000.0 * result.timings.retraction_seconds
+            << " defect_rhs_ms="
+            << 1000.0 * result.timings.defect_rhs_seconds
+            << " ambient_riesz_ms="
+            << 1000.0 * result.timings.ambient_riesz_seconds
             << " ambient_patch_solve_ms="
             << 1000.0 * result.ambient_riesz.patch_solve_seconds
             << " ambient_gram_reduction_ms="
@@ -829,8 +833,10 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
             << result.ambient_riesz.right_hand_side_solves
             << " ambient_max_active_columns="
             << result.ambient_riesz.maximum_active_columns
-            << " coarse_energy_ms=" << coarse_energy_ms
-            << " spectrum_ms=" << spectrum_ms
+            << " coarse_energy_ms="
+            << 1000.0 * result.timings.coarse_energy_seconds
+            << " spectrum_ms="
+            << 1000.0 * result.timings.spectrum_seconds
             << " spectrum_iterations=" << result.spectrum.iterations
             << " sparse_generalized="
             << (result.spectrum.used_sparse_generalized_solver ? 1 : 0)
@@ -838,7 +844,7 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
             << (result.spectrum.dense_cross_checked ? 1 : 0)
             << " dense_fallback="
             << (result.spectrum.used_dense_fallback ? 1 : 0)
-            << " total_ms=" << elapsed_ms(total_begin)
+            << " total_ms=" << 1000.0 * result.timings.total_seconds
             << '\n';
     }
     return result;

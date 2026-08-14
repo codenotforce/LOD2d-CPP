@@ -766,6 +766,8 @@ PaperExecution run_standard_lod_trajectory(
             timings.coarse_operator_ms / 1000.0;
         solved.time_coarse_factorization_seconds =
             timings.coarse_factorization_ms / 1000.0;
+        solved.time_model_total_seconds =
+            elapsed_seconds(build_begin, build_end);
         solved.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
         solved.detail =
             "rebuilt and solved standard LOD on the current uniform coarse mesh"
@@ -998,7 +1000,11 @@ void write_iterations(
            "N_H,DoF_H,N_ref,DoF_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,"
            "localization_eigen_iterations,localization_eigen_relative_residual,"
            "localization_sparse_generalized,localization_used_warm_start,"
-           "localization_patch_threads,patch_solver_used,slod_auto_direct_schur,"
+           "localization_patch_threads,localization_ambient_patch_count,"
+           "localization_ambient_patch_factorizations,"
+           "localization_ambient_rhs_solves,"
+           "localization_ambient_max_active_columns,"
+           "patch_solver_used,slod_auto_direct_schur,"
            "corrector_parallel_threads,corrector_symbolic_analyses,"
            "corrector_symbolic_reuses,corrector_factorization_reuses,"
            "corrector_maximum_patch_dofs,corrector_maximum_patch_constraints,"
@@ -1010,6 +1016,12 @@ void write_iterations(
            "ambient_refined_elements,time_mesh,time_load_assembly,"
            "time_model_mesh_interpolation,time_operator_assembly,time_corrector,"
            "time_basis_assembly,time_coarse_operator,time_coarse_factorization,"
+           "time_model_total,time_localization_ambient_operator_assembly,"
+           "time_localization_retraction,time_localization_defect_rhs,"
+           "time_localization_ambient_riesz,"
+           "time_localization_ambient_patch_solve,"
+           "time_localization_ambient_gram_reduction,"
+           "time_localization_coarse_energy,time_localization_spectrum,"
            "time_certificate,time_solve,"
            "time_estimator,time_total_cumulative,peak_memory_mb\n";
     const bool ell_method = config.method_id == PracticalPaperMethod::Palod
@@ -1074,6 +1086,20 @@ void write_iterations(
             << (localization_method
                     ? std::to_string(record.localization_patch_threads)
                     : "") << ','
+            << (localization_method
+                    ? std::to_string(record.localization_ambient_patch_count)
+                    : "") << ','
+            << (localization_method
+                    ? std::to_string(
+                        record.localization_ambient_patch_factorizations)
+                    : "") << ','
+            << (localization_method
+                    ? std::to_string(record.localization_ambient_rhs_solves)
+                    : "") << ','
+            << (localization_method
+                    ? std::to_string(
+                        record.localization_ambient_max_active_columns)
+                    : "") << ','
             << (slod_method
                     && record.action == PracticalDriverAction::SolveStandardLod
                     ? patch_solver_label(record.patch_solver_kind_used) : "")
@@ -1136,6 +1162,19 @@ void write_iterations(
             << numeric(record.time_basis_assembly_seconds) << ','
             << numeric(record.time_coarse_operator_seconds) << ','
             << numeric(record.time_coarse_factorization_seconds) << ','
+            << numeric(record.time_model_total_seconds) << ','
+            << numeric(
+                record.time_localization_ambient_operator_assembly_seconds)
+            << ','
+            << numeric(record.time_localization_retraction_seconds) << ','
+            << numeric(record.time_localization_defect_rhs_seconds) << ','
+            << numeric(record.time_localization_ambient_riesz_seconds) << ','
+            << numeric(
+                record.time_localization_ambient_patch_solve_seconds) << ','
+            << numeric(
+                record.time_localization_ambient_gram_reduction_seconds) << ','
+            << numeric(record.time_localization_coarse_energy_seconds) << ','
+            << numeric(record.time_localization_spectrum_seconds) << ','
             << numeric(record.time_certificate_seconds) << ','
             << numeric(record.time_solve_seconds) << ','
             << numeric(record.time_estimator_seconds) << ','
@@ -1199,7 +1238,16 @@ void write_ell_history(
     const PracticalDriverResult &result) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
-    out << "H_step,iteration,action,ell,Theta_loc,rebuilt_correctors,time_corrector,time_certificate\n";
+    out << "H_step,iteration,action,ell,Theta_loc,rebuilt_correctors,"
+           "time_model_total,time_model_mesh_interpolation,time_operator_assembly,"
+           "time_corrector,time_basis_assembly,time_coarse_operator,"
+           "time_coarse_factorization,time_localization_ambient_operator_assembly,"
+           "time_localization_retraction,time_localization_defect_rhs,"
+           "time_localization_ambient_riesz,"
+           "time_localization_ambient_patch_solve,"
+           "time_localization_ambient_gram_reduction,"
+           "time_localization_coarse_energy,time_localization_spectrum,"
+           "time_certificate\n";
     for (const PracticalIterationRecord &record : result.journal) {
         if (record.state_before != PracticalDriverState::LocalizationCheck
             && record.action != PracticalDriverAction::SolveStandardLod) {
@@ -1211,7 +1259,25 @@ void write_ell_history(
             << (config.method_id == PracticalPaperMethod::Palod
                     ? numeric(record.theta_loc) : "") << ','
             << record.rebuilt_correctors << ','
+            << numeric(record.time_model_total_seconds) << ','
+            << numeric(record.time_model_mesh_interpolation_seconds) << ','
+            << numeric(record.time_operator_assembly_seconds) << ','
             << numeric(record.time_corrector_seconds) << ','
+            << numeric(record.time_basis_assembly_seconds) << ','
+            << numeric(record.time_coarse_operator_seconds) << ','
+            << numeric(record.time_coarse_factorization_seconds) << ','
+            << numeric(
+                record.time_localization_ambient_operator_assembly_seconds)
+            << ','
+            << numeric(record.time_localization_retraction_seconds) << ','
+            << numeric(record.time_localization_defect_rhs_seconds) << ','
+            << numeric(record.time_localization_ambient_riesz_seconds) << ','
+            << numeric(
+                record.time_localization_ambient_patch_solve_seconds) << ','
+            << numeric(
+                record.time_localization_ambient_gram_reduction_seconds) << ','
+            << numeric(record.time_localization_coarse_energy_seconds) << ','
+            << numeric(record.time_localization_spectrum_seconds) << ','
             << numeric(record.time_certificate_seconds) << '\n';
     }
 }
@@ -1256,6 +1322,12 @@ void write_run_json(
             result.journal, config.plateau_diagnostic);
     const auto optional_json_number = [](const std::optional<double> value) {
         return value ? numeric(*value) : std::string("null");
+    };
+    const auto accumulated = [&](double PracticalIterationRecord::*member) {
+        double total = 0.0;
+        for (const PracticalIterationRecord &record : result.journal)
+            total += record.*member;
+        return total;
     };
     out << "{\n  \"schema_version\":" << config.schema_version << ",\n"
         << "  \"run_id\":" << json_string(run_id) << ",\n"
@@ -1303,6 +1375,54 @@ void write_run_json(
         << "  \"timing\":{\"method_seconds\":" << numeric(method_seconds)
         << ",\"evaluation_reference_seconds\":" << numeric(reference_seconds)
         << ",\"evaluation_exact_seconds\":" << numeric(exact_seconds)
+        << ",\"stage_totals_seconds\":{\"mesh\":"
+        << numeric(accumulated(&PracticalIterationRecord::time_mesh_seconds))
+        << ",\"load_assembly\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_load_assembly_seconds))
+        << ",\"model_total\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_model_total_seconds))
+        << ",\"model_mesh_interpolation\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_model_mesh_interpolation_seconds))
+        << ",\"operator_assembly\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_operator_assembly_seconds))
+        << ",\"corrector\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_corrector_seconds))
+        << ",\"basis_assembly\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_basis_assembly_seconds))
+        << ",\"coarse_operator\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_coarse_operator_seconds))
+        << ",\"coarse_factorization\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_coarse_factorization_seconds))
+        << ",\"localization_ambient_operator_assembly\":"
+        << numeric(accumulated(
+            &PracticalIterationRecord::
+                time_localization_ambient_operator_assembly_seconds))
+        << ",\"localization_retraction\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_localization_retraction_seconds))
+        << ",\"localization_defect_rhs\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_localization_defect_rhs_seconds))
+        << ",\"localization_ambient_riesz\":" << numeric(accumulated(
+            &PracticalIterationRecord::
+                time_localization_ambient_riesz_seconds))
+        << ",\"localization_ambient_patch_solve\":"
+        << numeric(accumulated(
+            &PracticalIterationRecord::
+                time_localization_ambient_patch_solve_seconds))
+        << ",\"localization_ambient_gram_reduction\":"
+        << numeric(accumulated(
+            &PracticalIterationRecord::
+                time_localization_ambient_gram_reduction_seconds))
+        << ",\"localization_coarse_energy\":" << numeric(accumulated(
+            &PracticalIterationRecord::
+                time_localization_coarse_energy_seconds))
+        << ",\"localization_spectrum\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_localization_spectrum_seconds))
+        << ",\"certificate_total\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_certificate_seconds))
+        << ",\"solve\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_solve_seconds))
+        << ",\"estimator\":" << numeric(accumulated(
+            &PracticalIterationRecord::time_estimator_seconds)) << "}"
         << ",\"evaluation_reference_excluded_from_method_time\":true"
         << ",\"evaluation_exact_excluded_from_method_time\":true"
         << ",\"reference_solution_cache_hit\":"
@@ -1616,10 +1736,33 @@ int main(const int argc, char **argv) {
                        || result.stop_reason
                            != "fixed H-step trajectory complete")
                     : !has_action(PracticalDriverAction::Complete);
+                const bool missing_stage_profile = std::none_of(
+                    result.journal.begin(), result.journal.end(),
+                    [](const PracticalIterationRecord &record) {
+                        return record.state_before
+                                == PracticalDriverState::LocalizationCheck
+                            && record.time_model_total_seconds > 0.0
+                            && record.time_model_mesh_interpolation_seconds > 0.0
+                            && record.time_operator_assembly_seconds > 0.0
+                            && record.time_corrector_seconds > 0.0
+                            && record.time_basis_assembly_seconds > 0.0
+                            && record.time_coarse_operator_seconds > 0.0
+                            && record.time_coarse_factorization_seconds > 0.0
+                            && record.time_certificate_seconds > 0.0
+                            && record.time_localization_retraction_seconds > 0.0
+                            && record.time_localization_defect_rhs_seconds > 0.0
+                            && record.time_localization_ambient_riesz_seconds > 0.0
+                            && record.time_localization_ambient_patch_solve_seconds
+                                > 0.0
+                            && record.time_localization_coarse_energy_seconds > 0.0
+                            && record.time_localization_spectrum_seconds > 0.0
+                            && record.localization_ambient_patch_count > 0
+                            && record.localization_ambient_rhs_solves > 0;
+                    });
                 if (!has_action(PracticalDriverAction::AcceptLocalization)
-                    || invalid_completion) {
+                    || invalid_completion || missing_stage_profile) {
                     throw std::runtime_error(
-                        "PALOD smoke did not execute the configured trajectory policy");
+                        "PALOD smoke did not execute its trajectory with a complete stage profile");
                 }
             }
             if (config.method_id == PracticalPaperMethod::HlodFixed) {

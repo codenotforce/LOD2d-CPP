@@ -218,6 +218,21 @@ void verify_localization_certificate() {
         require(certificate.ambient_riesz.patch_solve_seconds > 0.0
                     && certificate.ambient_riesz.gram_reduction_seconds >= 0.0,
                 "ambient defect Riesz stage timings were not recorded");
+        const double timed_certificate_components =
+            certificate.timings.retraction_seconds
+            + certificate.timings.defect_rhs_seconds
+            + certificate.timings.ambient_riesz_seconds
+            + certificate.timings.coarse_energy_seconds
+            + certificate.timings.spectrum_seconds;
+        require(certificate.timings.retraction_seconds > 0.0
+                    && certificate.timings.defect_rhs_seconds > 0.0
+                    && certificate.timings.ambient_riesz_seconds > 0.0
+                    && certificate.timings.coarse_energy_seconds > 0.0
+                    && certificate.timings.spectrum_seconds > 0.0
+                    && certificate.timings.total_seconds > 0.0
+                    && timed_certificate_components
+                        <= certificate.timings.total_seconds * (1.0 + 1e-9),
+                "localization certificate stage timings are incomplete or inconsistent");
         require(certificate.retraction.diagnostics()
                     .kernel_constraint_relative_error <= 2e-13,
                 "certificate used a retraction outside W_ref");

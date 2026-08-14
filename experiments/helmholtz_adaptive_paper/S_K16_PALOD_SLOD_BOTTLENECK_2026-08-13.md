@@ -135,6 +135,16 @@ They also record patch dimensions, worker count, symbolic analyses/reuses,
 factorization reuses, requested/actual patch solver and whether the automatic
 Schur threshold fired.
 
+PALOD persists the corresponding decomposition instead of relying only on
+terminal profiling. Every localization attempt records the full model build
+(mesh/interpolation, reference operator, correctors, basis, coarse operator
+and coarse factorization) and the certificate stages (ambient operator,
+reference retraction, sparse defect RHS, ambient Riesz, compact patch solves,
+deterministic Gram reduction, coarse energy and generalized spectrum).
+Patch/factorization/RHS counts are stored beside the timings. Per-attempt data
+are in `iterations.csv` and `ell_history.csv`; `run.json` contains their
+cumulative `timing.stage_totals_seconds` values.
+
 ## PALOD thread scaling and certificate profile
 
 | Patch threads | Method (s) | Correctors (s) | Certificate (s) | Wall (s) | Peak RSS (MiB) |

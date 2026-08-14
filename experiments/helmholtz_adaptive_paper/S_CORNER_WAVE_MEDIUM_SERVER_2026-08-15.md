@@ -45,6 +45,12 @@ validates each manifest, keeps a shared reference cache, enables live progress
 and writes `/usr/bin/time -v` resource logs. A rerun with the same result
 directory skips `.done` cases.
 
+For PALOD, the returned `iterations.csv` and `ell_history.csv` contain the
+model and localization-certificate stage profile for every accepted or failed
+`ell` attempt. `run.json` aggregates the same columns under
+`timing.stage_totals_seconds`; no log parsing is required to recover the
+overall time split.
+
 ## Monitor without disturbing the run
 
 ```bash

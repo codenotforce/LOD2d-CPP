@@ -95,6 +95,38 @@ void verify_real_reference_chain_converges() {
             "real chain returned an invalid reference residual estimator");
     require(std::isfinite(result.theta_loc) && result.theta_loc >= 0.0,
             "real chain returned an invalid localization certificate");
+    const PracticalIterationRecord &localized =
+        first_action(result, PracticalDriverAction::AcceptLocalization);
+    const double model_stage_sum =
+        localized.time_model_mesh_interpolation_seconds
+        + localized.time_operator_assembly_seconds
+        + localized.time_corrector_seconds
+        + localized.time_basis_assembly_seconds
+        + localized.time_coarse_operator_seconds
+        + localized.time_coarse_factorization_seconds;
+    const double certificate_stage_sum =
+        localized.time_localization_ambient_operator_assembly_seconds
+        + localized.time_localization_retraction_seconds
+        + localized.time_localization_defect_rhs_seconds
+        + localized.time_localization_ambient_riesz_seconds
+        + localized.time_localization_coarse_energy_seconds
+        + localized.time_localization_spectrum_seconds;
+    require(localized.reference_dofs > 0
+                && localized.time_model_total_seconds > 0.0
+                && model_stage_sum
+                    <= localized.time_model_total_seconds * (1.0 + 1e-8)
+                && localized.time_certificate_seconds > 0.0
+                && certificate_stage_sum
+                    <= localized.time_certificate_seconds * (1.0 + 1e-8)
+                && localized.time_localization_ambient_patch_solve_seconds
+                    > 0.0
+                && localized.time_localization_ambient_gram_reduction_seconds
+                    >= 0.0
+                && localized.localization_ambient_patch_count > 0
+                && localized.localization_ambient_patch_factorizations > 0
+                && localized.localization_ambient_rhs_solves > 0
+                && localized.localization_ambient_max_active_columns > 0,
+            "PALOD did not persist a complete model/certificate stage profile");
     const PracticalIterationRecord &complete =
         first_action(result, PracticalDriverAction::Complete);
     require(complete.evaluation_candidate.size() ==
