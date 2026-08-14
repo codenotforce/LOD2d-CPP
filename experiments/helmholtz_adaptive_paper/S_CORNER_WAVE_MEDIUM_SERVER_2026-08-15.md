@@ -10,10 +10,14 @@ run.
 
 | Method | Configuration | Horizon | Purpose |
 |---|---|---:|---|
-| PALOD | `configs/S-corner-wave-palod-k16-medium-step12-v4.json` | 12 H steps, refresh after 3/6/9 | four epochs, optimized localization path |
-| SLOD | `configs/S-corner-wave-slod-k16-medium-ell2-step7-v4.json` | 7 synchronized H/h steps | one-slot factorization reuse; late Schur probe |
-| UFEM | `configs/S-corner-wave-ufem-k16-medium-level18-step13-v4.json` | 13 uniform steps, level 18 | uniform low-regularity comparison |
+| UFEM | `configs/S-corner-wave-ufem-k16-medium-level20-step15-v4.json` | 15 uniform steps, terminal level 20 | deeper uniform low-regularity comparison |
 | AFEM | `configs/S-corner-wave-afem-k16-medium-step28-v4.json` | 28 adaptive steps | adaptive low-regularity comparison |
+| SLOD | `configs/S-corner-wave-slod-k16-medium-ell2-gap4-step10-v4.json` | 10 synchronized H/h refinements, fixed level gap 4 | one-slot factorization reuse; late Schur probe |
+| PALOD | `configs/S-corner-wave-palod-k16-medium-step15-v4.json` | 15 H steps, refresh after 3/6/9/12 | five epochs, optimized localization path |
+
+The server executes the methods in the table order: UFEM, AFEM, SLOD, then
+PALOD.  Old medium JSON files are retained only to reproduce the earlier
+shorter run and are not selected by `MODE=s-corner-wave-medium`.
 
 The SLOD base solver is `direct_saddle`. It switches to `direct_schur` only
 when the current reference space reaches 200,000 unconstrained DoFs. Every
@@ -40,7 +44,7 @@ RESULT_DIR="$PWD/results/S-corner-wave-medium-<commit>" \
 bash scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-The script runs the four cases sequentially, refuses a dirty tracked checkout,
+The script runs UFEM, AFEM, SLOD and PALOD sequentially, refuses a dirty tracked checkout,
 validates each manifest, keeps a shared reference cache, enables live progress
 and writes `/usr/bin/time -v` resource logs. A rerun with the same result
 directory skips `.done` cases.
