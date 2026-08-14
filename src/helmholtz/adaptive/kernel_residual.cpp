@@ -1139,7 +1139,8 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     const HelmholtzOperators &ambient_operators,
     const ComplexSparseMatrix &defect_rhs,
     KernelRieszSolver solver,
-    AmbientDefectDetail detail) {
+    AmbientDefectDetail detail,
+    int maximum_parallel_patch_solves) {
     const int ambient_nodes = static_cast<int>(
         hierarchy.ambient_mesh().nodes.size());
     const int input_columns = static_cast<int>(defect_rhs.cols());
@@ -1252,10 +1253,20 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
         }
     };
 
+    if (maximum_parallel_patch_solves < 0) {
+        throw std::invalid_argument(
+            "maximum parallel patch solves must be nonnegative");
+    }
     int maximum_threads = 1;
 #ifdef _OPENMP
     maximum_threads = std::max(1, omp_get_max_threads());
 #endif
+    if (maximum_parallel_patch_solves > 0) {
+        maximum_threads = std::min(
+            maximum_threads, maximum_parallel_patch_solves);
+    }
+    maximum_threads = std::min(
+        maximum_threads, static_cast<int>(std::max<std::size_t>(1, patches.size())));
     const std::size_t batch_capacity = std::max<std::size_t>(
         1, 2 * static_cast<std::size_t>(maximum_threads));
     for (std::size_t batch_begin = 0;
@@ -1265,7 +1276,7 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
             batch_capacity, patches.size() - batch_begin);
         std::vector<PatchContribution> contributions(batch_size);
 #ifdef _OPENMP
-        #pragma omp parallel
+        #pragma omp parallel num_threads(maximum_threads)
         {
             #pragma omp single
             result.parallel_threads = omp_get_num_threads();

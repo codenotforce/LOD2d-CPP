@@ -539,7 +539,8 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                                             localization_warm_start_;
                                     }
                                     return eigen;
-                                }()));
+                                }(),
+                                config_.patch_solver.maximum_parallel_solves));
                     theta_loc_ = localization_->theta_loc;
                 } else {
                     localization_.reset();

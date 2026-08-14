@@ -39,6 +39,9 @@ struct HelmholtzPatchSolverConfig {
     HelmholtzPatchSolverKind kind =
         HelmholtzPatchSolverKind::DirectSaddle;
     int symbolic_cache_slots = 1;
+    // Zero uses the OpenMP team size.  A positive value bounds concurrent
+    // sparse patch factorizations without restricting other parallel stages.
+    int maximum_parallel_solves = 0;
     bool reuse_identical_factorization = false;
     solver::RightGmresConfig gmres;
     HelmholtzShiftedLaplacianConfig shifted;

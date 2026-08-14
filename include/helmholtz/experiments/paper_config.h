@@ -204,6 +204,18 @@ struct PracticalPaperConfig {
     PaperCase case_id = PaperCase::R1;
     PracticalPaperMethod method_id = PracticalPaperMethod::Palod;
     double wavenumber = 16.0;
+    // Case S only: u=a[(1-gamma)+gamma exp(ikx)].  The historical case uses
+    // gamma=1; gamma=0 isolates the reentrant-corner regularity.
+    double singular_oscillatory_fraction = 1.0;
+    // Case S only.  Increasing the outer cut-off radius smooths its transition
+    // while retaining a flat zero trace and normal derivative at r=1.
+    double singular_cutoff_outer_radius = 0.5;
+    // Case S only.  False preserves the historical C-infinity cut-off; true
+    // uses a C2 quintic transition to suppress finite-range annular curvature.
+    bool singular_quintic_cutoff = false;
+    // Case S only: coefficient B of an additive boundary-compatible smooth
+    // wave psi(x,y) exp(i k x).  Zero preserves the historical case.
+    double smooth_wave_amplitude = 0.0;
     std::string reference_mesh = "uniform-nvb";
     int reference_level = 6;
     std::string ambient_mesh = "reference-shadow";
@@ -234,6 +246,9 @@ struct PracticalPaperConfig {
     HelmholtzPetrovMode petrov_mode = HelmholtzPetrovMode::TwoSided;
     HelmholtzPatchSolverKind patch_solver_kind =
         HelmholtzPatchSolverKind::DirectSaddle;
+    // Zero uses all available OpenMP workers.  Positive values cap only
+    // concurrent high-memory patch solves and are part of the run identity.
+    int maximum_patch_threads = 0;
     adaptive::KernelRieszSolver kernel_riesz_solver =
         adaptive::KernelRieszSolver::SaddlePoint;
     adaptive::PracticalWorkLimits work_limits;

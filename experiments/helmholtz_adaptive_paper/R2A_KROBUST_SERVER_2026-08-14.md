@@ -47,18 +47,22 @@ the manuscript baseline is updated intentionally.
 
 ## Resource policy
 
-Run the ten trajectories serially. Start with 16 patch workers and 16 build
-jobs. PALOD patch work can use those workers; the current AFEM sparse direct
-solve may remain close to one CPU core, which is expected and does not justify
-running multiple memory-heavy trajectories concurrently. Use 32 patch workers
-only after the kappa=16 PALOD log shows low CPU utilization and ample memory;
-do not mix thread counts in an error-versus-time comparison.
+Run the ten trajectories serially. Use 16 OpenMP workers and 16 build jobs, but
+keep `maximum_patch_threads=2` in every PALOD trajectory/audit config.  This
+cap applies only to simultaneous sparse patch factorizations; other OpenMP
+stages may still use the full team.  It is part of the canonical config and
+run ID, rather than an unrecorded environment setting.  The failed
+`89cf4b6` kappa=2 launch used 16 simultaneous patch solves, reached 385,910,524
+kB RSS before its first recorded H-step, and was killed by signal 9.  Reducing
+the H-step horizon therefore cannot address that failure.  Do not raise the
+patch cap until a separate resource pilot demonstrates a safe peak.
 
 The server has about 366 GiB RAM. The launch gate below requires 256 GiB
 available before each new trajectory, leaves roughly 110 GiB to the OS and
-other users, and runs with swap forbidden by the acceptance criteria. The
-Every reference audit reaches level 19; PALOD at level 18 and those audit
-solves are the likely memory maxima.
+other users, and runs with swap forbidden by the acceptance criteria. Every
+reference audit reaches level 19; PALOD at level 18 and those audit solves are
+the likely memory maxima.  Use a new result directory after the concurrency
+fix; never resume the killed `89cf4b6` directory.
 
 ## Build and run all trajectories
 

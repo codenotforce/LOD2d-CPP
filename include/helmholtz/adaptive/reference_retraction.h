@@ -98,7 +98,8 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     const ComplexSparseMatrix &localized_adjoint_basis,
     const std::vector<int> &coarse_basis_nodes,
     KernelRieszSolver riesz_solver = KernelRieszSolver::SaddlePoint,
-    const LocalizationEigenConfig &eigen_config = {});
+    const LocalizationEigenConfig &eigen_config = {},
+    int maximum_parallel_patch_solves = 0);
 
 // Dense E0/G3 diagnostic only.  It compares the certificate with the direct
 // reference-space ideal/localized adjoint-corrector difference and computes

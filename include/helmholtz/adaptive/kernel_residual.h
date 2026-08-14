@@ -218,7 +218,8 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     const HelmholtzOperators &ambient_operators,
     const ComplexSparseMatrix &defect_rhs,
     KernelRieszSolver solver = KernelRieszSolver::SaddlePoint,
-    AmbientDefectDetail detail = AmbientDefectDetail::SummaryOnly);
+    AmbientDefectDetail detail = AmbientDefectDetail::SummaryOnly,
+    int maximum_parallel_patch_solves = 0);
 
 // Determine the verified support-propagation radius of I_H and freeze the
 // corresponding D_z/D_z^+ construction in a deterministic policy hash.

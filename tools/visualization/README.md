@@ -49,7 +49,8 @@ DoF, and by default truncates each comparator at its first evaluated point at
 or below the terminal PALOD exact relative weighted-energy error. Pass
 `--full-trajectories` for a deep fixed-horizon convergence study; its legend
 then reports a last-four-distinct-DoF fit rather than the whole-range fit. The figure
-marks every consecutive PALOD reference-epoch start. Separate $N^{-1/2}$ guides are anchored at
+marks every consecutive PALOD reference-epoch start and every
+`IncreaseGlobalEll` event at its matching `H_step`. Separate $N^{-1/2}$ guides are anchored at
 the terminal PALOD and AFEM points; separate $N^{-1/3}$ guides are anchored at
 the terminal SLOD and standard-FEM points. Each method legend reports a
 whole-displayed-range log-log DoF exponent. Repeated PALOD DoFs retain the

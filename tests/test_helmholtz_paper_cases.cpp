@@ -83,6 +83,19 @@ Complex finite_difference_laplacian(
 void verify_singular_case() {
     constexpr double kappa = 8.0;
     const PaperCaseData data = make_paper_case(PaperCase::S, kappa);
+    const PaperCaseData corner_dominant =
+        make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true);
+    const PaperCaseData additive_wave =
+        make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true, 0.1);
+    require(data.singular_oscillatory_fraction == 1.0
+                && corner_dominant.singular_oscillatory_fraction == 0.0
+                && data.singular_cutoff_outer_radius == 0.5
+                && corner_dominant.singular_cutoff_outer_radius == 1.0
+                && !data.singular_quintic_cutoff
+                && corner_dominant.singular_quintic_cutoff
+                && data.smooth_wave_amplitude == 0.0
+                && additive_wave.smooth_wave_amplitude == 0.1,
+            "S oscillatory fraction provenance is missing");
     require(std::abs(boundary_measure(data.initial_mesh, BoundaryTag::Dirichlet) - 2.0) < 1e-14,
             "S case lost its reentrant Dirichlet boundary");
     for (const Point2 point : {Point2(0.2, 0.0), Point2(0.0, -0.2)})
@@ -95,15 +108,67 @@ void verify_singular_case() {
                 "S gradient reaches the outer Robin boundary");
     }
 
-    for (const Point2 point : {Point2(-0.18, 0.11), Point2(-0.31, 0.19), Point2(0.16, 0.28)}) {
-        const Complex numerical = finite_difference_laplacian(data.exact, point, 2e-5);
-        const Complex analytic = data.exact_laplacian(point);
-        require(std::abs(numerical - analytic) / std::max(1.0, std::abs(analytic)) < 2e-5,
-                "S analytic Laplacian disagrees with an independent finite difference");
-        require(std::abs(data.source(point) + analytic
-                         + kappa * kappa * data.exact(point)) < 1e-11,
-                "S source and manufactured solution violate the PDE identity");
+    for (const PaperCaseData *variant : {
+             &data, &corner_dominant, &additive_wave}) {
+        for (const Point2 point : {
+                 Point2(-0.18, 0.11), Point2(-0.31, 0.19),
+                 Point2(0.16, 0.28)}) {
+            const Complex numerical = finite_difference_laplacian(
+                variant->exact, point, 2e-5);
+            const Complex analytic = variant->exact_laplacian(point);
+            require(std::abs(numerical - analytic)
+                        / std::max(1.0, std::abs(analytic)) < 2e-5,
+                    "S analytic Laplacian disagrees with an independent finite difference");
+            require(std::abs(variant->source(point) + analytic
+                             + kappa * kappa * variant->exact(point)) < 1e-11,
+                    "S source and manufactured solution violate the PDE identity");
+        }
     }
+    require(std::abs(std::imag(corner_dominant.exact(Point2(-0.18, 0.11))))
+                < 1e-14,
+            "corner-dominant S exact solution is unexpectedly oscillatory");
+    require(std::abs(std::imag(additive_wave.exact(Point2(-0.45, 0.42))))
+                > 1e-5,
+            "additive S exact solution lost its smooth oscillatory component");
+    for (const Point2 point : {
+             Point2(-1.0, 0.4), Point2(0.3, 1.0), Point2(1.0, 0.7)}) {
+        require(std::abs(additive_wave.exact(point)) < 1e-14
+                    && additive_wave.exact_gradient(point).norm() < 1e-13,
+                "additive smooth wave violates the homogeneous outer boundary");
+    }
+
+    bool invalid_fraction_rejected = false;
+    try {
+        (void)make_paper_case(PaperCase::S, kappa, 1.01);
+    } catch (const std::invalid_argument &) {
+        invalid_fraction_rejected = true;
+    }
+    require(invalid_fraction_rejected,
+            "S accepted an invalid oscillatory fraction");
+    bool invalid_radius_rejected = false;
+    try {
+        (void)make_paper_case(PaperCase::S, kappa, 0.0, 1.01);
+    } catch (const std::invalid_argument &) {
+        invalid_radius_rejected = true;
+    }
+    require(invalid_radius_rejected,
+            "S accepted an invalid cut-off radius");
+    bool invalid_wave_amplitude_rejected = false;
+    try {
+        (void)make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true, 1.01);
+    } catch (const std::invalid_argument &) {
+        invalid_wave_amplitude_rejected = true;
+    }
+    require(invalid_wave_amplitude_rejected,
+            "S accepted an invalid smooth wave amplitude");
+    bool non_s_parameters_rejected = false;
+    try {
+        (void)make_paper_case(PaperCase::R1, kappa, 0.0, 1.0, true, 0.1);
+    } catch (const std::invalid_argument &) {
+        non_s_parameters_rejected = true;
+    }
+    require(non_s_parameters_rejected,
+            "a non-S case accepted S exact-solution parameters");
 }
 
 void verify_cutoff_jet() {

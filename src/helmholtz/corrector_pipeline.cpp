@@ -362,6 +362,10 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
         quasi_interpolation, patches, hierarchy_meshes,
         node_level_prolongations, element_level_prolongations, operators);
     const int patch_count = assembler.patch_count();
+    if (solver_config.maximum_parallel_solves < 0) {
+        throw std::invalid_argument(
+            "maximum parallel patch solves must be nonnegative");
+    }
     std::vector<int> target_order(patch_count);
     std::iota(target_order.begin(), target_order.end(), 0);
     std::stable_sort(target_order.begin(), target_order.end(), [&](int lhs, int rhs) {
@@ -398,7 +402,11 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
     };
 
 #ifdef _OPENMP
-    #pragma omp parallel
+    const int requested_threads = std::max(
+        1, solver_config.maximum_parallel_solves > 0
+            ? std::min(solver_config.maximum_parallel_solves, patch_count)
+            : std::min(omp_get_max_threads(), patch_count));
+    #pragma omp parallel num_threads(requested_threads)
     {
         #pragma omp single
         used_threads = omp_get_num_threads();

@@ -521,7 +521,8 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     const ComplexSparseMatrix &localized_adjoint_basis,
     const std::vector<int> &coarse_basis_nodes,
     KernelRieszSolver riesz_solver,
-    const LocalizationEigenConfig &eigen_config) {
+    const LocalizationEigenConfig &eigen_config,
+    int maximum_parallel_patch_solves) {
     const int reference_nodes = static_cast<int>(
         hierarchy.reference_mesh().nodes.size());
     const int ambient_nodes = static_cast<int>(
@@ -607,7 +608,8 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     const double defect_rhs_ms = elapsed_ms(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
     result.ambient_riesz = compute_ambient_defect_riesz(
-        hierarchy, ambient_operators, result.defect_rhs, riesz_solver);
+        hierarchy, ambient_operators, result.defect_rhs, riesz_solver,
+        AmbientDefectDetail::SummaryOnly, maximum_parallel_patch_solves);
     const double ambient_riesz_ms = elapsed_ms(stage_begin);
 
     stage_begin = std::chrono::steady_clock::now();

@@ -42,7 +42,9 @@ class MethodRun:
     quadrature_fingerprint: str
     status: str
     driver_state: str
+    initial_ell: int
     rows: List[Row]
+    ell_changes: List[Row]
 
 
 def _number(row: Mapping[str, str], field: str) -> float:
@@ -78,6 +80,13 @@ def load_method_run(directory: Path, provenance: Optional[str] = None) -> Method
         ]
     if not rows:
         raise ValueError(f"run has no manufactured exact-error points: {directory}")
+    with (directory / "ell_history.csv").open(
+        "r", encoding="utf-8", newline=""
+    ) as stream:
+        ell_changes = [
+            row for row in csv.DictReader(stream)
+            if row.get("action") == "IncreaseGlobalEll"
+        ]
     for row in rows:
         if _integer(row, "DoF_H") <= 0 or _number(
             row, "relative_exact_energy_error"
@@ -98,7 +107,9 @@ def load_method_run(directory: Path, provenance: Optional[str] = None) -> Method
         ),
         status=str(metadata["status"]),
         driver_state=str(metadata["driver_state"]),
+        initial_ell=int(config["ell0"]),
         rows=rows,
+        ell_changes=ell_changes,
     )
 
 
@@ -284,12 +295,17 @@ def plot_method_comparison(
         )
         method_colors[run.method] = line.get_color()
 
+    ell_change_steps = {
+        _integer(change, "H_step") for change in palod.ell_changes
+    }
     seen_epochs = set()
     for row in selected["PALOD"]:
         epoch = _integer(row, "reference_epoch")
         if epoch in seen_epochs:
             continue
         seen_epochs.add(epoch)
+        if _integer(row, "H_step") in ell_change_steps:
+            continue
         x = _integer(row, "DoF_H")
         y = _number(row, "relative_exact_energy_error")
         ax.scatter([x], [y], marker="*", s=80, edgecolors="black", linewidths=0.4, zorder=8)
@@ -297,6 +313,34 @@ def plot_method_comparison(
             f"epoch {epoch}", xy=(x, y), xytext=(5, 8), textcoords="offset points",
             fontsize=7.3, arrowprops={"arrowstyle": "-", "linewidth": 0.5},
         )
+
+    palod_by_step: Dict[int, Row] = {}
+    for row in selected["PALOD"]:
+        palod_by_step[_integer(row, "H_step")] = row
+    previous_ell = palod.initial_ell
+    ell_change_summary: List[dict[str, int]] = []
+    for change in palod.ell_changes:
+        step = _integer(change, "H_step")
+        new_ell = _integer(change, "ell")
+        if step not in palod_by_step:
+            raise ValueError(f"PALOD ell change at H-step {step} has no error point")
+        point = palod_by_step[step]
+        x = _integer(point, "DoF_H")
+        y = _number(point, "relative_exact_energy_error")
+        label = rf"$H$-step {step}: $\ell$ {previous_ell}$\to${new_ell}"
+        ax.scatter(
+            [x], [y], marker="P", s=62,
+            facecolors=method_colors["PALOD"], edgecolors="black",
+            linewidths=0.5, zorder=9,
+        )
+        ax.annotate(
+            label, xy=(x, y), xytext=(16, -25), textcoords="offset points",
+            fontsize=7.3, arrowprops={"arrowstyle": "->", "linewidth": 0.65},
+        )
+        ell_change_summary.append(
+            {"H_step": step, "old_ell": previous_ell, "new_ell": new_ell}
+        )
+        previous_ell = new_ell
 
     all_dofs = [_integer(row, "DoF_H") for rows in selected.values() for row in rows]
     reference_slopes: Dict[str, dict[str, float | int | str]] = {}
@@ -388,6 +432,7 @@ def plot_method_comparison(
         ),
         "first_target_point": first_target_point,
         "empirical_dof_rate": rates,
+        "palod_ell_changes": ell_change_summary,
         "empirical_dof_rate_last_three": tail_rates,
         "legend_dof_rate": legend_rates,
         "legend_rate_policy": (

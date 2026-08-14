@@ -53,11 +53,19 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/R2a-afem-k32-krobust-server-level18-step8-v4.json
     )
     ;;
+  s-corner-wave-366g)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-366g-step18-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-366g-step40-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-slod-k16-366g-step10-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-366g-level22-v4.json
+    )
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, calibration, r2a-krobust, or custom" >&2
+    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, or custom" >&2
     exit 2
     ;;
 esac

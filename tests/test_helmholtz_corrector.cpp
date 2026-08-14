@@ -62,6 +62,7 @@ int main() {
         config.h = 4;
         config.ell = 1;
         config.wavenumber = 1.5;
+        config.patch_solver.maximum_parallel_solves = 1;
         HelmholtzLodModel model = HelmholtzLodModel::build(config);
 
         const auto &diagnostics = model.correctors().diagnostics;
@@ -75,8 +76,8 @@ int main() {
                 "adjoint Helmholtz corrector residual is too large");
         require(diagnostics.max_constraint_residual < 1e-10,
                 "Helmholtz corrector violates ker(I_H)");
-        require(diagnostics.parallel_threads >= 1,
-                "Helmholtz corrector reported an invalid thread count");
+        require(diagnostics.parallel_threads == 1,
+                "Helmholtz corrector ignored the patch concurrency cap");
         require(diagnostics.symbolic_analyses + diagnostics.symbolic_reuses
                     == diagnostics.patch_count,
                 "Helmholtz symbolic factorization statistics do not cover all patches");

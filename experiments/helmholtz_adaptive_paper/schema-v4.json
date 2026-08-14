@@ -28,6 +28,7 @@
     "initial_coarse_level": {"type": "integer", "minimum": 0},
     "kernel_riesz_solver": {"enum": ["saddle_point", "kernel_basis_reference"]},
     "manuscript_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "maximum_patch_threads": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
     "method": {"enum": ["PALOD", "HLOD-fixed", "SLOD", "UFEM", "AFEM"]},
     "minimum_reference_level_gap": {"type": "integer", "minimum": 0},
     "patch_solver_kind": {"enum": ["direct_saddle", "direct_schur", "shifted_gmres"]},
@@ -53,6 +54,28 @@
     "rho_star": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
     "reference_adequacy": {"$ref": "#/$defs/referenceAdequacy"},
     "schema_version": {"const": 4},
+    "singular_oscillatory_fraction": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Case-S-only coefficient gamma in a[(1-gamma)+gamma exp(ikx)]; omitted means the historical gamma=1 case."
+    },
+    "singular_cutoff_outer_radius": {
+      "type": "number",
+      "exclusiveMinimum": 0.25,
+      "maximum": 1,
+      "description": "Case-S-only outer radius of the flat radial cut-off; omitted means the historical radius 0.5."
+    },
+    "singular_quintic_cutoff": {
+      "type": "boolean",
+      "description": "Case-S-only C2 quintic cut-off selector; omitted/false preserves the historical C-infinity cut-off."
+    },
+    "smooth_wave_amplitude": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Case-S-only amplitude B of the additive boundary-compatible smooth wave; omitted means zero."
+    },
     "theta_H": {"const": 0.5},
     "theta_loc": {"type": "number", "exclusiveMinimum": 0},
     "timing_repeats": {"enum": [1, 3]},

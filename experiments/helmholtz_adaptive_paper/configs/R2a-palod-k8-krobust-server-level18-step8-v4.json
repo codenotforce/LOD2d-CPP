@@ -13,6 +13,7 @@
   "kernel_riesz_solver": "saddle_point",
   "manuscript_sha256": "03d83e0eb7128aa5ef00002c6dac110f548351e52e92e56d7adf709880854d20",
   "method": "PALOD",
+  "maximum_patch_threads": 2,
   "minimum_reference_level_gap": 3,
   "patch_solver_kind": "direct_saddle",
   "petrov_mode": "two_sided",

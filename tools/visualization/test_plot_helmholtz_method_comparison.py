@@ -29,13 +29,14 @@ class MethodComparisonPlotTest(unittest.TestCase):
                 "wavenumber": 16,
                 "boundary_beta": 1,
                 "initial_coarse_level": 5,
+                "ell0": 2 if method == "PALOD" else 0,
                 "manuscript_sha256": "test-manuscript",
                 "quadrature": {"base_triangle_order": 7},
             },
         }
         (directory / "run.json").write_text(json.dumps(metadata), encoding="utf-8")
         fields = [
-            "iteration", "reference_epoch", "N_H", "DoF_H",
+            "iteration", "reference_epoch", "H_step", "N_H", "DoF_H",
             "relative_exact_energy_error",
         ]
         with (directory / "iterations.csv").open("w", encoding="utf-8", newline="") as stream:
@@ -46,10 +47,22 @@ class MethodComparisonPlotTest(unittest.TestCase):
                     {
                         "iteration": index,
                         "reference_epoch": min(index, 3) if method == "PALOD" else 0,
+                        "H_step": index,
                         "N_H": 113 + 100 * index,
                         "DoF_H": 104 + 100 * index,
                         "relative_exact_energy_error": error,
                     }
+                )
+        with (directory / "ell_history.csv").open(
+            "w", encoding="utf-8", newline=""
+        ) as stream:
+            writer = csv.DictWriter(
+                stream, fieldnames=["H_step", "action", "ell"]
+            )
+            writer.writeheader()
+            if method == "PALOD":
+                writer.writerow(
+                    {"H_step": 0, "action": "IncreaseGlobalEll", "ell": 3}
                 )
         return directory
 
@@ -73,6 +86,10 @@ class MethodComparisonPlotTest(unittest.TestCase):
             self.assertIsNone(summary["first_target_point"]["UFEM"])
             self.assertEqual(summary["first_target_point"]["AFEM"]["DoF_H"], 304)
             self.assertIn("empirical_dof_rate", summary)
+            self.assertEqual(
+                summary["palod_ell_changes"],
+                [{"H_step": 0, "old_ell": 2, "new_ell": 3}],
+            )
             self.assertEqual(
                 summary["empirical_dof_rate"]["PALOD"]["distinct_dof_points"], 3
             )

@@ -160,7 +160,8 @@
                 "rule": {"enum": ["kappa_squared", "patch_scaled", "absolute"]}
               }
             },
-            "symbolic_cache_slots": {"type": "integer", "minimum": 1}
+            "symbolic_cache_slots": {"type": "integer", "minimum": 1},
+            "maximum_parallel_solves": {"type": "integer", "minimum": 0, "maximum": 9007199254740991}
           }
         },
         "petrov_mode": {"enum": ["two_sided", "corrected_test_only"]}

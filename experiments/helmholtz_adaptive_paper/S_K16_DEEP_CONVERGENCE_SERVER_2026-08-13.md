@@ -149,3 +149,144 @@ the accompanying JSON retains the whole-range, last-three, and legend fits.
 For an asymptotic statement, require that the four-point window spans a factor
 of four or more and compare neighboring rolling windows. A visual crossing of
 a guide or one steep window is not sufficient evidence of the limiting rate.
+
+## Five-epoch PALOD and deeper-UFEM supplement
+
+The accepted four-epoch PALOD run may be extended by one complete epoch with
+`configs/S-palod-k16-deep-convergence-step15-v4.json`.  Its refresh schedule is
+`[3,6,9,12]`, so epoch 4 inherits exactly the H mesh at step 12 and contributes
+three new adaptive H refinements.  The practical runner does not splice an old
+journal into a new canonical run: the supplement intentionally reruns the full
+five-epoch trajectory from level 5 and the first 12 H steps must reproduce the
+accepted prefix.
+
+Case S contains the corner factor `r^(2/3)`, so quasi-uniform P1 theory predicts
+an eventual energy-error rate `h^(2/3) = N^(-1/3)`.  The current kappa=16 UFEM
+tail is still close to `N^(-1/2)`.  To distinguish a finite-range smooth-wave
+regime from an implementation error, use
+`configs/S-ufem-k16-deep-convergence-level18-step13-v4.json`.  It adds two
+uniform levels, yielding a new three-point terminal slope window.  This UFEM
+diagnostic is separate from the extra PALOD epoch, but should be run from the
+same commit and binary.
+
+Run both supplements serially:
+
+```bash
+CONFIGS='experiments/helmholtz_adaptive_paper/configs/S-palod-k16-deep-convergence-step15-v4.json experiments/helmholtz_adaptive_paper/configs/S-ufem-k16-deep-convergence-level18-step13-v4.json' \
+MODE=custom PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=32 \
+RESULT_DIR="$PWD/results/S-k16-five-epoch-and-ufem-level18" \
+  scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
+Require two `.done` files, no swap, and `TrajectoryComplete`.  Compare the new
+PALOD run against the accepted step-12 run with the prefix checker.  Do not
+replace the S deep figure merely because the final UFEM slope moves toward the
+expected guide; retain the measured rolling slopes and state the observed
+finite-range regime.
+
+## Corner-dominant manufactured-solution variant
+
+Multiplying the historical exact solution by a constant cannot change a
+relative-error slope. The final diagnostic variant instead freezes the
+additive decomposition
+
+`u = a(r,theta) + B psi(x,y) exp(i kappa x)`,
+
+where `a=chi(r) r^(2/3) sin(2 theta/3)` and
+`psi=(729/16) x^2(1-x^2)^2 y^2(1-y^2)^2`.  The normalization gives
+`max psi=1`.  The double zeros of `psi` on the outer square make both its
+value and normal derivative vanish there, while its `x^2 y^2` factor makes it
+zero on the two reentrant Dirichlet rays.  Thus the smooth oscillatory term
+satisfies the same homogeneous boundary contract as the singular term.
+
+Historical case S remains exactly its old multiplicative plane-wave case.
+The additive development experiment uses singular multiplicative fraction
+zero, `B=0.05`, and a C2 quintic cut-off on `(0.25,1.0)`. The wide,
+endpoint-flat polynomial transition keeps the singular core unchanged while
+reducing the smooth annular curvature that can dominate a finite-range global
+error. It still has zero value and zero gradient on the outer boundary.
+Thus the variant keeps the same L-shaped domain, reentrant exponent, wave
+number, PDE operator, boundary contract, marking parameters, and relative-
+error norm. The corresponding source is derived from
+`-Delta u-kappa^2 u`; the `kappa^2` terms of the additive plane wave cancel
+analytically. It is not an independently tuned load.
+
+The parameters are recorded as `singular_oscillatory_fraction` and
+`singular_cutoff_outer_radius`, together with the
+`singular_quintic_cutoff` selector and `smooth_wave_amplitude`, in the
+canonical configuration and run ID.
+They may differ from their historical defaults only for case S. These runs are
+a separate manufactured-solution experiment and must not be concatenated
+with, or silently substituted for, the historical trajectories.
+
+For a 366 GiB server, the frozen main comparison uses the following horizons:
+
+- PALOD: 18 adaptive H steps in six inherited-coarse-grid epochs, with
+  refreshes after steps 3, 6, 9, 12, and 15;
+- AFEM: at most 40 adaptive steps, with a 16-million-unknown fail-safe;
+- SLOD: 10 synchronized H/h steps at fixed `ell=2`;
+- UFEM: level 22, i.e. 17 uniform H-refinement steps from level 5 and about
+  12.6 million final unknowns by extrapolation from the accepted level-16 run.
+
+All four runs are serial. The LOD configurations additionally freeze four
+simultaneous patch solves. The order runs the lower-memory adaptive methods
+first and leaves SLOD/UFEM, whose final sparse factorizations dominate memory,
+until last. Start the frozen suite with:
+
+```bash
+MODE=s-corner-wave-366g PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=256 \
+RESULT_DIR="$PWD/results/S-corner-wave-k16-366g" \
+  scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
+The level-22 UFEM choice is intentionally the highest main-run level with a
+credible safety margin. The accepted level-16 run used 1.32 GiB at about
+197,000 unknowns. Six further NVB levels give roughly 64 times as many
+unknowns; sparse-direct storage is superlinear enough that a broad 80--180 GiB
+peak range is more honest than a point prediction. Level 23 can plausibly use
+250--350 GiB and can also exceed the 48-hour per-run budget, so it is an
+optional follow-up rather than part of the four-method contract. Likewise,
+the accepted SLOD step-9 run used about 45 GiB; step 10 is expected to remain
+inside the machine, while step 11 has too little margin for the primary run.
+
+The script checks available memory before every method, validates the build
+and output contract, skips completed `.done` cases on restart, and records
+`/usr/bin/time -v`. If a run is interrupted, rerun the identical command: all
+completed methods are skipped. Do not lower `MIN_AVAILABLE_GIB` while another
+large job is resident.
+
+The decisive diagnostic is the terminal rolling UFEM exponent. A transition
+toward `N^(-1/3)` while the nonzero wave is retained supports the controlled-
+crossover design. At kappa=16 the energy contribution of a pointwise wave
+amplitude scales roughly like `B*kappa`, so `B=0.05` is not negligible in the
+energy norm. If the deep `B=0.05` run remains near `N^(-1/2)`, do not silently
+reduce B again: either report the observed crossover or introduce an explicitly
+energy-normalized wave coefficient in a new protocol.
+
+A local level-14 corner-only (`B=0`) contract run of the quintic variant completed in about
+8 seconds of method time with roughly 305 MiB peak RSS.  Its last four
+point-to-point exact-energy exponents decreased monotonically from `0.510` to
+`0.472`, `0.455`, and `0.432`.  This is the expected turn away from the
+historical `0.5` window toward `1/3`, and is the prerequisite for launching the
+additive-wave screening; it is not itself an asymptotic paper result.
+
+The same level-14 UFEM screen was then run with the additive polynomial wave.
+Because one NVB call bisects every element once, adjacent levels have a visible
+odd/even effect; the robust diagnostic therefore compares points two H steps
+apart. For `B=0.1`, the last four two-step exponents were `0.753`, `0.686`,
+`0.649`, and `0.562`. Reducing only B to `0.05` gave `0.712`, `0.631`, `0.599`,
+and `0.517`. The latter moves the crossover earlier while retaining a
+nonzero kappa=16 wave, so `B=0.05` is the frozen deep-run candidate. It has not
+yet reached the `1/3` asymptote at level 14.
+
+Corner-only (`B=0`) small adaptive contract runs provide a preliminary rate check. PALOD
+with 9 H steps in 3 reference epochs completed in 177.7 s at 1,584 MiB peak
+RSS; after retaining the last observation at repeated epoch-boundary DoFs, its
+last-four and last-three fits were `N^(-0.688)` and `N^(-0.634)`, while the
+terminal pair gave `N^(-0.546)`.  AFEM with 12 steps completed in 0.52 s at
+17.7 MiB; its last-four and last-three fits were `N^(-0.587)` and
+`N^(-0.548)`, with terminal pair `N^(-0.487)`.  Both terminal trends are
+consistent with the adaptive `N^(-1/2)` target, but the short PALOD window is
+not yet a stable asymptotic fit and must not replace the deep trajectory. The
+final additive `B=0.05` PALOD/AFEM rates must be recomputed rather than copied
+from these corner-only runs.

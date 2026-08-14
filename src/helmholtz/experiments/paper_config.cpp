@@ -663,6 +663,7 @@ void validate_paper_config(const PaperConfig &config) {
     (void)shifted_inverse_name(backend.patch_solver.shifted.inverse);
     (void)kernel_solver_name(backend.kernel_riesz_solver);
     if (backend.patch_solver.symbolic_cache_slots <= 0
+        || backend.patch_solver.maximum_parallel_solves < 0
         || backend.patch_solver.gmres.restart <= 0
         || backend.patch_solver.gmres.max_iterations <= 0
         || !(std::isfinite(backend.patch_solver.gmres.relative_tolerance)
@@ -851,6 +852,8 @@ std::string canonical_json(const PaperConfig &config) {
         << ",\"restart\":" << config.numerical_backend.patch_solver.gmres.restart << "}"
         << ",\"kind\":"
         << json_string(patch_solver_kind_name(config.numerical_backend.patch_solver.kind))
+        << ",\"maximum_parallel_solves\":"
+        << config.numerical_backend.patch_solver.maximum_parallel_solves
         << ",\"reuse_identical_factorization\":"
         << (config.numerical_backend.patch_solver.reuse_identical_factorization
                 ? "true" : "false")
@@ -1007,7 +1010,11 @@ PaperConfig parse_paper_config(std::string_view json) {
 
     const JsonObject &patch_solver = as_object(
         get(backend, "patch_solver"), "numerical_backend.patch_solver");
-    require_keys(patch_solver,
+    const bool has_maximum_parallel_solves =
+        patch_solver.contains("maximum_parallel_solves");
+    JsonObject patch_solver_contract = patch_solver;
+    patch_solver_contract.erase("maximum_parallel_solves");
+    require_keys(patch_solver_contract,
         {"fallback_to_direct", "gmres", "kind", "reuse_identical_factorization",
          "shifted", "symbolic_cache_slots"},
         "numerical_backend.patch_solver");
@@ -1020,6 +1027,11 @@ PaperConfig parse_paper_config(std::string_view json) {
         "reuse_identical_factorization");
     config.numerical_backend.patch_solver.symbolic_cache_slots = as_integer(
         get(patch_solver, "symbolic_cache_slots"), "symbolic_cache_slots");
+    if (has_maximum_parallel_solves) {
+        config.numerical_backend.patch_solver.maximum_parallel_solves = as_integer(
+            get(patch_solver, "maximum_parallel_solves"),
+            "maximum_parallel_solves");
+    }
 
     const JsonObject &gmres = as_object(get(patch_solver, "gmres"), "gmres");
     require_keys(gmres,
@@ -1222,6 +1234,37 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         throw std::invalid_argument(
             "practical paper wavenumber must be 2, 4, 8, 16, or 32");
     }
+    if (!std::isfinite(config.singular_oscillatory_fraction)
+        || config.singular_oscillatory_fraction < 0.0
+        || config.singular_oscillatory_fraction > 1.0
+        || (config.case_id != PaperCase::S
+            && config.singular_oscillatory_fraction != 1.0)) {
+        throw std::invalid_argument(
+            "singular_oscillatory_fraction must lie in [0,1] and may differ "
+            "from one only for case S");
+    }
+    if (!std::isfinite(config.singular_cutoff_outer_radius)
+        || !(config.singular_cutoff_outer_radius > 0.25)
+        || config.singular_cutoff_outer_radius > 1.0
+        || (config.case_id != PaperCase::S
+            && config.singular_cutoff_outer_radius != 0.5)) {
+        throw std::invalid_argument(
+            "singular_cutoff_outer_radius must lie in (0.25,1] and may "
+            "differ from 0.5 only for case S");
+    }
+    if (config.case_id != PaperCase::S && config.singular_quintic_cutoff) {
+        throw std::invalid_argument(
+            "singular_quintic_cutoff may be enabled only for case S");
+    }
+    if (!std::isfinite(config.smooth_wave_amplitude)
+        || config.smooth_wave_amplitude < 0.0
+        || config.smooth_wave_amplitude > 1.0
+        || (config.case_id != PaperCase::S
+            && config.smooth_wave_amplitude != 0.0)) {
+        throw std::invalid_argument(
+            "smooth_wave_amplitude must lie in [0,1] and may be nonzero "
+            "only for case S");
+    }
     if (config.reference_mesh != "uniform-nvb" ||
         config.ambient_mesh != "reference-shadow") {
         throw std::invalid_argument(
@@ -1234,6 +1277,12 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         || config.minimum_reference_level_gap
             >= config.reference_level - config.initial_coarse_level) {
         throw std::invalid_argument("practical mesh levels or ell limits are invalid");
+    }
+    if (config.maximum_patch_threads < 0
+        || static_cast<std::uint64_t>(config.maximum_patch_threads)
+            > max_exact_json_integer) {
+        throw std::invalid_argument(
+            "maximum_patch_threads must be a JSON-safe nonnegative integer");
     }
     std::size_t previous_refresh = 0;
     for (const std::size_t refresh : config.reference_refresh_H_steps) {
@@ -1393,6 +1442,8 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
         : adaptive::PracticalLocalizationPolicy::AdaptiveGlobalEll;
     result.mode = config.petrov_mode;
     result.patch_solver.kind = config.patch_solver_kind;
+    result.patch_solver.maximum_parallel_solves =
+        config.maximum_patch_threads;
     result.patch_solver.gmres.relative_tolerance =
         config.tolerances.linear_relative_residual;
     result.riesz_solver = config.kernel_riesz_solver;
@@ -1419,6 +1470,7 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"kernel_riesz_solver\":"
         << json_string(kernel_solver_name(config.kernel_riesz_solver))
         << ",\"manuscript_sha256\":" << json_string(config.manuscript_sha256)
+        << ",\"maximum_patch_threads\":" << config.maximum_patch_threads
         << ",\"minimum_reference_level_gap\":"
         << config.minimum_reference_level_gap
         << ",\"method\":" << json_string(to_string(config.method_id))
@@ -1467,8 +1519,23 @@ std::string canonical_json(const PracticalPaperConfig &config) {
     out << "]"
         << ",\"repeat_index\":" << config.repeat_index
         << ",\"rho_star\":" << number(config.rho_star)
-        << ",\"schema_version\":" << config.schema_version
-        << ",\"theta_H\":" << number(config.theta_H)
+        << ",\"schema_version\":" << config.schema_version;
+    if (config.singular_oscillatory_fraction != 1.0) {
+        out << ",\"singular_oscillatory_fraction\":"
+            << number(config.singular_oscillatory_fraction);
+    }
+    if (config.singular_cutoff_outer_radius != 0.5) {
+        out << ",\"singular_cutoff_outer_radius\":"
+            << number(config.singular_cutoff_outer_radius);
+    }
+    if (config.singular_quintic_cutoff) {
+        out << ",\"singular_quintic_cutoff\":true";
+    }
+    if (config.smooth_wave_amplitude != 0.0) {
+        out << ",\"smooth_wave_amplitude\":"
+            << number(config.smooth_wave_amplitude);
+    }
+    out << ",\"theta_H\":" << number(config.theta_H)
         << ",\"theta_loc\":" << number(config.theta_loc)
         << ",\"timing_repeats\":" << config.timing_repeats
         << ",\"trajectory_policy\":"
@@ -1502,8 +1569,23 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     const JsonObject &root = as_object(parsed_root, "root");
     const bool has_minimum_reference_level_gap =
         root.contains("minimum_reference_level_gap");
+    const bool has_maximum_patch_threads =
+        root.contains("maximum_patch_threads");
+    const bool has_singular_oscillatory_fraction =
+        root.contains("singular_oscillatory_fraction");
+    const bool has_singular_cutoff_outer_radius =
+        root.contains("singular_cutoff_outer_radius");
+    const bool has_singular_quintic_cutoff =
+        root.contains("singular_quintic_cutoff");
+    const bool has_smooth_wave_amplitude =
+        root.contains("smooth_wave_amplitude");
     JsonObject contract_root = root;
     contract_root.erase("minimum_reference_level_gap");
+    contract_root.erase("maximum_patch_threads");
+    contract_root.erase("singular_oscillatory_fraction");
+    contract_root.erase("singular_cutoff_outer_radius");
+    contract_root.erase("singular_quintic_cutoff");
+    contract_root.erase("smooth_wave_amplitude");
     const bool has_refresh_schedule =
         root.contains("reference_refresh_H_steps");
     if (has_refresh_schedule) {
@@ -1534,6 +1616,26 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     config.method_id = parse_practical_paper_method(
         as_string(get(root, "method"), "method"));
     config.wavenumber = as_number(get(root, "wavenumber"), "wavenumber");
+    if (has_singular_oscillatory_fraction) {
+        config.singular_oscillatory_fraction = as_number(
+            get(root, "singular_oscillatory_fraction"),
+            "singular_oscillatory_fraction");
+    }
+    if (has_singular_cutoff_outer_radius) {
+        config.singular_cutoff_outer_radius = as_number(
+            get(root, "singular_cutoff_outer_radius"),
+            "singular_cutoff_outer_radius");
+    }
+    if (has_singular_quintic_cutoff) {
+        config.singular_quintic_cutoff = as_bool(
+            get(root, "singular_quintic_cutoff"),
+            "singular_quintic_cutoff");
+    }
+    if (has_smooth_wave_amplitude) {
+        config.smooth_wave_amplitude = as_number(
+            get(root, "smooth_wave_amplitude"),
+            "smooth_wave_amplitude");
+    }
     config.reference_mesh = as_string(get(root, "reference_mesh"), "reference_mesh");
     config.reference_level = as_integer(get(root, "reference_level"), "reference_level");
     config.ambient_mesh = as_string(get(root, "ambient_mesh"), "ambient_mesh");
@@ -1542,6 +1644,10 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         config.minimum_reference_level_gap = as_integer(
             get(root, "minimum_reference_level_gap"),
             "minimum_reference_level_gap");
+    }
+    if (has_maximum_patch_threads) {
+        config.maximum_patch_threads = as_integer(
+            get(root, "maximum_patch_threads"), "maximum_patch_threads");
     }
     if (has_refresh_schedule) {
         const JsonArray &refreshes = as_array(
@@ -1692,6 +1798,12 @@ bool operator==(const PracticalPaperConfig &lhs,
                 const PracticalPaperConfig &rhs) {
     return lhs.schema_version == rhs.schema_version && lhs.case_id == rhs.case_id &&
         lhs.method_id == rhs.method_id && lhs.wavenumber == rhs.wavenumber &&
+        lhs.singular_oscillatory_fraction ==
+            rhs.singular_oscillatory_fraction &&
+        lhs.singular_cutoff_outer_radius ==
+            rhs.singular_cutoff_outer_radius &&
+        lhs.singular_quintic_cutoff == rhs.singular_quintic_cutoff &&
+        lhs.smooth_wave_amplitude == rhs.smooth_wave_amplitude &&
         lhs.reference_mesh == rhs.reference_mesh &&
         lhs.reference_level == rhs.reference_level &&
         lhs.ambient_mesh == rhs.ambient_mesh &&
@@ -1720,6 +1832,7 @@ bool operator==(const PracticalPaperConfig &lhs,
             rhs.reference_adequacy.maximum_terminal_error_fraction &&
         lhs.petrov_mode == rhs.petrov_mode &&
         lhs.patch_solver_kind == rhs.patch_solver_kind &&
+        lhs.maximum_patch_threads == rhs.maximum_patch_threads &&
         lhs.kernel_riesz_solver == rhs.kernel_riesz_solver &&
         lhs.work_limits.maximum_iterations == rhs.work_limits.maximum_iterations &&
         lhs.work_limits.maximum_H_steps == rhs.work_limits.maximum_H_steps &&
@@ -1752,6 +1865,8 @@ bool operator==(const NumericalBackendPolicy &lhs,
         && lhs.patch_solver.kind == rhs.patch_solver.kind
         && lhs.patch_solver.symbolic_cache_slots
             == rhs.patch_solver.symbolic_cache_slots
+        && lhs.patch_solver.maximum_parallel_solves
+            == rhs.patch_solver.maximum_parallel_solves
         && lhs.patch_solver.reuse_identical_factorization
             == rhs.patch_solver.reuse_identical_factorization
         && lhs.patch_solver.gmres.restart == rhs.patch_solver.gmres.restart

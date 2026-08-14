@@ -1151,7 +1151,12 @@ int main(const int argc, char **argv) {
             throw std::invalid_argument(
                 "config manuscript_sha256 does not match the frozen baseline artifact");
         }
-        const PaperCaseData data = make_paper_case(config.case_id, config.wavenumber);
+        const PaperCaseData data = make_paper_case(
+            config.case_id, config.wavenumber,
+            config.singular_oscillatory_fraction,
+            config.singular_cutoff_outer_radius,
+            config.singular_quintic_cutoff,
+            config.smooth_wave_amplitude);
         if (arguments.validate_only) {
             std::cout << "config=valid\n"
                       << "run_id=" << make_run_id(config) << '\n';

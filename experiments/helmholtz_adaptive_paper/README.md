@@ -220,6 +220,10 @@ AFEM retains the fixed-reference containment contract. The optional
 fixed-horizon PALOD/AFEM trajectory before the next refinement would reduce the
 remaining reference/coarse NVB-level gap to or below the configured value; the
 R2a k-robust development prefixes freeze it at three.
+`maximum_patch_threads` is an optional nonnegative resource parameter. Zero
+uses the full OpenMP team; a positive value caps only simultaneous high-memory
+corrector/localization patch solves. It is serialized into the canonical
+configuration and therefore changes both the config hash and `run_id`.
 
 The two `S-palod-k16-exploratory-e1-*-step2-v4.json` configurations are short,
 explicitly non-paper trajectories for checking this output before the reference

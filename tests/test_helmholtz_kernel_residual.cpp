@@ -382,6 +382,13 @@ void verify_ambient_defect_riesz_gram() {
         defect_rhs,
         KernelRieszSolver::SaddlePoint,
         AmbientDefectDetail::StoreLocalDetails);
+    const AmbientDefectRiesz capped_saddle = compute_ambient_defect_riesz(
+        problem.hierarchy,
+        ambient_operators,
+        defect_rhs,
+        KernelRieszSolver::SaddlePoint,
+        AmbientDefectDetail::SummaryOnly,
+        1);
     const AmbientDefectRiesz basis = compute_ambient_defect_riesz(
         problem.hierarchy,
         ambient_operators,
@@ -392,6 +399,10 @@ void verify_ambient_defect_riesz_gram() {
     require(saddle.parallel_threads == std::min(4, omp_get_num_procs()),
             "ambient defect Riesz did not use the requested OpenMP threads");
 #endif
+    require(capped_saddle.parallel_threads == 1,
+            "ambient defect Riesz ignored the patch concurrency cap");
+    require(serial_saddle.gram.isApprox(capped_saddle.gram, 0.0),
+            "ambient defect Gram changed under the patch concurrency cap");
     require(serial_saddle.gram.isApprox(saddle.gram, 0.0),
             "ambient defect Gram depends on the OpenMP thread count");
     require(serial_saddle.column_eta_squared.isApprox(

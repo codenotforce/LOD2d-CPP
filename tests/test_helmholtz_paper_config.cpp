@@ -48,6 +48,7 @@ PaperConfig sample_config() {
     config.numerical_backend.patch_solver.kind =
         lod2d::helmholtz::HelmholtzPatchSolverKind::ShiftedGmres;
     config.numerical_backend.patch_solver.symbolic_cache_slots = 3;
+    config.numerical_backend.patch_solver.maximum_parallel_solves = 2;
     config.numerical_backend.patch_solver.reuse_identical_factorization = true;
     config.numerical_backend.patch_solver.gmres.restart = 17;
     config.numerical_backend.patch_solver.gmres.max_iterations = 91;
@@ -288,6 +289,9 @@ void verify_numerical_backend_config_is_part_of_identity() {
         ++v.numerical_backend.patch_solver.symbolic_cache_slots;
     }, "run identity ignores patch symbolic cache slots");
     require_identity_change(original, [](PaperConfig &v) {
+        ++v.numerical_backend.patch_solver.maximum_parallel_solves;
+    }, "run identity ignores maximum parallel patch solves");
+    require_identity_change(original, [](PaperConfig &v) {
         v.numerical_backend.patch_solver.reuse_identical_factorization = false;
     }, "run identity ignores factorization reuse");
     require_identity_change(original, [](PaperConfig &v) {
@@ -503,6 +507,7 @@ PracticalPaperConfig sample_practical_config() {
     config.petrov_mode = lod2d::helmholtz::HelmholtzPetrovMode::CorrectedTestOnly;
     config.patch_solver_kind =
         lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
+    config.maximum_patch_threads = 2;
     config.work_limits.maximum_iterations = 40;
     config.work_limits.maximum_H_steps = 8;
     config.work_limits.maximum_unknowns = 500000;
@@ -553,6 +558,8 @@ void verify_practical_v4_contract() {
                 driver.rho_star == original.rho_star &&
                 driver.tolerance_reference ==
                     original.practical_stop_tolerance &&
+                driver.patch_solver.maximum_parallel_solves ==
+                    original.maximum_patch_threads &&
                 driver.stop_policy ==
                     lod2d::helmholtz::adaptive::
                         PracticalStopPolicy::FixedWorkHorizon &&
@@ -564,6 +571,34 @@ void verify_practical_v4_contract() {
     changed.reference_level += 1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
             "practical v4 identity ignores reference_mesh level");
+    changed = original;
+    changed.maximum_patch_threads = 1;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v4 identity ignores the patch concurrency cap");
+    changed = original;
+    changed.singular_oscillatory_fraction = 0.0;
+    changed.singular_cutoff_outer_radius = 1.0;
+    changed.singular_quintic_cutoff = true;
+    changed.smooth_wave_amplitude = 0.1;
+    require(parse_practical_paper_config(canonical_json(changed)) == changed
+                && canonical_config_hash(changed)
+                    != canonical_config_hash(original),
+            "practical v4 identity ignores the S oscillatory fraction");
+    changed.case_id = PaperCase::R1;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "a non-S practical case accepted an S exact-solution parameter");
+    changed = original;
+    changed.singular_oscillatory_fraction = 1.01;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "practical v4 accepted an invalid S oscillatory fraction");
+    changed = original;
+    changed.singular_cutoff_outer_radius = 1.01;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "practical v4 accepted an invalid S cut-off radius");
+    changed = original;
+    changed.smooth_wave_amplitude = 1.01;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "practical v4 accepted an invalid smooth wave amplitude");
     changed = original;
     changed.minimum_reference_level_gap = 2;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
