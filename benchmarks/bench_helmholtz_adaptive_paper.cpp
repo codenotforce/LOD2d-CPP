@@ -71,6 +71,18 @@ struct EvaluationReference {
     std::string cache_key;
 };
 
+const char *patch_solver_label(const HelmholtzPatchSolverKind kind) {
+    switch (kind) {
+    case HelmholtzPatchSolverKind::DirectSaddle:
+        return "direct_saddle";
+    case HelmholtzPatchSolverKind::DirectSchur:
+        return "direct_schur";
+    case HelmholtzPatchSolverKind::ShiftedGmres:
+        return "shifted_gmres";
+    }
+    return "unknown";
+}
+
 std::string read_text(const std::filesystem::path &path) {
     std::ifstream input(path, std::ios::binary);
     if (!input) throw std::runtime_error("cannot open input file: " + path.string());
@@ -216,6 +228,8 @@ PaperExecution run_uniform_fem_trajectory(
         record.coarse_dofs = record.coarse_nodes
             - dirichlet_nodes(hierarchy.coarse_mesh()).size();
         record.reference_nodes = hierarchy.reference_mesh().nodes.size();
+        record.reference_dofs = record.reference_nodes
+            - dirichlet_nodes(hierarchy.reference_mesh()).size();
         record.coarse_elements = hierarchy.coarse_mesh().elems.size();
         record.ell = 0;
         record.kappa_H_max = config.wavenumber
@@ -554,16 +568,20 @@ PaperExecution run_standard_lod_trajectory(
     const PracticalEvaluationSink &evaluation_sink,
     const double &evaluation_seconds_excluded) {
     const int prior_ell = config.ell0;
+    const auto start = std::chrono::steady_clock::now();
+    const auto hierarchy_begin = start;
     ReferenceEpochHierarchy hierarchy(
         data.initial_mesh, config.initial_coarse_level, config.reference_level,
         config.reference_epoch);
+    const auto hierarchy_end = std::chrono::steady_clock::now();
+    const auto initial_load_begin = hierarchy_end;
     ComplexVector reference_load = assemble_helmholtz_load(
         hierarchy.reference_mesh(), data.source, config.quadrature,
         data.quadrature_context);
+    const auto initial_load_end = std::chrono::steady_clock::now();
     const double fixed_fine_to_coarse_ratio = hierarchy.ambient_ratio();
     PaperExecution execution;
     std::size_t refinements = 0;
-    const auto start = std::chrono::steady_clock::now();
     auto cumulative_seconds = [&] {
         return std::max(
             0.0, elapsed_seconds(start, std::chrono::steady_clock::now())
@@ -576,6 +594,8 @@ PaperExecution run_standard_lod_trajectory(
         record.coarse_dofs = record.coarse_nodes
             - dirichlet_nodes(hierarchy.coarse_mesh()).size();
         record.reference_nodes = hierarchy.reference_mesh().nodes.size();
+        record.reference_dofs = record.reference_nodes
+            - dirichlet_nodes(hierarchy.reference_mesh()).size();
         record.coarse_elements = hierarchy.coarse_mesh().elems.size();
         record.ell = prior_ell;
         record.kappa_H_max = config.wavenumber
@@ -590,6 +610,10 @@ PaperExecution run_standard_lod_trajectory(
     initialization.action = PracticalDriverAction::InitializeReferenceEpoch;
     initialization.detail =
         "initialized standard LOD with a fixed fine-to-coarse mesh ratio";
+    initialization.time_mesh_seconds = elapsed_seconds(
+        hierarchy_begin, hierarchy_end);
+    initialization.time_load_assembly_seconds = elapsed_seconds(
+        initial_load_begin, initial_load_end);
     fill_mesh_fields(initialization);
     execution.result.journal.push_back(std::move(initialization));
 
@@ -619,11 +643,38 @@ PaperExecution run_standard_lod_trajectory(
         model_config.boundary_beta = config.boundary_beta;
         model_config.mode = config.petrov_mode;
         model_config.initial_mesh = data.initial_mesh;
-        model_config.patch_solver.kind = config.patch_solver_kind;
+        const std::size_t reference_dofs =
+            hierarchy.reference_mesh().nodes.size()
+            - dirichlet_nodes(hierarchy.reference_mesh()).size();
+        const bool auto_direct_schur =
+            config.slod_direct_schur_min_reference_dofs > 0
+            && reference_dofs
+                >= config.slod_direct_schur_min_reference_dofs;
+        model_config.patch_solver.kind = auto_direct_schur
+            ? HelmholtzPatchSolverKind::DirectSchur
+            : config.patch_solver_kind;
+        model_config.patch_solver.symbolic_cache_slots =
+            config.patch_symbolic_cache_slots;
+        model_config.patch_solver.reuse_identical_factorization =
+            config.patch_reuse_identical_factorization;
+        model_config.patch_solver.maximum_parallel_solves =
+            config.maximum_patch_threads;
         model_config.patch_solver.gmres.relative_tolerance =
             config.tolerances.linear_relative_residual;
         model_config.quadrature = config.quadrature;
         model_config.quadrature_context = data.quadrature_context;
+        if (std::getenv("LOD2D_PROGRESS") != nullptr) {
+            std::cerr
+                << "LOD2D_SLOD_PROGRESS stage=model_begin"
+                << " H_step=" << refinements
+                << " coarse_nodes=" << hierarchy.coarse_mesh().nodes.size()
+                << " reference_nodes=" << hierarchy.reference_mesh().nodes.size()
+                << " reference_dofs=" << reference_dofs
+                << " solver="
+                << patch_solver_label(model_config.patch_solver.kind)
+                << " auto_direct_schur=" << (auto_direct_schur ? 1 : 0)
+                << std::endl;
+        }
         const auto build_begin = std::chrono::steady_clock::now();
         HelmholtzLodModel model = HelmholtzLodModel::build_adaptive(
             model_config, hierarchy);
@@ -639,12 +690,30 @@ PaperExecution run_standard_lod_trajectory(
                 << " reference_nodes=" << hierarchy.reference_mesh().nodes.size()
                 << " patch_count=" << diagnostics.patch_count
                 << " parallel_threads=" << diagnostics.parallel_threads
+                << " solver="
+                << patch_solver_label(model_config.patch_solver.kind)
+                << " auto_direct_schur=" << (auto_direct_schur ? 1 : 0)
+                << " symbolic_analyses=" << diagnostics.symbolic_analyses
+                << " symbolic_reuses=" << diagnostics.symbolic_reuses
+                << " factorization_reuses="
+                << diagnostics.factorization_reuses
+                << " max_patch_dofs=" << diagnostics.maximum_patch_dofs
+                << " max_patch_constraints="
+                << diagnostics.maximum_patch_constraints
+                << " patch_assembly_work_ms="
+                << 1000.0 * diagnostics.patch_assembly_work_seconds
+                << " patch_solve_work_ms="
+                << 1000.0 * diagnostics.patch_solve_work_seconds
+                << " patch_pack_work_ms="
+                << 1000.0 * diagnostics.patch_pack_work_seconds
                 << " mesh_interpolation_ms="
                 << timings.mesh_and_interpolation_ms
                 << " operators_ms=" << timings.operators_ms
                 << " correctors_ms=" << timings.correctors_ms
-                << " basis_factorization_ms="
-                << timings.basis_and_factorization_ms
+                << " corrected_basis_ms=" << timings.corrected_basis_ms
+                << " coarse_operator_ms=" << timings.coarse_operator_ms
+                << " coarse_factorization_ms="
+                << timings.coarse_factorization_ms
                 << " total_ms=" << timings.total_ms
                 << '\n';
         }
@@ -665,8 +734,38 @@ PaperExecution run_standard_lod_trajectory(
         solved.action = PracticalDriverAction::SolveStandardLod;
         solved.evaluation_candidate = candidate;
         solved.rebuilt_correctors = model.correctors().primal.size();
+        const HelmholtzBuildTimings &timings = model.build_timings();
+        const HelmholtzCorrectorDiagnostics &diagnostics =
+            model.correctors().diagnostics;
+        solved.patch_solver_kind_used = model_config.patch_solver.kind;
+        solved.slod_auto_direct_schur = auto_direct_schur;
+        solved.corrector_parallel_threads = diagnostics.parallel_threads;
+        solved.corrector_symbolic_analyses = diagnostics.symbolic_analyses;
+        solved.corrector_symbolic_reuses = diagnostics.symbolic_reuses;
+        solved.corrector_factorization_reuses =
+            diagnostics.factorization_reuses;
+        solved.corrector_maximum_patch_dofs =
+            diagnostics.maximum_patch_dofs;
+        solved.corrector_maximum_patch_constraints =
+            diagnostics.maximum_patch_constraints;
+        solved.corrector_patch_assembly_work_seconds =
+            diagnostics.patch_assembly_work_seconds;
+        solved.corrector_patch_solve_work_seconds =
+            diagnostics.patch_solve_work_seconds;
+        solved.corrector_patch_pack_work_seconds =
+            diagnostics.patch_pack_work_seconds;
+        solved.time_model_mesh_interpolation_seconds =
+            timings.mesh_and_interpolation_ms / 1000.0;
+        solved.time_operator_assembly_seconds =
+            timings.operators_ms / 1000.0;
         solved.time_corrector_seconds =
-            model.build_timings().correctors_ms / 1000.0;
+            timings.correctors_ms / 1000.0;
+        solved.time_basis_assembly_seconds =
+            timings.corrected_basis_ms / 1000.0;
+        solved.time_coarse_operator_seconds =
+            timings.coarse_operator_ms / 1000.0;
+        solved.time_coarse_factorization_seconds =
+            timings.coarse_factorization_ms / 1000.0;
         solved.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
         solved.detail =
             "rebuilt and solved standard LOD on the current uniform coarse mesh"
@@ -728,9 +827,11 @@ PaperExecution run_standard_lod_trajectory(
             throw std::runtime_error(
                 "standard LOD failed to preserve its fixed h/H level difference");
         }
+        const auto load_begin = std::chrono::steady_clock::now();
         reference_load = assemble_helmholtz_load(
             hierarchy.reference_mesh(), data.source, config.quadrature,
             data.quadrature_context);
+        const auto load_end = std::chrono::steady_clock::now();
         const auto mesh_end = std::chrono::steady_clock::now();
         ++refinements;
         PracticalIterationRecord refined_record;
@@ -741,7 +842,11 @@ PaperExecution run_standard_lod_trajectory(
         refined_record.marked_H = marked.size();
         refined_record.ambient_refined_elements =
             fine_refined.refined_elements;
-        refined_record.time_mesh_seconds = elapsed_seconds(mesh_begin, mesh_end);
+        refined_record.time_load_assembly_seconds =
+            elapsed_seconds(load_begin, load_end);
+        refined_record.time_mesh_seconds = std::max(
+            0.0, elapsed_seconds(mesh_begin, mesh_end)
+                - refined_record.time_load_assembly_seconds);
         refined_record.detail =
             "uniformly refined H and h by one level while preserving fixed h/H";
         fill_mesh_fields(refined_record);
@@ -890,11 +995,22 @@ void write_iterations(
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
     out << "schema_version,case,method,kappa,run_id,reference_epoch,H_step,iteration,action,stop_reason,"
-           "N_H,DoF_H,N_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,U_prac,"
+           "N_H,DoF_H,N_ref,DoF_ref,N_amb,ell,kappa_H_max,mu_H,rho_amb,eta_H,Theta_loc,"
+           "localization_eigen_iterations,localization_eigen_relative_residual,"
+           "localization_sparse_generalized,localization_used_warm_start,"
+           "localization_patch_threads,patch_solver_used,slod_auto_direct_schur,"
+           "corrector_parallel_threads,corrector_symbolic_analyses,"
+           "corrector_symbolic_reuses,corrector_factorization_reuses,"
+           "corrector_maximum_patch_dofs,corrector_maximum_patch_constraints,"
+           "corrector_patch_assembly_work,corrector_patch_solve_work,"
+           "corrector_patch_pack_work,U_prac,"
            "reference_energy_error,reference_L2_error,exact_energy_error,exact_L2_error,"
            "relative_exact_energy_error,relative_exact_L2_error,reference_error_ratio,"
            "reference_log_improvement,reference_dof_log_slope,marked_H,rebuilt_correctors,"
-           "ambient_refined_elements,time_mesh,time_corrector,time_certificate,time_solve,"
+           "ambient_refined_elements,time_mesh,time_load_assembly,"
+           "time_model_mesh_interpolation,time_operator_assembly,time_corrector,"
+           "time_basis_assembly,time_coarse_operator,time_coarse_factorization,"
+           "time_certificate,time_solve,"
            "time_estimator,time_total_cumulative,peak_memory_mb\n";
     const bool ell_method = config.method_id == PracticalPaperMethod::Palod
         || config.method_id == PracticalPaperMethod::HlodFixed
@@ -906,6 +1022,7 @@ void write_iterations(
         || config.method_id == PracticalPaperMethod::Afem;
     const bool localization_method =
         config.method_id == PracticalPaperMethod::Palod;
+    const bool slod_method = config.method_id == PracticalPaperMethod::Slod;
     std::optional<std::pair<std::size_t, double>> previous_reference_point;
     for (const PracticalIterationRecord &record : result.journal) {
         std::optional<double> error_ratio;
@@ -932,12 +1049,73 @@ void write_iterations(
             << practical_driver_action_name(record.action) << ','
             << csv_string(record.detail) << ',' << record.coarse_nodes << ','
             << record.coarse_dofs << ',' << record.reference_nodes << ','
+            << (record.reference_dofs > 0
+                    ? std::to_string(record.reference_dofs) : "") << ','
             << (localization_method ? std::to_string(record.ambient_nodes) : "")
             << ',' << (ell_method ? std::to_string(record.ell) : "") << ','
             << numeric(record.kappa_H_max) << ",,"
             << (localization_method ? numeric(record.rho_ambient) : "") << ','
             << (eta_method ? numeric(record.eta_H) : "") << ','
             << (localization_method ? numeric(record.theta_loc) : "") << ','
+            << (localization_method
+                    ? std::to_string(record.localization_eigen_iterations)
+                    : "") << ','
+            << (localization_method
+                    ? numeric(record.localization_eigen_relative_residual)
+                    : "") << ','
+            << (localization_method
+                    ? std::to_string(
+                        record.localization_sparse_generalized ? 1 : 0)
+                    : "") << ','
+            << (localization_method
+                    ? std::to_string(
+                        record.localization_used_warm_start ? 1 : 0)
+                    : "") << ','
+            << (localization_method
+                    ? std::to_string(record.localization_patch_threads)
+                    : "") << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? patch_solver_label(record.patch_solver_kind_used) : "")
+            << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(record.slod_auto_direct_schur ? 1 : 0)
+                    : "") << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(record.corrector_parallel_threads) : "")
+            << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(record.corrector_symbolic_analyses) : "")
+            << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(record.corrector_symbolic_reuses) : "")
+            << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(record.corrector_factorization_reuses) : "")
+            << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(record.corrector_maximum_patch_dofs) : "")
+            << ','
+            << (slod_method
+                    && record.action == PracticalDriverAction::SolveStandardLod
+                    ? std::to_string(
+                        record.corrector_maximum_patch_constraints) : "")
+            << ','
+            << (slod_method
+                    ? numeric(record.corrector_patch_assembly_work_seconds) : "")
+            << ','
+            << (slod_method
+                    ? numeric(record.corrector_patch_solve_work_seconds) : "")
+            << ','
+            << (slod_method
+                    ? numeric(record.corrector_patch_pack_work_seconds) : "")
+            << ','
             << (practical_bound_method ? numeric(record.U_practical) : "") << ','
             << optional_numeric(record.reference_energy_error) << ','
             << optional_numeric(record.reference_L2_error) << ','
@@ -951,7 +1129,13 @@ void write_iterations(
             << record.marked_H << ',' << record.rebuilt_correctors << ','
             << record.ambient_refined_elements << ','
             << numeric(record.time_mesh_seconds) << ','
+            << numeric(record.time_load_assembly_seconds) << ','
+            << numeric(record.time_model_mesh_interpolation_seconds) << ','
+            << numeric(record.time_operator_assembly_seconds) << ','
             << numeric(record.time_corrector_seconds) << ','
+            << numeric(record.time_basis_assembly_seconds) << ','
+            << numeric(record.time_coarse_operator_seconds) << ','
+            << numeric(record.time_coarse_factorization_seconds) << ','
             << numeric(record.time_certificate_seconds) << ','
             << numeric(record.time_solve_seconds) << ','
             << numeric(record.time_estimator_seconds) << ','
@@ -1479,12 +1663,35 @@ int main(const int argc, char **argv) {
                             && (record.ambient_refined_elements == 0
                                 || record.reference_epoch == 0);
                     });
+                const bool missed_solver_switch =
+                    config.slod_direct_schur_min_reference_dofs > 0
+                    && std::any_of(
+                        result.journal.begin(), result.journal.end(),
+                        [&](const PracticalIterationRecord &record) {
+                            if (record.action
+                                != PracticalDriverAction::SolveStandardLod)
+                                return false;
+                            const bool expected_switch = record.reference_dofs
+                                >= config.slod_direct_schur_min_reference_dofs;
+                            const HelmholtzPatchSolverKind expected_solver =
+                                expected_switch
+                                    ? HelmholtzPatchSolverKind::DirectSchur
+                                    : HelmholtzPatchSolverKind::DirectSaddle;
+                            return record.slod_auto_direct_schur
+                                    != expected_switch
+                                || record.patch_solver_kind_used
+                                    != expected_solver
+                                || record.corrector_parallel_threads <= 0
+                                || record.corrector_maximum_patch_dofs <= 0
+                                || !(record.time_corrector_seconds > 0.0);
+                        });
                 if (!has_action(PracticalDriverAction::SolveStandardLod)
                     || !has_action(PracticalDriverAction::RefineUniformLod)
                     || has_action(PracticalDriverAction::AcceptLocalization)
                     || has_action(PracticalDriverAction::AcceptFixedEll)
                     || has_action(PracticalDriverAction::FormCoarseMarking)
-                    || wrong_ell || missed_synchronized_fine_refinement) {
+                    || wrong_ell || missed_synchronized_fine_refinement
+                    || missed_solver_switch) {
                     throw std::runtime_error(
                         "SLOD smoke did not preserve its empirical ell and synchronized uniform H/h refinement");
                 }

@@ -7,7 +7,7 @@ RESULT_DIR=${RESULT_DIR:-"$ROOT_DIR/results/helmholtz_adaptive_paper_server"}
 REFERENCE_CACHE_DIR=${REFERENCE_CACHE_DIR:-"$RESULT_DIR/reference-cache"}
 MODE=${MODE:-pilot}
 JOBS=${JOBS:-16}
-PATCH_THREADS=${PATCH_THREADS:-4}
+PATCH_THREADS=${PATCH_THREADS:-16}
 MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-16}
 VALIDATE=${VALIDATE:-1}
 
@@ -61,11 +61,19 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-16t-level20-v4.json
     )
     ;;
+  s-corner-wave-medium)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-medium-step12-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-slod-k16-medium-ell2-step7-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-medium-level18-step13-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-medium-step28-v4.json
+    )
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, or custom" >&2
+    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, s-corner-wave-medium, or custom" >&2
     exit 2
     ;;
 esac
@@ -133,6 +141,9 @@ export OMP_NUM_THREADS="$PATCH_THREADS"
 export OMP_DYNAMIC=FALSE
 export OMP_PROC_BIND=spread
 export OMP_PLACES=cores
+export LOD2D_PROGRESS=${LOD2D_PROGRESS:-1}
+export LOD2D_PROFILE_LOCALIZATION_STAGES=${LOD2D_PROFILE_LOCALIZATION_STAGES:-1}
+export LOD2D_PROFILE_MODEL_STAGES=${LOD2D_PROFILE_MODEL_STAGES:-1}
 
 for config_relative in "${CONFIG_LIST[@]}"; do
   template="$ROOT_DIR/$config_relative"

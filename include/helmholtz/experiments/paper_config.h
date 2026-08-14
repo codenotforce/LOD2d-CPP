@@ -246,9 +246,16 @@ struct PracticalPaperConfig {
     HelmholtzPetrovMode petrov_mode = HelmholtzPetrovMode::TwoSided;
     HelmholtzPatchSolverKind patch_solver_kind =
         HelmholtzPatchSolverKind::DirectSaddle;
+    int patch_symbolic_cache_slots = 1;
+    bool patch_reuse_identical_factorization = false;
     // Zero uses all available OpenMP workers.  Positive values cap only
     // concurrent high-memory patch solves and are part of the run identity.
     int maximum_patch_threads = 0;
+    // SLOD-only policy.  With a direct-saddle base solver, switch to
+    // direct-Schur once the unconstrained reference-space DoF reaches this
+    // threshold. Zero disables the switch. The selected solver is recorded
+    // per trajectory row.
+    std::size_t slod_direct_schur_min_reference_dofs = 0;
     adaptive::KernelRieszSolver kernel_riesz_solver =
         adaptive::KernelRieszSolver::SaddlePoint;
     adaptive::PracticalWorkLimits work_limits;

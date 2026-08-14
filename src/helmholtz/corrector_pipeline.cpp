@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <exception>
@@ -28,6 +29,12 @@ struct PatchResult {
     HelmholtzPatchSolveDiagnostics diagnostics;
     bool touches_physical_boundary = false;
     bool cache_hit = false;
+    double assembly_seconds = 0.0;
+    double solve_seconds = 0.0;
+    double pack_seconds = 0.0;
+    int patch_dofs = 0;
+    int patch_constraints = 0;
+    int patch_rhs = 0;
 };
 
 PatchResult pack_patch_solution(
@@ -94,6 +101,15 @@ void accumulate_diagnostics(
     }
     if (patch.touches_physical_boundary)
         ++diagnostics.patches_touching_physical_boundary;
+    diagnostics.patch_assembly_work_seconds += patch.assembly_seconds;
+    diagnostics.patch_solve_work_seconds += patch.solve_seconds;
+    diagnostics.patch_pack_work_seconds += patch.pack_seconds;
+    diagnostics.maximum_patch_dofs = std::max(
+        diagnostics.maximum_patch_dofs, patch.patch_dofs);
+    diagnostics.maximum_patch_constraints = std::max(
+        diagnostics.maximum_patch_constraints, patch.patch_constraints);
+    diagnostics.maximum_patch_rhs = std::max(
+        diagnostics.maximum_patch_rhs, patch.patch_rhs);
 }
 
 constexpr std::uint64_t fnv_offset = 14695981039346656037ull;
@@ -383,7 +399,11 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
         if (failed.load(std::memory_order_relaxed)) return;
         const int target = target_order[ordered_index];
         try {
+            const auto assembly_begin = std::chrono::steady_clock::now();
             HelmholtzPatchSystem system = assembler.assemble(target);
+            const double assembly_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - assembly_begin).count();
+            const auto solve_begin = std::chrono::steady_clock::now();
             HelmholtzPatchSolveResult solved;
             const bool cache_hit = cache != nullptr
                 && cache->impl_->lookup(system, solver_config, solved);
@@ -392,8 +412,18 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
                 if (cache != nullptr)
                     cache->impl_->store(system, solver_config, solved);
             }
-            patch_results[target] =
-                pack_patch_solution(system, solved, cache_hit);
+            const double solve_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - solve_begin).count();
+            const auto pack_begin = std::chrono::steady_clock::now();
+            PatchResult packed = pack_patch_solution(system, solved, cache_hit);
+            packed.pack_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - pack_begin).count();
+            packed.assembly_seconds = assembly_seconds;
+            packed.solve_seconds = solve_seconds;
+            packed.patch_dofs = system.helmholtz.rows();
+            packed.patch_constraints = system.constraints.rows();
+            packed.patch_rhs = system.rhs.cols();
+            patch_results[target] = std::move(packed);
         } catch (...) {
             failed.store(true, std::memory_order_relaxed);
             std::lock_guard<std::mutex> lock(exception_mutex);

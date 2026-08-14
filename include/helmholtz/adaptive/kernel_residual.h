@@ -190,6 +190,11 @@ struct AmbientDefectRiesz {
     std::size_t right_hand_side_solves = 0;
     std::size_t maximum_active_columns = 0;
     int parallel_threads = 1;
+    // Wall-clock stage diagnostics for production profiling.  patch_solve
+    // includes local assembly/factorization/solves and compact Gram formation;
+    // gram_reduction is only the deterministic global scatter.
+    double patch_solve_seconds = 0.0;
+    double gram_reduction_seconds = 0.0;
     double local_square_sum_relative_error = 0.0;
     // The streamed implementation accumulates every compact patch Gram once
     // in patch order.  This remains zero unless that invariant is violated.

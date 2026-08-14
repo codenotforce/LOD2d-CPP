@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <atomic>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <exception>
@@ -1275,6 +1276,7 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
         const std::size_t batch_size = std::min(
             batch_capacity, patches.size() - batch_begin);
         std::vector<PatchContribution> contributions(batch_size);
+        const auto patch_solve_begin = std::chrono::steady_clock::now();
 #ifdef _OPENMP
         #pragma omp parallel num_threads(maximum_threads)
         {
@@ -1298,11 +1300,14 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
                 contributions[local_index]);
         }
 #endif
+        result.patch_solve_seconds += std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - patch_solve_begin).count();
         if (first_exception) std::rethrow_exception(first_exception);
 
         // Reduce each bounded batch in the original patch order.  Thread
         // scheduling therefore cannot change a floating-point addition, and
         // completed local vectors are released before the next batch.
+        const auto gram_reduction_begin = std::chrono::steady_clock::now();
         for (std::size_t local_index = 0;
              local_index < batch_size;
              ++local_index) {
@@ -1314,8 +1319,18 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
                 ++result.patch_factorizations;
                 result.right_hand_side_solves += local.active_columns.size();
             }
+            const int active_count = static_cast<int>(
+                local.active_columns.size());
+            // A column owns a disjoint global Gram column, so this reduction
+            // is race-free.  Patches remain ordered and a barrier separates
+            // them, preserving the exact per-entry floating-point addition
+            // order while removing the large serial r_patch^2 scatter.
+#ifdef _OPENMP
+            #pragma omp parallel for num_threads(maximum_threads) \
+                schedule(static) if(active_count >= 256)
+#endif
             for (int local_column = 0;
-                 local_column < static_cast<int>(local.active_columns.size());
+                 local_column < active_count;
                  ++local_column) {
                 const int global_column = local.active_columns[local_column];
                 result.column_eta_squared(global_column) +=
@@ -1331,6 +1346,8 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
             if (result.local_details_stored)
                 result.local_results[patch_index] = std::move(local);
         }
+        result.gram_reduction_seconds += std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - gram_reduction_begin).count();
     }
 
     for (int column = 0; column < input_columns; ++column) {

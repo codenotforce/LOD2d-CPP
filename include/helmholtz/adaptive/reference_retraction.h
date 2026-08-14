@@ -51,13 +51,15 @@ ReferenceRetraction build_reference_retraction(
     const ReferenceEpochHierarchy &hierarchy);
 
 struct LocalizationEigenConfig {
-    // Large production spectra can have a small dominant eigengap.  The
-    // iteration is matrix-vector only after whitening, so prefer additional
-    // iterations to an O(n^3) dense fallback once the coarse dimension grows.
+    // Large production spectra can have a small dominant eigengap.  Small
+    // diagnostics keep the dense whitening path for exact cross-checks;
+    // production dimensions use a sparse-denominator generalized iteration
+    // and never form an inverse Cholesky factor or a whitened dense matrix.
     int maximum_iterations = 1000;
     double relative_tolerance = 1e-11;
     int dense_cross_check_max_dimension = 64;
     int dense_fallback_max_dimension = 1024;
+    int sparse_generalized_min_dimension = 1025;
     ComplexVector warm_start;
 };
 
@@ -69,6 +71,8 @@ struct LocalizationSpectrum {
     bool converged = false;
     bool dense_cross_checked = false;
     bool used_dense_fallback = false;
+    bool used_sparse_generalized_solver = false;
+    bool used_warm_start = false;
     double dense_lambda_max = 0.0;
     double dense_relative_difference = 0.0;
 };
@@ -86,6 +90,10 @@ struct ReferenceLocalizationCertificate {
     ReferenceRetraction retraction;
     ComplexSparseMatrix defect_rhs;
     AmbientDefectRiesz ambient_riesz;
+    // The production generalized eigensolver factors this sparse SPD matrix.
+    // coarse_energy is retained only for small-matrix validation; it is empty
+    // for large production dimensions to avoid a second O(N_H^2) allocation.
+    Eigen::SparseMatrix<double> coarse_energy_operator;
     ComplexMatrix coarse_energy;
     LocalizationSpectrum spectrum;
     double theta_loc = 0.0;

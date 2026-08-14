@@ -1284,6 +1284,21 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         throw std::invalid_argument(
             "maximum_patch_threads must be a JSON-safe nonnegative integer");
     }
+    if (config.patch_symbolic_cache_slots <= 0
+        || static_cast<std::uint64_t>(config.patch_symbolic_cache_slots)
+            > max_exact_json_integer
+        || config.slod_direct_schur_min_reference_dofs
+            > max_exact_json_integer) {
+        throw std::invalid_argument(
+            "patch cache and SLOD solver-switch parameters must be JSON-safe");
+    }
+    if (config.slod_direct_schur_min_reference_dofs > 0
+        && (config.method_id != PracticalPaperMethod::Slod
+            || config.patch_solver_kind
+                != HelmholtzPatchSolverKind::DirectSaddle)) {
+        throw std::invalid_argument(
+            "the automatic direct-Schur threshold requires SLOD with a direct-saddle base solver");
+    }
     std::size_t previous_refresh = 0;
     for (const std::size_t refresh : config.reference_refresh_H_steps) {
         if (refresh == 0 || refresh >= config.work_limits.maximum_H_steps
@@ -1442,6 +1457,10 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
         : adaptive::PracticalLocalizationPolicy::AdaptiveGlobalEll;
     result.mode = config.petrov_mode;
     result.patch_solver.kind = config.patch_solver_kind;
+    result.patch_solver.symbolic_cache_slots =
+        config.patch_symbolic_cache_slots;
+    result.patch_solver.reuse_identical_factorization =
+        config.patch_reuse_identical_factorization;
     result.patch_solver.maximum_parallel_solves =
         config.maximum_patch_threads;
     result.patch_solver.gmres.relative_tolerance =
@@ -1476,6 +1495,10 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"method\":" << json_string(to_string(config.method_id))
         << ",\"patch_solver_kind\":"
         << json_string(patch_solver_kind_name(config.patch_solver_kind))
+        << ",\"patch_symbolic_cache_slots\":"
+        << config.patch_symbolic_cache_slots
+        << ",\"patch_reuse_identical_factorization\":"
+        << (config.patch_reuse_identical_factorization ? "true" : "false")
         << ",\"petrov_mode\":" << json_string(petrov_mode_name(config.petrov_mode))
         << ",\"plateau_diagnostic\":{\"maximum_relative_oscillation\":"
         << number(config.plateau_diagnostic.maximum_relative_oscillation)
@@ -1535,6 +1558,10 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         out << ",\"smooth_wave_amplitude\":"
             << number(config.smooth_wave_amplitude);
     }
+    if (config.slod_direct_schur_min_reference_dofs > 0) {
+        out << ",\"slod_direct_schur_min_reference_dofs\":"
+            << config.slod_direct_schur_min_reference_dofs;
+    }
     out << ",\"theta_H\":" << number(config.theta_H)
         << ",\"theta_loc\":" << number(config.theta_loc)
         << ",\"timing_repeats\":" << config.timing_repeats
@@ -1571,6 +1598,12 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         root.contains("minimum_reference_level_gap");
     const bool has_maximum_patch_threads =
         root.contains("maximum_patch_threads");
+    const bool has_patch_symbolic_cache_slots =
+        root.contains("patch_symbolic_cache_slots");
+    const bool has_patch_reuse_identical_factorization =
+        root.contains("patch_reuse_identical_factorization");
+    const bool has_slod_direct_schur_min_reference_dofs =
+        root.contains("slod_direct_schur_min_reference_dofs");
     const bool has_singular_oscillatory_fraction =
         root.contains("singular_oscillatory_fraction");
     const bool has_singular_cutoff_outer_radius =
@@ -1582,6 +1615,9 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     JsonObject contract_root = root;
     contract_root.erase("minimum_reference_level_gap");
     contract_root.erase("maximum_patch_threads");
+    contract_root.erase("patch_symbolic_cache_slots");
+    contract_root.erase("patch_reuse_identical_factorization");
+    contract_root.erase("slod_direct_schur_min_reference_dofs");
     contract_root.erase("singular_oscillatory_fraction");
     contract_root.erase("singular_cutoff_outer_radius");
     contract_root.erase("singular_quintic_cutoff");
@@ -1648,6 +1684,22 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     if (has_maximum_patch_threads) {
         config.maximum_patch_threads = as_integer(
             get(root, "maximum_patch_threads"), "maximum_patch_threads");
+    }
+    if (has_patch_symbolic_cache_slots) {
+        config.patch_symbolic_cache_slots = as_integer(
+            get(root, "patch_symbolic_cache_slots"),
+            "patch_symbolic_cache_slots");
+    }
+    if (has_patch_reuse_identical_factorization) {
+        config.patch_reuse_identical_factorization = as_bool(
+            get(root, "patch_reuse_identical_factorization"),
+            "patch_reuse_identical_factorization");
+    }
+    if (has_slod_direct_schur_min_reference_dofs) {
+        config.slod_direct_schur_min_reference_dofs =
+            static_cast<std::size_t>(as_uint64(
+                get(root, "slod_direct_schur_min_reference_dofs"),
+                "slod_direct_schur_min_reference_dofs"));
     }
     if (has_refresh_schedule) {
         const JsonArray &refreshes = as_array(
@@ -1832,7 +1884,12 @@ bool operator==(const PracticalPaperConfig &lhs,
             rhs.reference_adequacy.maximum_terminal_error_fraction &&
         lhs.petrov_mode == rhs.petrov_mode &&
         lhs.patch_solver_kind == rhs.patch_solver_kind &&
+        lhs.patch_symbolic_cache_slots == rhs.patch_symbolic_cache_slots &&
+        lhs.patch_reuse_identical_factorization ==
+            rhs.patch_reuse_identical_factorization &&
         lhs.maximum_patch_threads == rhs.maximum_patch_threads &&
+        lhs.slod_direct_schur_min_reference_dofs ==
+            rhs.slod_direct_schur_min_reference_dofs &&
         lhs.kernel_riesz_solver == rhs.kernel_riesz_solver &&
         lhs.work_limits.maximum_iterations == rhs.work_limits.maximum_iterations &&
         lhs.work_limits.maximum_H_steps == rhs.work_limits.maximum_H_steps &&

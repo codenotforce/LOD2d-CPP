@@ -502,7 +502,9 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     else
         model.trial_basis_ = select_columns(
             model.problem_.coarse_to_fine.cast<Complex>(), free_coarse_nodes);
+    model.build_timings_.corrected_basis_ms = elapsed_ms(stage_start);
 
+    stage_start = std::chrono::steady_clock::now();
     report_progress(model.config_, "coarse operator assembly begin");
     model.coarse_operator_ = model.test_basis_.adjoint()
                            * model.operators_.system
@@ -513,18 +515,24 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.config_,
         "coarse operator ready: nonzeros="
             + std::to_string(model.coarse_operator_.nonZeros()));
+    model.build_timings_.coarse_operator_ms = elapsed_ms(stage_start);
 
+    stage_start = std::chrono::steady_clock::now();
     report_progress(model.config_, "coarse factorization begin");
     model.factorization_ = std::make_unique<Factorization>();
     model.factorization_->solver.analyzePattern(model.coarse_operator_);
     model.factorization_->solver.factorize(model.coarse_operator_);
     if (model.factorization_->solver.info() != Eigen::Success)
         throw std::runtime_error("Helmholtz Petrov-Galerkin coarse factorization failed");
-    model.build_timings_.basis_and_factorization_ms = elapsed_ms(stage_start);
+    model.build_timings_.coarse_factorization_ms = elapsed_ms(stage_start);
+    model.build_timings_.basis_and_factorization_ms =
+        model.build_timings_.corrected_basis_ms
+        + model.build_timings_.coarse_operator_ms
+        + model.build_timings_.coarse_factorization_ms;
     report_progress(
         model.config_,
-        "coarse factorization end: basis_and_factorization_ms="
-            + std::to_string(model.build_timings_.basis_and_factorization_ms));
+        "coarse factorization end: elapsed_ms="
+            + std::to_string(model.build_timings_.coarse_factorization_ms));
     model.build_timings_.total_ms = mesh_and_interpolation_ms + elapsed_ms(total_start);
     return model;
 }

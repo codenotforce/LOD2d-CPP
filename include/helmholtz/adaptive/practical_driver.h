@@ -127,6 +127,7 @@ struct PracticalIterationRecord {
     std::size_t coarse_nodes = 0;
     std::size_t coarse_dofs = 0;
     std::size_t reference_nodes = 0;
+    std::size_t reference_dofs = 0;
     std::size_t ambient_nodes = 0;
     std::size_t coarse_elements = 0;
     std::size_t ambient_elements = 0;
@@ -137,6 +138,23 @@ struct PracticalIterationRecord {
     double rho_ambient = 0.0;
     double eta_H = 0.0;
     double theta_loc = 0.0;
+    int localization_eigen_iterations = 0;
+    double localization_eigen_relative_residual = 0.0;
+    bool localization_sparse_generalized = false;
+    bool localization_used_warm_start = false;
+    int localization_patch_threads = 0;
+    HelmholtzPatchSolverKind patch_solver_kind_used =
+        HelmholtzPatchSolverKind::DirectSaddle;
+    bool slod_auto_direct_schur = false;
+    int corrector_parallel_threads = 0;
+    int corrector_symbolic_analyses = 0;
+    int corrector_symbolic_reuses = 0;
+    int corrector_factorization_reuses = 0;
+    int corrector_maximum_patch_dofs = 0;
+    int corrector_maximum_patch_constraints = 0;
+    double corrector_patch_assembly_work_seconds = 0.0;
+    double corrector_patch_solve_work_seconds = 0.0;
+    double corrector_patch_pack_work_seconds = 0.0;
     double U_practical = 0.0;
     std::optional<double> reference_energy_error;
     std::optional<double> reference_L2_error;
@@ -151,7 +169,13 @@ struct PracticalIterationRecord {
     // The driver never receives an evaluation reference solution.
     ComplexVector evaluation_candidate;
     double time_mesh_seconds = 0.0;
+    double time_load_assembly_seconds = 0.0;
+    double time_model_mesh_interpolation_seconds = 0.0;
+    double time_operator_assembly_seconds = 0.0;
     double time_corrector_seconds = 0.0;
+    double time_basis_assembly_seconds = 0.0;
+    double time_coarse_operator_seconds = 0.0;
+    double time_coarse_factorization_seconds = 0.0;
     double time_certificate_seconds = 0.0;
     double time_solve_seconds = 0.0;
     double time_estimator_seconds = 0.0;

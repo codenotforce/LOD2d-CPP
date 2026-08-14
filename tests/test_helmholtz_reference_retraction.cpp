@@ -190,6 +190,14 @@ void verify_localization_certificate() {
         require(certificate.spectrum.dense_cross_checked
                     && certificate.spectrum.dense_relative_difference <= 3e-10,
                 "iterative Theta_loc disagrees with the dense cross-check");
+        require(certificate.coarse_energy_operator.rows()
+                    == certificate.coarse_energy.rows()
+                    && ComplexMatrix(
+                        certificate.coarse_energy_operator.cast<Complex>())
+                        .isApprox(certificate.coarse_energy, 2e-14),
+                "sparse and retained dense coarse energy matrices disagree");
+        require(certificate.spectrum.used_warm_start == (ell > 1),
+                "localization eigensolver warm-start accounting is wrong");
         require(certificate.ambient_riesz.space
                     == KernelRieszSpace::AmbientDefect,
                 "localization certificate did not use ambient defect Riesz");
@@ -207,6 +215,9 @@ void verify_localization_certificate() {
                     && certificate.ambient_riesz.maximum_active_columns
                         <= basis_nodes.size(),
                 "production ambient defect Riesz retained details or exceeded dense work");
+        require(certificate.ambient_riesz.patch_solve_seconds > 0.0
+                    && certificate.ambient_riesz.gram_reduction_seconds >= 0.0,
+                "ambient defect Riesz stage timings were not recorded");
         require(certificate.retraction.diagnostics()
                     .kernel_constraint_relative_error <= 2e-13,
                 "certificate used a retraction outside W_ref");
@@ -250,6 +261,30 @@ void verify_localization_certificate() {
                     <= 3e-10 * std::max(1.0, theta.front()),
             "dense localization fallback did not recover the same spectrum");
 
+    LocalizationEigenConfig sparse_config;
+    sparse_config.maximum_iterations = 2000;
+    sparse_config.relative_tolerance = 1e-10;
+    sparse_config.dense_cross_check_max_dimension = 512;
+    sparse_config.sparse_generalized_min_dimension = 0;
+    sparse_config.warm_start = certificates.front().spectrum.dominant_vector;
+    const ReferenceLocalizationCertificate sparse_certificate =
+        compute_reference_localization_certificate(
+            hierarchy,
+            fallback_model.operators(),
+            ambient_operators,
+            fallback_model.corrected_test_basis(),
+            basis_nodes,
+            KernelRieszSolver::SaddlePoint,
+            sparse_config);
+    require(sparse_certificate.spectrum.used_sparse_generalized_solver
+                && sparse_certificate.spectrum.used_warm_start
+                && sparse_certificate.spectrum.converged
+                && sparse_certificate.spectrum.dense_cross_checked
+                && sparse_certificate.spectrum.dense_relative_difference <= 3e-9
+                && std::abs(sparse_certificate.theta_loc - theta.front())
+                    <= 3e-9 * std::max(1.0, theta.front()),
+            "sparse generalized localization spectrum disagrees with dense validation");
+
     fallback_config.dense_fallback_max_dimension = 0;
     bool disabled_fallback_rejected = false;
     try {
@@ -270,6 +305,8 @@ void verify_localization_certificate() {
             "production localization iteration budget regressed");
     require(LocalizationEigenConfig{}.dense_fallback_max_dimension == 1024,
             "production dense localization fallback range regressed");
+    require(LocalizationEigenConfig{}.sparse_generalized_min_dimension == 1025,
+            "production sparse generalized threshold regressed");
 
     const HelmholtzLodModel localized = build_reference_model(
         data, hierarchy, 1);

@@ -61,6 +61,10 @@ struct HelmholtzBuildTimings {
     double mesh_and_interpolation_ms = 0.0;
     double operators_ms = 0.0;
     double correctors_ms = 0.0;
+    double corrected_basis_ms = 0.0;
+    double coarse_operator_ms = 0.0;
+    double coarse_factorization_ms = 0.0;
+    // Backward-compatible aggregate of the three fields above.
     double basis_and_factorization_ms = 0.0;
     double total_ms = 0.0;
 };

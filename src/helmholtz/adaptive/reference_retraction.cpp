@@ -5,6 +5,7 @@
 #include <Eigen/Cholesky>
 #include <Eigen/Eigenvalues>
 #include <Eigen/QR>
+#include <Eigen/SparseCholesky>
 #include <Eigen/SVD>
 
 #include <algorithm>
@@ -226,14 +227,15 @@ ComplexMatrix whitened_matrix(
     return 0.5 * (result + result.adjoint());
 }
 
-LocalizationSpectrum largest_generalized_eigenvalue(
+LocalizationSpectrum largest_generalized_eigenvalue_dense(
     const ComplexMatrix &numerator,
     const ComplexMatrix &denominator,
     const LocalizationEigenConfig &config) {
     if (config.maximum_iterations <= 0
         || !(config.relative_tolerance > 0.0)
         || config.dense_cross_check_max_dimension < 0
-        || config.dense_fallback_max_dimension < 0) {
+        || config.dense_fallback_max_dimension < 0
+        || config.sparse_generalized_min_dimension < 0) {
         throw std::invalid_argument("localization eigen configuration is invalid");
     }
     ComplexMatrix inverse_lower;
@@ -250,6 +252,7 @@ LocalizationSpectrum largest_generalized_eigenvalue(
     if (config.warm_start.size() == dimension
         && config.warm_start.allFinite()
         && config.warm_start.norm() > 0.0) {
+        result.used_warm_start = true;
         const ComplexMatrix lower_inverse_adjoint =
             inverse_lower.adjoint();
         // y=L^*x and x=L^{-H}y.
@@ -333,6 +336,170 @@ LocalizationSpectrum largest_generalized_eigenvalue(
             / std::max(1.0, result.dense_lambda_max);
     }
     return result;
+}
+
+ComplexVector multiply_real_sparse(
+    const Eigen::SparseMatrix<double> &matrix,
+    const ComplexVector &vector) {
+    ComplexVector result(vector.size());
+    result.real() = matrix * vector.real();
+    result.imag() = matrix * vector.imag();
+    return result;
+}
+
+template <class Factorization>
+ComplexVector solve_real_factorization(
+    const Factorization &factorization,
+    const ComplexVector &rhs) {
+    ComplexVector result(rhs.size());
+    result.real() = factorization.solve(rhs.real());
+    result.imag() = factorization.solve(rhs.imag());
+    return result;
+}
+
+LocalizationSpectrum largest_generalized_eigenvalue_sparse(
+    const ComplexMatrix &numerator,
+    const Eigen::SparseMatrix<double> &denominator,
+    const LocalizationEigenConfig &config) {
+    if (numerator.rows() != numerator.cols()
+        || denominator.rows() != denominator.cols()
+        || numerator.rows() != denominator.rows()) {
+        throw std::invalid_argument("generalized spectrum dimensions disagree");
+    }
+    if (config.maximum_iterations <= 0
+        || !(config.relative_tolerance > 0.0)) {
+        throw std::invalid_argument("localization eigen configuration is invalid");
+    }
+    const int dimension = numerator.rows();
+    LocalizationSpectrum result;
+    result.used_sparse_generalized_solver = true;
+    if (dimension == 0) {
+        result.converged = true;
+        return result;
+    }
+
+    Eigen::SparseMatrix<double> hermitian_denominator =
+        0.5 * (denominator + Eigen::SparseMatrix<double>(denominator.transpose()));
+    hermitian_denominator.makeCompressed();
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> factorization;
+    factorization.compute(hermitian_denominator);
+    if (factorization.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "sparse coarse energy factorization failed");
+    }
+
+    ComplexVector iterate;
+    result.used_warm_start = config.warm_start.size() == dimension
+        && config.warm_start.allFinite()
+        && config.warm_start.norm() > 0.0;
+    if (result.used_warm_start) {
+        iterate = config.warm_start;
+    } else {
+        iterate = ComplexVector::Ones(dimension);
+        for (int index = 0; index < dimension; ++index)
+            iterate(index) += Complex(0.0, 0.125 * (index + 1));
+    }
+    const auto normalize_energy = [&](ComplexVector &vector) {
+        const ComplexVector energy_times = multiply_real_sparse(
+            hermitian_denominator, vector);
+        const double squared = std::real(vector.dot(energy_times));
+        if (!(squared > 0.0) || !std::isfinite(squared)) {
+            throw std::runtime_error(
+                "sparse coarse energy norm is not positive");
+        }
+        vector /= std::sqrt(squared);
+    };
+    normalize_energy(iterate);
+
+    for (int iteration = 1; iteration <= config.maximum_iterations; ++iteration) {
+        const ComplexVector applied = numerator * iterate;
+        const ComplexVector energy_times = multiply_real_sparse(
+            hermitian_denominator, iterate);
+        result.lambda_max = std::max(
+            0.0, std::real(iterate.dot(applied)));
+        const ComplexVector residual =
+            applied - result.lambda_max * energy_times;
+        const ComplexVector inverse_residual = solve_real_factorization(
+            factorization, residual);
+        if (factorization.info() != Eigen::Success
+            || !inverse_residual.allFinite()) {
+            throw std::runtime_error(
+                "sparse coarse energy residual solve failed");
+        }
+        const double dual_squared = std::real(residual.dot(inverse_residual));
+        if (dual_squared < -1e-12 * std::max(1.0, residual.squaredNorm())) {
+            throw std::runtime_error(
+                "generalized localization residual has negative dual norm");
+        }
+        result.relative_residual = std::sqrt(std::max(0.0, dual_squared))
+            / std::max(1.0, std::abs(result.lambda_max));
+        result.iterations = iteration;
+        if (result.relative_residual <= config.relative_tolerance) {
+            result.converged = true;
+            break;
+        }
+
+        ComplexVector next = solve_real_factorization(
+            factorization, applied);
+        if (factorization.info() != Eigen::Success || !next.allFinite()) {
+            throw std::runtime_error(
+                "sparse generalized localization iteration solve failed");
+        }
+        const ComplexVector next_energy = multiply_real_sparse(
+            hermitian_denominator, next);
+        const double next_squared = std::real(next.dot(next_energy));
+        if (next_squared
+            <= std::numeric_limits<double>::epsilon()
+                * std::max(1.0, applied.squaredNorm())) {
+            result.lambda_max = 0.0;
+            result.relative_residual = 0.0;
+            result.converged = true;
+            iterate.setZero();
+            break;
+        }
+        iterate = std::move(next);
+        normalize_energy(iterate);
+    }
+    if (!result.converged) {
+        throw std::runtime_error(
+            "localization sparse generalized iteration did not converge: "
+            "dimension=" + std::to_string(dimension)
+            + ", iterations=" + std::to_string(result.iterations)
+            + ", relative_residual="
+            + std::to_string(result.relative_residual));
+    }
+    result.dominant_vector = iterate;
+
+    if (dimension <= config.dense_cross_check_max_dimension) {
+        ComplexMatrix inverse_lower;
+        const ComplexMatrix whitened = whitened_matrix(
+            numerator, ComplexMatrix(hermitian_denominator), inverse_lower);
+        Eigen::SelfAdjointEigenSolver<ComplexMatrix> dense_solver(whitened);
+        if (dense_solver.info() != Eigen::Success)
+            throw std::runtime_error("dense localization eigen cross-check failed");
+        result.dense_cross_checked = true;
+        result.dense_lambda_max = std::max(
+            0.0, dense_solver.eigenvalues().maxCoeff());
+        result.dense_relative_difference = std::abs(
+            result.lambda_max - result.dense_lambda_max)
+            / std::max(1.0, result.dense_lambda_max);
+    }
+    return result;
+}
+
+LocalizationSpectrum largest_generalized_eigenvalue(
+    const ComplexMatrix &numerator,
+    const Eigen::SparseMatrix<double> &denominator,
+    const LocalizationEigenConfig &config) {
+    if (config.sparse_generalized_min_dimension < 0) {
+        throw std::invalid_argument("localization eigen configuration is invalid");
+    }
+    if (numerator.rows() >= config.sparse_generalized_min_dimension) {
+        return largest_generalized_eigenvalue_sparse(
+            numerator, denominator, config);
+    }
+    return largest_generalized_eigenvalue_dense(
+        numerator, ComplexMatrix(denominator), config);
 }
 
 double dense_largest_generalized_eigenvalue(
@@ -617,12 +784,26 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
         hierarchy.coarse_to_reference(), coarse_basis_nodes);
     const Eigen::SparseMatrix<double> reference_energy =
         energy_matrix(reference_operators);
-    result.coarse_energy = ComplexMatrix(
-        coarse_basis.transpose() * reference_energy * coarse_basis).cast<Complex>();
+    result.coarse_energy_operator =
+        coarse_basis.transpose() * reference_energy * coarse_basis;
+    result.coarse_energy_operator = 0.5 * (
+        result.coarse_energy_operator
+        + Eigen::SparseMatrix<double>(
+            result.coarse_energy_operator.transpose()));
+    result.coarse_energy_operator.makeCompressed();
+    if (static_cast<int>(coarse_basis_nodes.size())
+        < eigen_config.sparse_generalized_min_dimension) {
+        result.coarse_energy =
+            ComplexMatrix(result.coarse_energy_operator).cast<Complex>();
+    } else {
+        result.coarse_energy.resize(0, 0);
+    }
     const double coarse_energy_ms = elapsed_ms(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
     result.spectrum = largest_generalized_eigenvalue(
-        result.ambient_riesz.gram, result.coarse_energy, eigen_config);
+        result.ambient_riesz.gram,
+        result.coarse_energy_operator,
+        eigen_config);
     const double spectrum_ms = elapsed_ms(stage_begin);
     result.theta_loc = std::sqrt(std::max(0.0, result.spectrum.lambda_max));
     if (profile_stages) {
@@ -634,6 +815,10 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
             << " retraction_ms=" << retraction_ms
             << " defect_rhs_ms=" << defect_rhs_ms
             << " ambient_riesz_ms=" << ambient_riesz_ms
+            << " ambient_patch_solve_ms="
+            << 1000.0 * result.ambient_riesz.patch_solve_seconds
+            << " ambient_gram_reduction_ms="
+            << 1000.0 * result.ambient_riesz.gram_reduction_seconds
             << " ambient_riesz_threads="
             << result.ambient_riesz.parallel_threads
             << " ambient_patch_count="
@@ -647,6 +832,8 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
             << " coarse_energy_ms=" << coarse_energy_ms
             << " spectrum_ms=" << spectrum_ms
             << " spectrum_iterations=" << result.spectrum.iterations
+            << " sparse_generalized="
+            << (result.spectrum.used_sparse_generalized_solver ? 1 : 0)
             << " dense_cross_checked="
             << (result.spectrum.dense_cross_checked ? 1 : 0)
             << " dense_fallback="
@@ -686,12 +873,25 @@ double compute_reference_localization_direct_delta(
     }
     const Eigen::SparseMatrix<double> expected_coarse_basis = select_columns(
         hierarchy.coarse_to_reference(), coarse_basis_nodes);
-    const ComplexMatrix expected_coarse_energy = ComplexMatrix(
+    Eigen::SparseMatrix<double> expected_coarse_energy =
         expected_coarse_basis.transpose() * reference_energy
-        * expected_coarse_basis).cast<Complex>();
-    if (!expected_coarse_energy.isApprox(certificate.coarse_energy, 2e-12)) {
+        * expected_coarse_basis;
+    expected_coarse_energy = 0.5 * (
+        expected_coarse_energy
+        + Eigen::SparseMatrix<double>(expected_coarse_energy.transpose()));
+    expected_coarse_energy.makeCompressed();
+    if (sparse_relative_difference(
+            expected_coarse_energy,
+            certificate.coarse_energy_operator) > 2e-12) {
         throw std::invalid_argument(
             "localization certificate coarse energy is stale");
+    }
+    if (certificate.coarse_energy.rows() != expected_coarse_energy.rows()
+        || certificate.coarse_energy.cols() != expected_coarse_energy.cols()
+        || !ComplexMatrix(expected_coarse_energy).cast<Complex>().isApprox(
+            certificate.coarse_energy, 2e-12)) {
+        throw std::invalid_argument(
+            "direct localization validation requires the retained dense coarse energy");
     }
     const ComplexMatrix difference = ComplexMatrix(ideal_adjoint_basis)
         - ComplexMatrix(localized_adjoint_basis);

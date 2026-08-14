@@ -507,6 +507,8 @@ PracticalPaperConfig sample_practical_config() {
     config.petrov_mode = lod2d::helmholtz::HelmholtzPetrovMode::CorrectedTestOnly;
     config.patch_solver_kind =
         lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
+    config.patch_symbolic_cache_slots = 4;
+    config.patch_reuse_identical_factorization = true;
     config.maximum_patch_threads = 2;
     config.work_limits.maximum_iterations = 40;
     config.work_limits.maximum_H_steps = 8;
@@ -560,6 +562,10 @@ void verify_practical_v4_contract() {
                     original.practical_stop_tolerance &&
                 driver.patch_solver.maximum_parallel_solves ==
                     original.maximum_patch_threads &&
+                driver.patch_solver.symbolic_cache_slots ==
+                    original.patch_symbolic_cache_slots &&
+                driver.patch_solver.reuse_identical_factorization ==
+                    original.patch_reuse_identical_factorization &&
                 driver.stop_policy ==
                     lod2d::helmholtz::adaptive::
                         PracticalStopPolicy::FixedWorkHorizon &&
@@ -575,6 +581,14 @@ void verify_practical_v4_contract() {
     changed.maximum_patch_threads = 1;
     require(canonical_config_hash(changed) != canonical_config_hash(original),
             "practical v4 identity ignores the patch concurrency cap");
+    changed = original;
+    changed.patch_symbolic_cache_slots = 8;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v4 identity ignores patch symbolic cache capacity");
+    changed = original;
+    changed.patch_reuse_identical_factorization = false;
+    require(canonical_config_hash(changed) != canonical_config_hash(original),
+            "practical v4 identity ignores exact factorization reuse policy");
     changed = original;
     changed.singular_oscillatory_fraction = 0.0;
     changed.singular_cutoff_outer_radius = 1.0;
@@ -695,9 +709,23 @@ void verify_practical_v4_contract() {
     changed.method_id = PracticalPaperMethod::Slod;
     changed.ell0 = 2;
     changed.ell_max = changed.ell0;
+    changed.patch_solver_kind =
+        lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSaddle;
+    changed.slod_direct_schur_min_reference_dofs = 1000;
     validate_practical_paper_config(changed);
+    require(parse_practical_paper_config(canonical_json(changed)) == changed
+                && canonical_config_hash(changed)
+                    != canonical_config_hash(original),
+            "SLOD direct-Schur switch threshold was not part of run identity");
     require_invalid([&] { (void)make_practical_driver_config(changed); },
-                    "SLOD was silently relabelled as the adaptive LOD backend");
+            "SLOD was silently relabelled as the adaptive LOD backend");
+    changed.patch_solver_kind =
+        lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
+    require_invalid([&] { validate_practical_paper_config(changed); },
+                    "SLOD accepted an automatic switch with a non-saddle base solver");
+    changed.patch_solver_kind =
+        lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSaddle;
+    changed.slod_direct_schur_min_reference_dofs = 0;
     changed.ell_max += 1;
     require_invalid([&] { validate_practical_paper_config(changed); },
                     "SLOD accepted a non-frozen empirical ell");

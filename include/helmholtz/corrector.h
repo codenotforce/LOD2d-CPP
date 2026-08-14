@@ -41,6 +41,14 @@ struct HelmholtzCorrectorDiagnostics {
     double min_schur_reciprocal_condition = 1.0;
     int patch_cache_hits = 0;
     int patch_cache_misses = 0;
+    // Sums of per-patch worker time. They expose where parallel corrector
+    // work is spent; correctors_ms in HelmholtzBuildTimings remains wall time.
+    double patch_assembly_work_seconds = 0.0;
+    double patch_solve_work_seconds = 0.0;
+    double patch_pack_work_seconds = 0.0;
+    int maximum_patch_dofs = 0;
+    int maximum_patch_constraints = 0;
+    int maximum_patch_rhs = 0;
 };
 
 struct HelmholtzCorrectorResult {

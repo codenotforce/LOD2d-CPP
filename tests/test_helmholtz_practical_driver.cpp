@@ -423,6 +423,24 @@ void verify_scheduled_reference_refresh_inherits_coarse_mesh() {
                 && first_epoch_one_solve->coarse_dofs == completed.coarse_dofs
                 && first_epoch_one_solve->coarse_elements == completed.coarse_elements,
             "epoch 1 did not start by solving on the inherited epoch-0 coarse mesh");
+    const auto warm_after_refine = std::find_if(
+        result.journal.begin(), result.journal.end(),
+        [](const PracticalIterationRecord &record) {
+            return record.reference_epoch == 0 && record.H_step == 1
+                && record.localization_eigen_iterations > 0;
+        });
+    const auto warm_after_refresh = std::find_if(
+        result.journal.begin(), result.journal.end(),
+        [](const PracticalIterationRecord &record) {
+            return record.reference_epoch == 1
+                && record.localization_eigen_iterations > 0;
+        });
+    require(warm_after_refine != result.journal.end()
+                && warm_after_refine->localization_used_warm_start,
+            "coarse refinement discarded the prolonged localization warm start");
+    require(warm_after_refresh != result.journal.end()
+                && warm_after_refresh->localization_used_warm_start,
+            "reference refresh discarded the inherited localization warm start");
 }
 
 } // namespace

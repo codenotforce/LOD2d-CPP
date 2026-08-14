@@ -4,6 +4,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <iostream>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -49,6 +51,36 @@ std::vector<int> free_coarse_nodes(const TriMesh &mesh) {
         }
     }
     return free_nodes;
+}
+
+ComplexVector prolongate_coarse_warm_start(
+    const std::vector<int> &old_nodes,
+    const ComplexVector &old_values,
+    const std::vector<int> &new_nodes) {
+    if (old_values.size() != static_cast<int>(old_nodes.size())
+        || !old_values.allFinite() || old_values.norm() == 0.0) {
+        return {};
+    }
+    ComplexVector result = ComplexVector::Zero(new_nodes.size());
+    std::size_t old_index = 0;
+    std::size_t copied = 0;
+    for (std::size_t new_index = 0;
+         new_index < new_nodes.size() && old_index < old_nodes.size();
+         ++new_index) {
+        while (old_index < old_nodes.size()
+               && old_nodes[old_index] < new_nodes[new_index]) {
+            ++old_index;
+        }
+        if (old_index < old_nodes.size()
+            && old_nodes[old_index] == new_nodes[new_index]) {
+            result(static_cast<int>(new_index)) =
+                old_values(static_cast<int>(old_index));
+            ++old_index;
+            ++copied;
+        }
+    }
+    if (copied != old_nodes.size()) return {};
+    return result;
 }
 
 std::vector<double> pull_element_values(
@@ -398,6 +430,30 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
         0.0,
         elapsed_seconds(start_, std::chrono::steady_clock::now())
             - evaluation_seconds_excluded_);
+    if (std::getenv("LOD2D_PROGRESS") != nullptr) {
+        std::cerr
+            << "LOD2D_PROGRESS"
+            << " iteration=" << record.sequence
+            << " epoch=" << record.reference_epoch
+            << " H_step=" << record.H_step
+            << " action=" << practical_driver_action_name(record.action)
+            << " N_H=" << record.coarse_nodes
+            << " N_ref=" << record.reference_nodes
+            << " N_amb=" << record.ambient_nodes
+            << " ell=" << record.ell
+            << " eigen_iterations="
+            << record.localization_eigen_iterations
+            << " eigen_residual="
+            << record.localization_eigen_relative_residual
+            << " sparse_generalized="
+            << (record.localization_sparse_generalized ? 1 : 0)
+            << " warm_start="
+            << (record.localization_used_warm_start ? 1 : 0)
+            << " patch_threads=" << record.localization_patch_threads
+            << " cumulative_seconds="
+            << record.time_total_cumulative_seconds
+            << std::endl;
+    }
     journal_.push_back(std::move(record));
 }
 
@@ -558,6 +614,18 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         ? elapsed_seconds(certificate_begin, certificate_end)
                         : 0.0;
                 record.rebuilt_correctors = model_->correctors().primal.size();
+                if (localization_) {
+                    record.localization_eigen_iterations =
+                        localization_->spectrum.iterations;
+                    record.localization_eigen_relative_residual =
+                        localization_->spectrum.relative_residual;
+                    record.localization_sparse_generalized =
+                        localization_->spectrum.used_sparse_generalized_solver;
+                    record.localization_used_warm_start =
+                        localization_->spectrum.used_warm_start;
+                    record.localization_patch_threads =
+                        localization_->ambient_riesz.parallel_threads;
+                }
                 std::string operation_limit;
                 if (work_limit_exceeded(operation_limit)) {
                     stop_reason = operation_limit;
@@ -781,6 +849,9 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     break;
                 }
                 const std::size_t marked_count = pending_marking_.size();
+                const std::vector<int> old_free_nodes = free_coarse_nodes(
+                    hierarchy_->coarse_mesh());
+                const ComplexVector old_warm_start = localization_warm_start_;
                 const auto begin = std::chrono::steady_clock::now();
                 const ReferenceEpochRefinementResult refined =
                     hierarchy_->refine_coarse_preserving_reference(pending_marking_);
@@ -812,7 +883,10 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 }
                 pending_marking_.clear();
                 invalidate_discrete_cache();
-                localization_warm_start_.resize(0);
+                localization_warm_start_ = prolongate_coarse_warm_start(
+                    old_free_nodes,
+                    old_warm_start,
+                    free_coarse_nodes(hierarchy_->coarse_mesh()));
                 state_ = PracticalDriverState::LocalizationCheck;
                 PracticalIterationRecord record;
                 record.state_before = PracticalDriverState::RefineCoarse;

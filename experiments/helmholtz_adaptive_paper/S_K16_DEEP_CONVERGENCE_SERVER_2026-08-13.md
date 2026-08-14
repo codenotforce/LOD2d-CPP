@@ -89,13 +89,14 @@ two SLOD levels. Run the four configurations serially:
 
 ```bash
 CONFIGS='experiments/helmholtz_adaptive_paper/configs/S-palod-k16-deep-convergence-step12-v4.json experiments/helmholtz_adaptive_paper/configs/S-slod-k16-deep-convergence-ell2-fixed-ratio-step9-v4.json experiments/helmholtz_adaptive_paper/configs/S-ufem-k16-deep-convergence-level16-step11-v4.json experiments/helmholtz_adaptive_paper/configs/S-afem-k16-deep-convergence-level18-step28-v4.json' \
-MODE=custom PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=64 \
+MODE=custom PATCH_THREADS=16 JOBS=16 MIN_AVAILABLE_GIB=64 \
 RESULT_DIR="$PWD/results/S-k16-deep-convergence-server" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-`PATCH_THREADS=4` is a conservative launch value, not a frozen experimental
-parameter.  The DoF/error figure is thread-count independent and may use any
+`PATCH_THREADS=16` uses the parallel ambient-defect Riesz and large-Gram
+reduction paths. It is not a frozen experimental parameter. The DoF/error
+figure is thread-count independent and may use any
 successful deep run.  For an error-versus-time figure, record the actual
 thread count and do not mix timings from different thread counts or binaries.
 
@@ -173,7 +174,7 @@ Run both supplements serially:
 
 ```bash
 CONFIGS='experiments/helmholtz_adaptive_paper/configs/S-palod-k16-deep-convergence-step15-v4.json experiments/helmholtz_adaptive_paper/configs/S-ufem-k16-deep-convergence-level18-step13-v4.json' \
-MODE=custom PATCH_THREADS=4 JOBS=16 MIN_AVAILABLE_GIB=32 \
+MODE=custom PATCH_THREADS=16 JOBS=16 MIN_AVAILABLE_GIB=32 \
 RESULT_DIR="$PWD/results/S-k16-five-epoch-and-ufem-level18" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
@@ -224,8 +225,9 @@ the cold localization power iteration did not meet its tolerance in 1,000
 iterations at dimension 17,448. The preceding solve on the identical inherited
 coarse space had already computed a valid dominant vector, but the epoch
 refresh discarded it. The driver now preserves this coarse-coordinate warm
-start across a reference-only refresh; it is still cleared whenever H changes
-and the vector dimension is no longer compatible.
+start across a reference-only refresh and zero-extends it by persistent coarse
+node ID after H refinement. Large coarse spaces also avoid explicit dense
+Cholesky whitening by using the sparse-denominator generalized iteration.
 
 The revised 366 GiB comparison deliberately uses the requested smaller
 horizons:
@@ -261,6 +263,20 @@ and output contract, skips completed `.done` cases on restart, and records
 `/usr/bin/time -v`. If a run is interrupted, rerun the identical command: all
 completed methods are skipped. Do not lower `MIN_AVAILABLE_GIB` while another
 large job is resident.
+
+Live progress is enabled by default. During PALOD, use
+
+```bash
+tail -f results/S-corner-wave-k16-six-epoch/logs/*palod*.stdout
+```
+
+`LOD2D_PROGRESS iteration=...` reports a journal sequence number: every state
+transition increments it, so it is not an eigensolver iteration count.  The
+separate `eigen_iterations=...` field is the number of generalized power
+iterations used by that localization check.  `warm_start=1` confirms that the
+previous dominant vector was reused; `sparse_generalized=1` confirms that the
+large-space sparse-denominator path was selected. The same distinction is
+stored as `iteration` and `localization_eigen_iterations` in `iterations.csv`.
 
 The decisive diagnostic is the terminal rolling UFEM exponent. A transition
 toward `N^(-1/3)` while the nonzero wave is retained supports the controlled-
