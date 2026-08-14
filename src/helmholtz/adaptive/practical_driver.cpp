@@ -464,8 +464,10 @@ void PracticalAdaptiveDriver::append_record(PracticalIterationRecord record) {
             << " spectrum_ms="
             << 1000.0 * record.time_localization_spectrum_seconds
             << " cumulative_seconds="
-            << record.time_total_cumulative_seconds
-            << std::endl;
+            << record.time_total_cumulative_seconds;
+        if (!record.detail.empty())
+            std::cerr << " detail=\"" << record.detail << '"';
+        std::cerr << std::endl;
     }
     journal_.push_back(std::move(record));
 }

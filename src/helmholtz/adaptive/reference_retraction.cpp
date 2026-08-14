@@ -14,8 +14,10 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <iomanip>
 #include <iostream>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <unordered_map>
 #include <unordered_set>
@@ -24,6 +26,12 @@ namespace lod2d::helmholtz::adaptive {
 namespace {
 
 constexpr double kRankTolerance = 2e-12;
+
+std::string scientific_text(double value) {
+    std::ostringstream output;
+    output << std::scientific << std::setprecision(17) << value;
+    return output.str();
+}
 
 struct PointKey {
     std::uint64_t x = 0;
@@ -411,6 +419,42 @@ LocalizationSpectrum largest_generalized_eigenvalue_sparse(
     };
     normalize_energy(iterate);
 
+    ComplexVector previous_direction;
+    const auto append_energy_orthonormal = [&] (
+        std::vector<ComplexVector> &basis,
+        ComplexVector candidate) {
+        const ComplexVector original_energy_times = multiply_real_sparse(
+            hermitian_denominator, candidate);
+        const double original_squared = std::max(
+            0.0, std::real(candidate.dot(original_energy_times)));
+        if (!(original_squared > 0.0) || !std::isfinite(original_squared))
+            return false;
+
+        // Two modified Gram--Schmidt passes keep the tiny Ritz problem
+        // reliable when the dominant generalized eigenvalues nearly agree.
+        for (int pass = 0; pass < 2; ++pass) {
+            for (const ComplexVector &vector : basis) {
+                const ComplexVector candidate_energy = multiply_real_sparse(
+                    hermitian_denominator, candidate);
+                candidate -= vector * vector.dot(candidate_energy);
+            }
+        }
+        const ComplexVector candidate_energy = multiply_real_sparse(
+            hermitian_denominator, candidate);
+        const double squared = std::max(
+            0.0, std::real(candidate.dot(candidate_energy)));
+        const double dependence_threshold =
+            64.0 * std::numeric_limits<double>::epsilon()
+            * std::sqrt(original_squared);
+        if (!std::isfinite(squared)
+            || std::sqrt(squared) <= dependence_threshold) {
+            return false;
+        }
+        candidate /= std::sqrt(squared);
+        basis.push_back(std::move(candidate));
+        return true;
+    };
+
     for (int iteration = 1; iteration <= config.maximum_iterations; ++iteration) {
         const ComplexVector applied = numerator * iterate;
         const ComplexVector energy_times = multiply_real_sparse(
@@ -439,23 +483,68 @@ LocalizationSpectrum largest_generalized_eigenvalue_sparse(
             break;
         }
 
-        ComplexVector next = solve_real_factorization(
-            factorization, applied);
-        if (factorization.info() != Eigen::Success || !next.allFinite()) {
-            throw std::runtime_error(
-                "sparse generalized localization iteration solve failed");
+        // Plain generalized power iteration costs O(1/gap) iterations and
+        // stalls for clustered dominant spectra. Use a locally optimal
+        // preconditioned Ritz update in span{x, E^{-1}r, p}. The sparse E
+        // factorization and exact dual-residual acceptance test are retained.
+        std::vector<ComplexVector> basis;
+        basis.reserve(3);
+        basis.push_back(iterate);
+        (void)append_energy_orthonormal(basis, inverse_residual);
+        if (previous_direction.size() == dimension)
+            (void)append_energy_orthonormal(basis, previous_direction);
+        if (basis.size() == 1) {
+            ComplexVector power_candidate = solve_real_factorization(
+                factorization, applied);
+            if (factorization.info() != Eigen::Success
+                || !power_candidate.allFinite()) {
+                throw std::runtime_error(
+                    "sparse generalized localization fallback solve failed");
+            }
+            (void)append_energy_orthonormal(
+                basis, std::move(power_candidate));
         }
-        const ComplexVector next_energy = multiply_real_sparse(
-            hermitian_denominator, next);
-        const double next_squared = std::real(next.dot(next_energy));
-        if (next_squared
-            <= std::numeric_limits<double>::epsilon()
-                * std::max(1.0, applied.squaredNorm())) {
-            result.lambda_max = 0.0;
-            result.relative_residual = 0.0;
-            result.converged = true;
-            iterate.setZero();
-            break;
+        if (basis.size() == 1) {
+            throw std::runtime_error(
+                "localization sparse generalized Ritz subspace stagnated: "
+                "dimension=" + std::to_string(dimension)
+                + ", iteration=" + std::to_string(iteration)
+                + ", relative_residual="
+                + scientific_text(result.relative_residual));
+        }
+
+        const int subspace_dimension = static_cast<int>(basis.size());
+        ComplexMatrix projected = ComplexMatrix::Zero(
+            subspace_dimension, subspace_dimension);
+        std::vector<ComplexVector> numerator_times_basis;
+        numerator_times_basis.reserve(basis.size());
+        numerator_times_basis.push_back(applied);
+        for (int index = 1; index < subspace_dimension; ++index)
+            numerator_times_basis.push_back(numerator * basis[index]);
+        for (int column = 0; column < subspace_dimension; ++column) {
+            for (int row = 0; row < subspace_dimension; ++row) {
+                projected(row, column) = basis[row].dot(
+                    numerator_times_basis[column]);
+            }
+        }
+        projected = (0.5 * (projected + projected.adjoint())).eval();
+        Eigen::SelfAdjointEigenSolver<ComplexMatrix> ritz_solver(projected);
+        if (ritz_solver.info() != Eigen::Success) {
+            throw std::runtime_error(
+                "localization sparse generalized Ritz solve failed");
+        }
+        const ComplexVector coefficients =
+            ritz_solver.eigenvectors().col(subspace_dimension - 1);
+        ComplexVector next = ComplexVector::Zero(dimension);
+        previous_direction = ComplexVector::Zero(dimension);
+        for (int index = 0; index < subspace_dimension; ++index) {
+            next += basis[index] * coefficients(index);
+            if (index > 0)
+                previous_direction += basis[index] * coefficients(index);
+        }
+        if (!next.allFinite()) {
+            throw std::runtime_error(
+                "localization sparse generalized Ritz vector is non-finite");
         }
         iterate = std::move(next);
         normalize_energy(iterate);
@@ -466,7 +555,7 @@ LocalizationSpectrum largest_generalized_eigenvalue_sparse(
             "dimension=" + std::to_string(dimension)
             + ", iterations=" + std::to_string(result.iterations)
             + ", relative_residual="
-            + std::to_string(result.relative_residual));
+            + scientific_text(result.relative_residual));
     }
     result.dominant_vector = iterate;
 
@@ -516,6 +605,13 @@ double dense_largest_generalized_eigenvalue(
 }
 
 } // namespace
+
+LocalizationSpectrum compute_localization_spectrum(
+    const ComplexMatrix &numerator,
+    const Eigen::SparseMatrix<double> &denominator,
+    const LocalizationEigenConfig &config) {
+    return largest_generalized_eigenvalue(numerator, denominator, config);
+}
 
 ComplexVector ReferenceRetraction::apply(
     const ComplexVector &ambient_values) const {
@@ -800,7 +896,7 @@ ReferenceLocalizationCertificate compute_reference_localization_certificate(
     }
     result.timings.coarse_energy_seconds = elapsed_seconds(stage_begin);
     stage_begin = std::chrono::steady_clock::now();
-    result.spectrum = largest_generalized_eigenvalue(
+    result.spectrum = compute_localization_spectrum(
         result.ambient_riesz.gram,
         result.coarse_energy_operator,
         eigen_config);

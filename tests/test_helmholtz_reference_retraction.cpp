@@ -146,6 +146,41 @@ void verify_retraction_identities() {
     }
 }
 
+void verify_clustered_sparse_generalized_spectrum() {
+    constexpr int dimension = 64;
+    Eigen::SparseMatrix<double> denominator(dimension, dimension);
+    std::vector<Eigen::Triplet<double>> denominator_entries;
+    denominator_entries.reserve(dimension);
+    ComplexMatrix numerator = ComplexMatrix::Zero(dimension, dimension);
+    for (int index = 0; index < dimension; ++index) {
+        const double energy_weight = 1.0 + 0.01 * index;
+        denominator_entries.emplace_back(index, index, energy_weight);
+        const double generalized_eigenvalue = index == 0
+            ? 1.0
+            : (index == 1 ? 1.0 - 1e-8 : 0.1);
+        numerator(index, index) = energy_weight * generalized_eigenvalue;
+    }
+    denominator.setFromTriplets(
+        denominator_entries.begin(), denominator_entries.end());
+
+    LocalizationEigenConfig config;
+    config.maximum_iterations = 80;
+    config.relative_tolerance = 1e-12;
+    config.dense_cross_check_max_dimension = dimension;
+    config.dense_fallback_max_dimension = 0;
+    config.sparse_generalized_min_dimension = 0;
+    const LocalizationSpectrum spectrum = compute_localization_spectrum(
+        numerator, denominator, config);
+    require(spectrum.used_sparse_generalized_solver
+                && spectrum.converged
+                && spectrum.relative_residual <= config.relative_tolerance
+                && spectrum.dense_cross_checked
+                && spectrum.dense_relative_difference <= 2e-12
+                && std::abs(spectrum.lambda_max - 1.0) <= 2e-12
+                && spectrum.iterations < config.maximum_iterations,
+            "preconditioned Ritz iteration failed on a clustered dominant spectrum");
+}
+
 void verify_localization_certificate() {
     const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
     ReferenceEpochHierarchy hierarchy(data.initial_mesh, 4, 6);
@@ -419,6 +454,7 @@ int main() {
     try {
         verify_cached_hierarchy_model_build();
         verify_retraction_identities();
+        verify_clustered_sparse_generalized_spectrum();
         verify_localization_certificate();
         std::cout << "Ambient-to-reference retraction and certificate passed\n";
         return 0;

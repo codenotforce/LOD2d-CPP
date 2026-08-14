@@ -77,6 +77,14 @@ struct LocalizationSpectrum {
     double dense_relative_difference = 0.0;
 };
 
+// Solves G x = lambda E x for the largest eigenvalue. This public entry
+// point is also used by focused numerical regressions; production
+// certificates call the same implementation.
+LocalizationSpectrum compute_localization_spectrum(
+    const ComplexMatrix &numerator,
+    const Eigen::SparseMatrix<double> &denominator,
+    const LocalizationEigenConfig &config = {});
+
 enum class LocalizationCertificateStatus {
     ImplementationStudy,
 };
