@@ -57,6 +57,14 @@ figures for R2a or the general formal E1 matrix.
 | UFEM | `configs/S-ufem-k16-deep-convergence-level16-step11-v4.json` | 11 uniform steps | three additional P1 points |
 | AFEM | `configs/S-afem-k16-deep-convergence-level18-step28-v4.json` | 28 adaptive steps | fourteen additional adaptive points |
 
+The first server attempt reached `maximum_coarse_elements=300000` before the
+fixed 28-step horizon. It was a clean structured stop, not a solver failure:
+`/usr/bin/time` therefore reported exit status zero, while the orchestration
+script correctly withheld the `.done` marker. The v2 server limits raise the
+coarse-element, unknown, and ambient caps to five million and the wall cap to
+12 hours. These remain hard safety limits and do not change marking or the
+numerical trajectory. New runs report the exact limit name in `stop_reason`.
+
 These are paper-candidate exact-error trajectories, not certified error-bound
 runs. A work limit, allocation failure, or non-`TrajectoryComplete` terminal
 state fails closed and must not be plotted as a completed curve. A reference-
@@ -67,10 +75,12 @@ The templates can be parsed without starting an experiment by passing
 `--validate-only` together with `--config` and `--manuscript-baseline` to
 `bench_helmholtz_adaptive_paper`.
 
-The previously interrupted AFEM directory cannot be resumed because the mesh
-trajectory contract changed. Rerun the AFEM template from its initial mesh in a
-new `RESULT_DIR` (or remove only that interrupted directory and its absent
-`.done` marker); do not concatenate the old 42 records with the new run.
+The interrupted AFEM directory cannot be resumed. Rerun the AFEM template from
+its initial mesh in a new `RESULT_DIR`; do not concatenate its partial records
+with the replacement. For a final four-method figure, rerun all four methods
+from the new commit in one fresh result directory so that every `run.json`
+records one commit and binary. Running only AFEM is acceptable as a diagnostic
+repair, but then the mixed-commit set is not a frozen paper dataset.
 
 ## Server command
 

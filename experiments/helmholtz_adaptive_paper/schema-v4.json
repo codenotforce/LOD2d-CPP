@@ -58,7 +58,7 @@
     "timing_repeats": {"enum": [1, 3]},
     "tolerances": {"$ref": "#/$defs/tolerances"},
     "trajectory_policy": {"enum": ["practical_indicator", "fixed_work_horizon"]},
-    "wavenumber": {"enum": [8, 16, 32]},
+    "wavenumber": {"enum": [2, 4, 8, 16, 32]},
     "work_limits": {"$ref": "#/$defs/workLimits"}
   },
   "$defs": {

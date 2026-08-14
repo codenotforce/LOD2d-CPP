@@ -387,16 +387,28 @@ PaperExecution run_adaptive_fem_trajectory(
         const double wall_seconds = cumulative_seconds();
         const bool wall_limited = config.work_limits.maximum_wall_seconds > 0.0
             && wall_seconds >= config.work_limits.maximum_wall_seconds;
-        if (execution.result.journal.size()
-                >= config.work_limits.maximum_iterations
-            || current_mesh().nodes.size()
-                > config.work_limits.maximum_unknowns
-            || current_mesh().elems.size()
-                > config.work_limits.maximum_coarse_elements
+        const bool iteration_limited = execution.result.journal.size()
+            >= config.work_limits.maximum_iterations;
+        const bool unknown_limited = current_mesh().nodes.size()
+            > config.work_limits.maximum_unknowns;
+        const bool coarse_element_limited = current_mesh().elems.size()
+            > config.work_limits.maximum_coarse_elements;
+        if (iteration_limited || unknown_limited || coarse_element_limited
             || wall_limited) {
             execution.result.state = PracticalDriverState::WorkLimitReached;
-            execution.result.stop_reason =
-                "adaptive FEM trajectory reached a configured work limit";
+            if (iteration_limited) {
+                execution.result.stop_reason =
+                    "adaptive FEM trajectory reached maximum_iterations";
+            } else if (unknown_limited) {
+                execution.result.stop_reason =
+                    "adaptive FEM trajectory reached maximum_unknowns";
+            } else if (coarse_element_limited) {
+                execution.result.stop_reason =
+                    "adaptive FEM trajectory reached maximum_coarse_elements";
+            } else {
+                execution.result.stop_reason =
+                    "adaptive FEM trajectory reached maximum_wall_seconds";
+            }
             execution.result.final_element_eta_squared.clear();
             break;
         }

@@ -528,6 +528,17 @@ void verify_practical_v4_contract() {
     require(make_run_id(decoded) == make_run_id(original),
             "practical v4 run ID is not deterministic");
 
+    for (const double wavenumber : {2.0, 4.0, 8.0, 16.0, 32.0}) {
+        PracticalPaperConfig supported = original;
+        supported.wavenumber = wavenumber;
+        validate_practical_paper_config(supported);
+    }
+    PracticalPaperConfig unsupported = original;
+    unsupported.wavenumber = 3.0;
+    require_invalid(
+        [&] { validate_practical_paper_config(unsupported); },
+        "practical v4 accepted a wave number outside the frozen experiment set");
+
     const auto driver = make_practical_driver_config(original);
     require(driver.initial_coarse_level == original.initial_coarse_level &&
                 driver.reference_level == original.reference_level &&

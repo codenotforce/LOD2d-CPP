@@ -9,6 +9,7 @@ SOURCE_ITERATIONS=${SOURCE_ITERATIONS:-"$ROOT_DIR/results/adaptive-paper-extende
 TEMPLATE=${TEMPLATE:-"$ROOT_DIR/experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-reference-audit-v4.json"}
 RUNTIME_CONFIG="$RESULT_DIR/runtime-config.json"
 JOBS=${JOBS:-16}
+MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-16}
 
 if ! git -C "$ROOT_DIR" diff --quiet ||
    ! git -C "$ROOT_DIR" diff --cached --quiet; then
@@ -22,6 +23,16 @@ fi
 if [[ ! -f "$TEMPLATE" ]]; then
   echo "Missing audit config template: $TEMPLATE" >&2
   exit 2
+fi
+
+available_gib() {
+  awk '/MemAvailable:/ {printf "%d\n", $2 / 1024 / 1024}' /proc/meminfo
+}
+
+available=$(available_gib)
+if (( available < MIN_AVAILABLE_GIB )); then
+  echo "Refusing to start reference audit: MemAvailable=${available} GiB < ${MIN_AVAILABLE_GIB} GiB" >&2
+  exit 3
 fi
 
 mkdir -p "$BUILD_DIR" "$RESULT_DIR" "$REFERENCE_CACHE_DIR"

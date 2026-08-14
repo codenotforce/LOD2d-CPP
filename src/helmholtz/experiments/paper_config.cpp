@@ -1216,9 +1216,11 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
     (void)case_definition(config.case_id);
     (void)to_string(config.method_id);
     (void)to_string(config.trajectory_policy);
-    if (!(config.wavenumber == 8.0 || config.wavenumber == 16.0 ||
+    if (!(config.wavenumber == 2.0 || config.wavenumber == 4.0 ||
+          config.wavenumber == 8.0 || config.wavenumber == 16.0 ||
           config.wavenumber == 32.0)) {
-        throw std::invalid_argument("practical paper wavenumber must be 8, 16, or 32");
+        throw std::invalid_argument(
+            "practical paper wavenumber must be 2, 4, 8, 16, or 32");
     }
     if (config.reference_mesh != "uniform-nvb" ||
         config.ambient_mesh != "reference-shadow") {

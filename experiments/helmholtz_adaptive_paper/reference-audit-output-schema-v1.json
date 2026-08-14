@@ -13,7 +13,7 @@
     "config_hash": {"type": "string", "pattern": "^[0-9a-f]{16}$"},
     "case": {"enum": ["R1", "R2a", "R2b", "S"]},
     "method": {"enum": ["PALOD", "HLOD-fixed", "SLOD", "UFEM", "AFEM"]},
-    "wavenumber": {"enum": [8, 16, 32]},
+    "wavenumber": {"enum": [2, 4, 8, 16, 32]},
     "base_reference_level": {"type": "integer", "minimum": 1},
     "audit_reference_level": {"type": "integer", "minimum": 2},
     "base_reference_nodes": {"type": "integer", "minimum": 1},

@@ -34,6 +34,9 @@ fixed-horizon calibration. Schema v4 is the active practical paper contract cons
 | `configs/S-palod-k16-epoch3-level13-reference-audit-v4.json` | S level 13-to-14 audit after the next calibration |
 | `configs/R2a-palod-k{8,16,32}-krobust-prefix-level{11,13,15}-step5-v4.json` | Development-only single-epoch PALOD wave-number-robustness prefixes |
 | `configs/R2a-afem-k{8,16,32}-krobust-prefix-level{11,13,15}-step10-v4.json` | Development-only AFEM pollution/pre-asymptotic comparison prefixes |
+| `configs/R2a-{palod,afem}-k{2,4,8,16,32}-krobust-server-*.json` | Serial server trajectories with a common three-level reference gap |
+| `configs/R2a-{palod,afem}-k{2,4,8,16,32}-krobust-server-level18-reference-audit-v4.json` | Method-specific level-19 reference adequacy gates for the R2a wave-number suite |
+| `R2A_KROBUST_SERVER_2026-08-14.md` | 366 GiB server launch, audit, and acceptance procedure |
 
 The C++ registry in `helmholtz/experiments/paper_config.h` is the executable
 counterpart. The legacy v1 and active practical types are separate. In particular, v4

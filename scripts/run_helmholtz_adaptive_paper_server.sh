@@ -39,11 +39,25 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/S-palod-k16-epoch2-level12-step6-calibration-v4.json
     )
     ;;
+  r2a-krobust)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k2-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-afem-k2-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k4-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-afem-k4-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k8-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-afem-k8-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k16-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-afem-k16-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-palod-k32-krobust-server-level18-step8-v4.json
+      experiments/helmholtz_adaptive_paper/configs/R2a-afem-k32-krobust-server-level18-step8-v4.json
+    )
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, calibration, or custom" >&2
+    echo "MODE must be smoke, pilot, calibration, r2a-krobust, or custom" >&2
     exit 2
     ;;
 esac
