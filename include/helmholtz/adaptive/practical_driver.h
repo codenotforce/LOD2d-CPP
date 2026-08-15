@@ -107,6 +107,13 @@ struct PracticalDriverConfig {
     // reference epoch is closed and the ambient mesh is promoted to the next
     // reference mesh.  The coarse mesh and H_steps are inherited unchanged.
     std::vector<std::size_t> reference_refresh_H_steps;
+    // Optional adaptive epoch boundary.  When the smallest local NVB-level
+    // difference between reference children and their parent coarse element
+    // reaches this value, refine/promote the ambient shadow.  Zero disables.
+    int reference_refresh_level_gap = 0;
+    // Required with reference_refresh_level_gap.  The trajectory completes
+    // once the promoted reference mesh reaches this deepest NVB level.
+    int maximum_reference_level = 0;
     // Optional fixed-epoch capacity stop.  Zero disables it.  Otherwise the
     // driver completes before refining once the finest current coarse element
     // is this many levels below the fixed reference level.

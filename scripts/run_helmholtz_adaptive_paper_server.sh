@@ -63,10 +63,10 @@ case "$MODE" in
     ;;
   s-corner-wave-medium)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-medium-level20-step15-v4.json
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-medium-step28-v4.json
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-slod-k16-medium-ell2-gap4-step10-v4.json
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-medium-step15-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-H6-level20-step14-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-H6-level20-step14-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-slod-k16-H6-ell2-gap4-h20-step10-v4.json
+      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-H6-h12-to-h20-gap4-step10-v4.json
     )
     ;;
   custom)

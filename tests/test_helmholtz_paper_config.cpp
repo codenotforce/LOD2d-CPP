@@ -649,7 +649,7 @@ void verify_practical_v4_contract() {
     require(canonical_config_hash(changed) != canonical_config_hash(original),
             "practical v4 identity ignores the reference adequacy policy");
     changed = original;
-    changed.reference_refresh_H_steps = {2, 5};
+    changed.reference_refresh_H_steps = {2, 8};
     const std::string scheduled_encoded = canonical_json(changed);
     const PracticalPaperConfig scheduled_decoded =
         parse_practical_paper_config(scheduled_encoded);
@@ -662,6 +662,20 @@ void verify_practical_v4_contract() {
     changed.reference_refresh_H_steps = {2, 2};
     require_invalid([&] { (void)canonical_json(changed); },
                     "practical v4 accepted a repeated reference refresh step");
+    changed = original;
+    changed.reference_refresh_level_gap = 2;
+    changed.maximum_reference_level = 9;
+    const std::string level_gap_encoded = canonical_json(changed);
+    const PracticalPaperConfig level_gap_decoded =
+        parse_practical_paper_config(level_gap_encoded);
+    require(level_gap_decoded == changed
+                && make_practical_driver_config(level_gap_decoded)
+                       .reference_refresh_level_gap == 2
+                && make_practical_driver_config(level_gap_decoded)
+                       .maximum_reference_level == 9
+                && canonical_config_hash(changed)
+                    != canonical_config_hash(original),
+            "local level-gap epoch policy did not round trip into the driver identity");
 
     std::string with_legacy_theta_h = encoded;
     with_legacy_theta_h.insert(with_legacy_theta_h.size() - 1, ",\"theta_h\":0.5");

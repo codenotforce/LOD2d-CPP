@@ -475,6 +475,71 @@ void verify_scheduled_reference_refresh_inherits_coarse_mesh() {
             "reference refresh discarded the inherited localization warm start");
 }
 
+void verify_endpoint_reference_refresh_precedes_completion() {
+    PracticalDriverConfig config = base_config();
+    config.stop_policy = PracticalStopPolicy::FixedWorkHorizon;
+    config.tolerance_reference = 1e6;
+    config.limits.maximum_iterations = 30;
+    config.limits.maximum_H_steps = 1;
+    config.reference_refresh_H_steps = {1};
+    PracticalAdaptiveDriver driver(r1_problem(), config);
+    const PracticalDriverResult result = driver.run();
+    require(result.state == PracticalDriverState::TrajectoryComplete
+                && result.H_steps == 1
+                && count_action(
+                    result, PracticalDriverAction::CompleteReferenceEpoch) == 1
+                && count_action(
+                    result, PracticalDriverAction::RefreshReferenceEpoch) == 1
+                && count_action(
+                    result, PracticalDriverAction::CompleteTrajectory) == 1,
+            "endpoint reference refresh did not precede fixed-horizon completion");
+    const PracticalIterationRecord &refreshed = first_action(
+        result, PracticalDriverAction::RefreshReferenceEpoch);
+    const PracticalIterationRecord &completed = first_action(
+        result, PracticalDriverAction::CompleteTrajectory);
+    require(refreshed.reference_epoch == 1
+                && completed.reference_epoch == 1
+                && refreshed.H_step == completed.H_step,
+            "terminal solution was not recomputed in the refreshed reference epoch");
+}
+
+void verify_local_level_gap_refresh_reaches_reference_cap() {
+    PracticalDriverConfig config = base_config();
+    config.stop_policy = PracticalStopPolicy::FixedWorkHorizon;
+    config.reference_level = 5;
+    config.reference_refresh_level_gap = 2;
+    config.maximum_reference_level = 6;
+    config.rho_star = 0.9;
+    config.limits.maximum_H_steps = 4;
+    config.limits.maximum_iterations = 60;
+    PracticalAdaptiveDriver driver(r1_problem(), config);
+    const PracticalDriverResult result = driver.run();
+    if (!(result.state == PracticalDriverState::TrajectoryComplete
+          && result.stop_reason
+              == "maximum reference level reached at the local level-gap boundary"
+          && count_action(
+              result, PracticalDriverAction::CompleteReferenceEpoch) == 1
+          && count_action(
+              result, PracticalDriverAction::RefreshReferenceEpoch) == 1
+          && count_action(
+              result, PracticalDriverAction::CompleteTrajectory) == 1)) {
+        throw std::runtime_error(
+            std::string("local level-gap reference policy ended in ")
+            + practical_driver_state_name(result.state) + ": "
+            + result.stop_reason + "; H_steps="
+            + std::to_string(result.H_steps) + "; epochs="
+            + std::to_string(count_action(
+                result, PracticalDriverAction::RefreshReferenceEpoch)));
+    }
+    const PracticalIterationRecord &completed = first_action(
+        result, PracticalDriverAction::CompleteReferenceEpoch);
+    const PracticalIterationRecord &refreshed = first_action(
+        result, PracticalDriverAction::RefreshReferenceEpoch);
+    require(refreshed.reference_epoch == completed.reference_epoch + 1
+                && refreshed.reference_nodes > completed.reference_nodes,
+            "local level-gap refresh did not create a strictly finer reference epoch");
+}
+
 } // namespace
 
 int main() {
@@ -490,6 +555,8 @@ int main() {
         verify_fixed_work_horizon_respects_reference_gap();
         verify_streaming_evaluation_is_one_way();
         verify_scheduled_reference_refresh_inherits_coarse_mesh();
+        verify_endpoint_reference_refresh_precedes_completion();
+        verify_local_level_gap_refresh_reaches_reference_cap();
     } catch (const std::exception &error) {
         std::cerr << "test_helmholtz_practical_driver failed: "
                   << error.what() << '\n';

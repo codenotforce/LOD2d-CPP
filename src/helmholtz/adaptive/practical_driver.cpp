@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <utility>
@@ -51,6 +52,42 @@ std::vector<int> free_coarse_nodes(const TriMesh &mesh) {
         }
     }
     return free_nodes;
+}
+
+int minimum_local_reference_level_gap(
+    const ReferenceEpochHierarchy &hierarchy) {
+    const std::vector<int> &reference_levels =
+        hierarchy.reference_element_levels();
+    const std::vector<int> &parents =
+        hierarchy.reference_parent_coarse_elements();
+    const std::vector<int> &coarse_levels = hierarchy.coarse_levels();
+    if (reference_levels.empty()
+        || reference_levels.size() != parents.size()) {
+        throw std::logic_error(
+            "Reference level-gap metadata is incomplete.");
+    }
+    int gap = std::numeric_limits<int>::max();
+    for (std::size_t child = 0; child < parents.size(); ++child) {
+        const int parent = parents[child];
+        if (parent < 0
+            || static_cast<std::size_t>(parent) >= coarse_levels.size()) {
+            throw std::logic_error(
+                "Reference level-gap parent mapping is invalid.");
+        }
+        gap = std::min(
+            gap, reference_levels[child]
+                - coarse_levels[static_cast<std::size_t>(parent)]);
+    }
+    return gap;
+}
+
+int maximum_reference_element_level(
+    const ReferenceEpochHierarchy &hierarchy) {
+    const std::vector<int> &levels = hierarchy.reference_element_levels();
+    if (levels.empty()) {
+        throw std::logic_error("Reference level metadata is empty.");
+    }
+    return *std::max_element(levels.begin(), levels.end());
 }
 
 ComplexVector prolongate_coarse_warm_start(
@@ -370,11 +407,11 @@ void PracticalAdaptiveDriver::validate_config() const {
     }
     std::size_t previous_refresh = 0;
     for (const std::size_t refresh : config_.reference_refresh_H_steps) {
-        if (refresh == 0 || refresh >= config_.limits.maximum_H_steps
+        if (refresh == 0 || refresh > config_.limits.maximum_H_steps
             || refresh <= previous_refresh) {
             throw std::invalid_argument(
                 "Reference refresh H steps must be strictly increasing and lie in "
-                "[1, maximum_H_steps)." );
+                "[1, maximum_H_steps]." );
         }
         previous_refresh = refresh;
     }
@@ -382,6 +419,21 @@ void PracticalAdaptiveDriver::validate_config() const {
         && config_.stop_policy != PracticalStopPolicy::FixedWorkHorizon) {
         throw std::invalid_argument(
             "Scheduled reference refresh requires a fixed H-step trajectory.");
+    }
+    const bool has_level_gap_refresh =
+        config_.reference_refresh_level_gap > 0
+        || config_.maximum_reference_level > 0;
+    if (has_level_gap_refresh
+        && (config_.reference_refresh_level_gap <= 0
+            || config_.maximum_reference_level <= config_.reference_level
+            || config_.reference_refresh_level_gap
+                >= config_.reference_level - config_.initial_coarse_level
+            || config_.stop_policy
+                != PracticalStopPolicy::FixedWorkHorizon
+            || !config_.reference_refresh_H_steps.empty()
+            || config_.minimum_reference_level_gap > 0)) {
+        throw std::invalid_argument(
+            "Level-gap reference refresh requires a fixed H-step trajectory, an initial gap above the trigger, a larger maximum reference level, and no other refresh/gap policy.");
     }
     if (config_.minimum_reference_level_gap < 0
         || config_.minimum_reference_level_gap
@@ -794,10 +846,57 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     append_record(std::move(record));
                     break;
                 }
-                if (next_reference_refresh_
+                bool level_gap_refresh = false;
+                if (config_.reference_refresh_level_gap > 0
+                    && minimum_local_reference_level_gap(*hierarchy_)
+                        <= config_.reference_refresh_level_gap) {
+                    const int current_reference_max =
+                        maximum_reference_element_level(*hierarchy_);
+                    if (current_reference_max
+                        >= config_.maximum_reference_level) {
+                        stop_reason =
+                            "maximum reference level reached at the local level-gap boundary";
+                        state_ = PracticalDriverState::TrajectoryComplete;
+                        record.state_after = state_;
+                        record.action =
+                            PracticalDriverAction::CompleteTrajectory;
+                        record.detail = stop_reason;
+                        append_record(std::move(record));
+                        break;
+                    }
+
+                    const int ambient_max_before = *std::max_element(
+                        hierarchy_->ambient_element_levels().begin(),
+                        hierarchy_->ambient_element_levels().end());
+                    if (ambient_max_before <= current_reference_max) {
+                        // One extra NVB level corresponds to a diameter ratio
+                        // smaller by sqrt(2).  Refining the ambient shadow to
+                        // this stricter local ratio makes the next epoch's
+                        // reference space genuinely different rather than
+                        // merely incrementing the epoch label.
+                        const double promoted_ratio = std::pow(
+                            2.0,
+                            -0.5 * static_cast<double>(
+                                config_.reference_refresh_level_gap + 1));
+                        (void)hierarchy_->enforce_ambient_ratio(
+                            promoted_ratio * (1.0 + 1e-12));
+                    }
+                    const int ambient_max_after = *std::max_element(
+                        hierarchy_->ambient_element_levels().begin(),
+                        hierarchy_->ambient_element_levels().end());
+                    if (ambient_max_after <= current_reference_max
+                        || ambient_max_after
+                            > config_.maximum_reference_level) {
+                        throw std::runtime_error(
+                            "Level-gap epoch refresh could not advance the reference mesh without exceeding its maximum level.");
+                    }
+                    level_gap_refresh = true;
+                }
+                if (level_gap_refresh
+                    || (next_reference_refresh_
                         < config_.reference_refresh_H_steps.size()
                     && H_steps_ == config_.reference_refresh_H_steps[
-                        next_reference_refresh_]) {
+                        next_reference_refresh_])) {
                     const std::size_t coarse_nodes_before =
                         hierarchy_->coarse_mesh().nodes.size();
                     const std::size_t coarse_elements_before =
@@ -809,8 +908,9 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
 
                     record.state_after = PracticalDriverState::CoarseAdmissibility;
                     record.action = PracticalDriverAction::CompleteReferenceEpoch;
-                    record.detail =
-                        "completed scheduled reference epoch on inherited coarse mesh";
+                    record.detail = level_gap_refresh
+                        ? "completed local-level-gap reference epoch on inherited coarse mesh"
+                        : "completed scheduled reference epoch on inherited coarse mesh";
                     append_record(std::move(record));
 
                     const auto refresh_begin = std::chrono::steady_clock::now();
@@ -839,7 +939,7 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     // eigenvalue cluster makes a cold power iteration stall
                     // at the first solve of the new epoch.
                     invalidate_discrete_cache();
-                    ++next_reference_refresh_;
+                    if (!level_gap_refresh) ++next_reference_refresh_;
                     state_ = PracticalDriverState::CoarseAdmissibility;
 
                     PracticalIterationRecord refresh_record;
@@ -850,8 +950,9 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         PracticalDriverAction::RefreshReferenceEpoch;
                     refresh_record.time_mesh_seconds = elapsed_seconds(
                         refresh_begin, std::chrono::steady_clock::now());
-                    refresh_record.detail =
-                        "promoted ambient mesh to reference; inherited coarse mesh and ell";
+                    refresh_record.detail = level_gap_refresh
+                        ? "promoted locally refined ambient mesh at the configured level-gap boundary; inherited coarse mesh and ell"
+                        : "promoted ambient mesh to reference; inherited coarse mesh and ell";
                     append_record(std::move(refresh_record));
                     continue;
                 }

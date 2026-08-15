@@ -1,6 +1,6 @@
 # Case-S corner-wave four-method medium server run
 
-This is the single feedback run after the PALOD and SLOD performance changes.
+This is the aligned-level rerun after the PALOD and SLOD performance changes.
 It compares PALOD, SLOD, uniform FEM and adaptive FEM for the same manufactured
 corner-wave solution (`kappa=16`, singular amplitude 1, smooth wave amplitude
 0.05). It is a medium validation trajectory, not yet the final deepest paper
@@ -10,20 +10,32 @@ run.
 
 | Method | Configuration | Horizon | Purpose |
 |---|---|---:|---|
-| UFEM | `configs/S-corner-wave-ufem-k16-medium-level20-step15-v4.json` | 15 uniform steps, terminal level 20 | deeper uniform low-regularity comparison |
-| AFEM | `configs/S-corner-wave-afem-k16-medium-step28-v4.json` | 28 adaptive steps | adaptive low-regularity comparison |
-| SLOD | `configs/S-corner-wave-slod-k16-medium-ell2-gap4-step10-v4.json` | 10 synchronized H/h refinements, fixed level gap 4 | one-slot factorization reuse; late Schur probe |
-| PALOD | `configs/S-corner-wave-palod-k16-medium-step15-v4.json` | 15 H steps, refresh after 3/6/9/12 | five epochs, optimized localization path |
+| UFEM | `configs/S-corner-wave-ufem-k16-H6-level20-step14-v4.json` | H=6 start, 14 uniform steps, terminal level 20 | uniform low-regularity comparison |
+| AFEM | `configs/S-corner-wave-afem-k16-H6-level20-step14-v4.json` | H=6 start, 14 adaptive rounds | manufactured-exact AFEM through the level-20 work horizon |
+| SLOD | `configs/S-corner-wave-slod-k16-H6-ell2-gap4-h20-step10-v4.json` | H=6/h=10 start, 10 synchronized H/h refinements, fixed gap 4 | terminal H=16/h=20; memory-safe direct-saddle path |
+| PALOD | `configs/S-corner-wave-palod-k16-H6-h12-to-h20-gap4-step10-v4.json` | H=6/h=12 start; expected about 10 H steps | actual local level-gap refresh at `h-H <= 4`, stopping when the reference reaches level 20 |
 
 The server executes the methods in the table order: UFEM, AFEM, SLOD, then
 PALOD.  Old medium JSON files are retained only to reproduce the earlier
 shorter run and are not selected by `MODE=s-corner-wave-medium`.
 
-The SLOD base solver is `direct_saddle`. It switches to `direct_schur` only
-when the current reference space reaches 200,000 unconstrained DoFs. Every
-row records `patch_solver_used` and `slod_auto_direct_schur`, so the server
-data will show whether the late switch helped. With fixed `ell=2`, this is an
-experimental probe rather than an assumption that Schur must be faster.
+All four methods start from NVB level 6.  UFEM and the manufactured-exact AFEM
+therefore use 14 refinement rounds to reach the level-20 work horizon.  SLOD
+starts from H=6/h=10 and preserves the four-level difference through H=16/h=20.
+PALOD starts from H=6/h=12.  It does not infer a level from the H-step count.
+After every accepted local H refinement, the driver computes the actual NVB
+level difference between every reference child and its parent coarse element.
+When the minimum difference reaches four, the ambient shadow is locally
+advanced by one additional level and promoted; the inherited coarse mesh and
+ell are retained.  Once the promoted reference has reached level 20 and the
+gap again reaches four, the trajectory completes.  Ten H steps are expected
+for this case; `maximum_H_steps=20` is only a fail-safe ceiling.
+
+SLOD remains on `direct_saddle`; automatic direct-Schur switching is disabled.
+The previous level-19 run reached about 152 GiB with late direct Schur, whose
+factorization growth makes a level-20 run unsafe on a 366-GB machine.  The
+direct-saddle path is slower but has the safer observed memory scaling.  This
+level-20 SLOD run is still the dominant memory risk and must be monitored.
 
 ## Pull, build and run
 
@@ -39,8 +51,8 @@ git status --short
 git rev-parse HEAD
 
 MODE=s-corner-wave-medium \
-PATCH_THREADS=16 JOBS=16 MIN_AVAILABLE_GIB=32 \
-RESULT_DIR="$PWD/results/S-corner-wave-medium-<commit>" \
+PATCH_THREADS=16 JOBS=16 MIN_AVAILABLE_GIB=300 \
+RESULT_DIR="$PWD/results/S-corner-wave-H6-to-level20-<commit>" \
 bash scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
@@ -58,7 +70,7 @@ overall time split.
 ## Monitor without disturbing the run
 
 ```bash
-RESULT=results/S-corner-wave-medium-<commit>
+RESULT=results/S-corner-wave-H6-to-level20-<commit>
 tail -f "$RESULT"/logs/*.stdout
 find "$RESULT"/runs -name '*.done' -print
 grep -H -E 'LOD2D_(PALOD|SLOD|MODEL)_PROGRESS|LOD2D_MODEL_STAGES|state=' \
@@ -75,7 +87,7 @@ used.
 After all four `.done` files appear, run:
 
 ```bash
-RESULT=results/S-corner-wave-medium-<commit>
+RESULT=results/S-corner-wave-H6-to-level20-<commit>
 
 find "$RESULT"/runs -name '*.done' -print
 grep -H -E 'Elapsed|Percent of CPU|Maximum resident|Swaps|Exit status' \

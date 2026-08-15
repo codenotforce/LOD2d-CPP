@@ -1273,6 +1273,8 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
     if (config.initial_coarse_level < 0 ||
         config.reference_level <= config.initial_coarse_level ||
         config.ell0 < 0 || config.ell_max < config.ell0
+        || config.reference_refresh_level_gap < 0
+        || config.maximum_reference_level < 0
         || config.minimum_reference_level_gap < 0
         || config.minimum_reference_level_gap
             >= config.reference_level - config.initial_coarse_level) {
@@ -1301,11 +1303,11 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
     }
     std::size_t previous_refresh = 0;
     for (const std::size_t refresh : config.reference_refresh_H_steps) {
-        if (refresh == 0 || refresh >= config.work_limits.maximum_H_steps
+        if (refresh == 0 || refresh > config.work_limits.maximum_H_steps
             || refresh <= previous_refresh) {
             throw std::invalid_argument(
                 "reference_refresh_H_steps must be strictly increasing and lie in "
-                "[1, maximum_H_steps)");
+                "[1, maximum_H_steps]");
         }
         previous_refresh = refresh;
     }
@@ -1316,6 +1318,22 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
                 && config.method_id != PracticalPaperMethod::HlodFixed))) {
         throw std::invalid_argument(
             "scheduled reference refresh is supported only for fixed-horizon PALOD/HLOD-fixed");
+    }
+    const bool has_level_gap_refresh =
+        config.reference_refresh_level_gap > 0
+        || config.maximum_reference_level > 0;
+    if (has_level_gap_refresh
+        && (config.reference_refresh_level_gap <= 0
+            || config.maximum_reference_level <= config.reference_level
+            || config.reference_refresh_level_gap
+                >= config.reference_level - config.initial_coarse_level
+            || config.trajectory_policy
+                != PracticalTrajectoryPolicy::FixedWorkHorizon
+            || config.method_id != PracticalPaperMethod::Palod
+            || !config.reference_refresh_H_steps.empty()
+            || config.minimum_reference_level_gap > 0)) {
+        throw std::invalid_argument(
+            "level-gap reference refresh requires fixed-horizon PALOD, an initial gap above the trigger, a larger maximum reference level, and no other refresh/gap policy");
     }
     if (config.minimum_reference_level_gap > 0
         && (config.trajectory_policy
@@ -1434,6 +1452,9 @@ adaptive::PracticalDriverConfig make_practical_driver_config(
     result.reference_level = config.reference_level;
     result.reference_epoch = config.reference_epoch;
     result.reference_refresh_H_steps = config.reference_refresh_H_steps;
+    result.reference_refresh_level_gap =
+        config.reference_refresh_level_gap;
+    result.maximum_reference_level = config.maximum_reference_level;
     result.minimum_reference_level_gap =
         config.minimum_reference_level_gap;
     result.ell0 = config.ell0;
@@ -1490,6 +1511,8 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << json_string(kernel_solver_name(config.kernel_riesz_solver))
         << ",\"manuscript_sha256\":" << json_string(config.manuscript_sha256)
         << ",\"maximum_patch_threads\":" << config.maximum_patch_threads
+        << ",\"maximum_reference_level\":"
+        << config.maximum_reference_level
         << ",\"minimum_reference_level_gap\":"
         << config.minimum_reference_level_gap
         << ",\"method\":" << json_string(to_string(config.method_id))
@@ -1533,6 +1556,8 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         << ",\"refinement_levels\":"
         << config.reference_adequacy.refinement_levels << "}"
         << ",\"reference_level\":" << config.reference_level
+        << ",\"reference_refresh_level_gap\":"
+        << config.reference_refresh_level_gap
         << ",\"reference_mesh\":" << json_string(config.reference_mesh)
         << ",\"relative_energy_targets\":[";
     for (std::size_t index = 0; index < config.relative_energy_targets.size(); ++index) {
@@ -1596,6 +1621,10 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     const JsonObject &root = as_object(parsed_root, "root");
     const bool has_minimum_reference_level_gap =
         root.contains("minimum_reference_level_gap");
+    const bool has_reference_refresh_level_gap =
+        root.contains("reference_refresh_level_gap");
+    const bool has_maximum_reference_level =
+        root.contains("maximum_reference_level");
     const bool has_maximum_patch_threads =
         root.contains("maximum_patch_threads");
     const bool has_patch_symbolic_cache_slots =
@@ -1614,6 +1643,8 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         root.contains("smooth_wave_amplitude");
     JsonObject contract_root = root;
     contract_root.erase("minimum_reference_level_gap");
+    contract_root.erase("reference_refresh_level_gap");
+    contract_root.erase("maximum_reference_level");
     contract_root.erase("maximum_patch_threads");
     contract_root.erase("patch_symbolic_cache_slots");
     contract_root.erase("patch_reuse_identical_factorization");
@@ -1680,6 +1711,16 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         config.minimum_reference_level_gap = as_integer(
             get(root, "minimum_reference_level_gap"),
             "minimum_reference_level_gap");
+    }
+    if (has_reference_refresh_level_gap) {
+        config.reference_refresh_level_gap = as_integer(
+            get(root, "reference_refresh_level_gap"),
+            "reference_refresh_level_gap");
+    }
+    if (has_maximum_reference_level) {
+        config.maximum_reference_level = as_integer(
+            get(root, "maximum_reference_level"),
+            "maximum_reference_level");
     }
     if (has_maximum_patch_threads) {
         config.maximum_patch_threads = as_integer(
@@ -1861,6 +1902,9 @@ bool operator==(const PracticalPaperConfig &lhs,
         lhs.ambient_mesh == rhs.ambient_mesh &&
         lhs.reference_epoch == rhs.reference_epoch &&
         lhs.reference_refresh_H_steps == rhs.reference_refresh_H_steps &&
+        lhs.reference_refresh_level_gap ==
+            rhs.reference_refresh_level_gap &&
+        lhs.maximum_reference_level == rhs.maximum_reference_level &&
         lhs.minimum_reference_level_gap ==
             rhs.minimum_reference_level_gap &&
         lhs.initial_coarse_level == rhs.initial_coarse_level &&
