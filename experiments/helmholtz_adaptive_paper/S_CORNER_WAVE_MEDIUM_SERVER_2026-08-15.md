@@ -11,7 +11,7 @@ run.
 | Method | Configuration | Horizon | Purpose |
 |---|---|---:|---|
 | UFEM | `configs/S-corner-wave-ufem-k16-H6-level20-step14-v4.json` | H=6 start, 14 uniform steps, terminal level 20 | uniform low-regularity comparison |
-| AFEM | `configs/S-corner-wave-afem-k16-H6-level20-step14-v4.json` | H=6 start, 14 adaptive rounds | manufactured-exact AFEM through the level-20 work horizon |
+| AFEM | `configs/S-corner-wave-afem-k16-H6-level20-step14-v4.json` | H=6 start; actual deepest-level stop at 20 | manufactured-exact AFEM, with 28 rounds only as a fail-safe ceiling |
 | SLOD | `configs/S-corner-wave-slod-k16-H6-ell2-gap4-h20-step10-v4.json` | H=6/h=10 start, 10 synchronized H/h refinements, fixed gap 4 | terminal H=16/h=20; memory-safe direct-saddle path |
 | PALOD | `configs/S-corner-wave-palod-k16-H6-h12-to-h20-gap4-step10-v4.json` | H=6/h=12 start; expected about 10 H steps | actual local level-gap refresh at `h-H <= 4`, stopping when the reference reaches level 20 |
 
@@ -19,8 +19,9 @@ The server executes the methods in the table order: UFEM, AFEM, SLOD, then
 PALOD.  Old medium JSON files are retained only to reproduce the earlier
 shorter run and are not selected by `MODE=s-corner-wave-medium`.
 
-All four methods start from NVB level 6.  UFEM and the manufactured-exact AFEM
-therefore use 14 refinement rounds to reach the level-20 work horizon.  SLOD
+All four methods start from NVB level 6.  UFEM uses 14 uniform refinements.
+AFEM tracks the actual child NVB levels and stops when its deepest element
+reaches level 20; it does not identify 14 adaptive rounds with 14 levels. SLOD
 starts from H=6/h=10 and preserves the four-level difference through H=16/h=20.
 PALOD starts from H=6/h=12.  It does not infer a level from the H-step count.
 After every accepted local H refinement, the driver computes the actual NVB

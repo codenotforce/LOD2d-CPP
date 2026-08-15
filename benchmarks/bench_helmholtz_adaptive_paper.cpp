@@ -350,10 +350,13 @@ PaperExecution run_adaptive_fem_trajectory(
     const bool exact_only = data.exact && data.exact_gradient;
     std::unique_ptr<ReferenceEpochHierarchy> hierarchy;
     std::optional<TriMesh> detached_mesh;
+    std::vector<int> detached_levels;
     if (exact_only) {
         RefineOutput initial =
             refine_mesh_nvb(data.initial_mesh, config.initial_coarse_level);
         detached_mesh = std::move(initial.mesh);
+        detached_levels.assign(
+            detached_mesh->elems.size(), config.initial_coarse_level);
     } else {
         hierarchy = std::make_unique<ReferenceEpochHierarchy>(
             data.initial_mesh, config.initial_coarse_level,
@@ -454,8 +457,14 @@ PaperExecution run_adaptive_fem_trajectory(
         execution.result.eta_H = estimate.eta;
         execution.result.final_marked_H = marked;
         execution.result.final_element_eta_squared = estimate.element_squared;
-        const bool completed_trajectory =
-            refinements >= config.work_limits.maximum_H_steps || marked.empty();
+        const bool maximum_detached_level_reached = detached_mesh
+            && !detached_levels.empty()
+            && *std::max_element(
+                detached_levels.begin(), detached_levels.end())
+                >= config.reference_level;
+        const bool completed_trajectory = maximum_detached_level_reached
+            || refinements >= config.work_limits.maximum_H_steps
+            || marked.empty();
         PracticalIterationRecord solved;
         solved.sequence = execution.result.journal.size();
         solved.state_before = PracticalDriverState::SolveAndEstimate;
@@ -496,7 +505,9 @@ PaperExecution run_adaptive_fem_trajectory(
                 : PracticalDriverState::WorkLimitReached;
             execution.result.stop_reason = config.trajectory_policy
                     == PracticalTrajectoryPolicy::FixedWorkHorizon
-                ? "fixed H-step trajectory complete"
+                ? (maximum_detached_level_reached
+                    ? "maximum adaptive FEM level reached"
+                    : "fixed H-step trajectory complete")
                 : (marked.empty()
                     ? "adaptive FEM residual indicator vanished"
                     : "completed configured adaptive FEM refinement trajectory");
@@ -522,8 +533,12 @@ PaperExecution run_adaptive_fem_trajectory(
         const auto mesh_begin = std::chrono::steady_clock::now();
         ReferenceEpochRefinementResult refined;
         if (detached_mesh) {
+            const TriMesh parent_mesh = *detached_mesh;
+            const std::vector<int> parent_levels = detached_levels;
             RefineOutput detached =
-                bisect_newest_vertex(*detached_mesh, marked);
+                bisect_newest_vertex(parent_mesh, marked);
+            detached_levels = refinement_child_levels(
+                parent_mesh, parent_levels, detached);
             detached_mesh = std::move(detached.mesh);
             refined.status = ReferenceEpochRefinementStatus::Refined;
             refined.detail =
