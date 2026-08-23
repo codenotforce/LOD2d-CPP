@@ -39,6 +39,34 @@ int main() {
         const std::uint64_t reference_version = hierarchy.reference_mesh_version();
         const std::size_t reference_cells = hierarchy.reference_mesh().elems.size();
 
+        const SingularRegionClassification physical =
+            classify_singular_regions_with_physical_radius(
+                hierarchy.coarse_mesh(), singular_set, 1, 0.25);
+        require(physical.l_s >= physical.corrector_ell
+                    && physical.l_s >= 1,
+                "physical hybrid radius selected l_s < ell");
+        require(physical.minimum_physical_radius == 0.25
+                    && physical.covered_physical_radius + 1e-12 >= 0.25,
+                "physical hybrid neighborhood does not cover the frozen radius");
+        const SingularRegionClassification physical_ell3 =
+            classify_singular_regions_with_physical_radius(
+                hierarchy.coarse_mesh(), singular_set, 3, 0.25);
+        require(physical_ell3.l_s >= 3
+                    && physical_ell3.omega_f_elements.size()
+                        >= physical.omega_f_elements.size(),
+                "physical hybrid neighborhood ignored the ell lower bound");
+        ReferenceEpochHierarchy physical_hierarchy(data.initial_mesh, 2, 4);
+        physical_hierarchy.begin_reference_epoch();
+        const HybridMatchingResult physical_matching =
+            restore_hybrid_reference_matching_with_physical_radius(
+                physical_hierarchy, singular_set, 1, 0.25);
+        require(physical_matching.matching_holds
+                    && physical_matching.reference_unchanged
+                    && physical_matching.regions.l_s >= 1
+                    && physical_matching.regions.covered_physical_radius
+                        + 1e-12 >= 0.25,
+                "fixed-radius hybrid matching invariant was not restored");
+
         const HybridMatchingResult ell1 = restore_hybrid_reference_matching(
             hierarchy, singular_set, 1);
         require(ell1.matching_holds && ell1.reference_unchanged,
@@ -140,6 +168,8 @@ int main() {
 
         std::cout << "omega_s=" << ell2.regions.omega_s_elements.size()
                   << " omega_f=" << ell2.regions.omega_f_elements.size()
+                  << " physical_l_s=" << physical.l_s
+                  << " covered_radius=" << physical.covered_physical_radius
                   << " skipped_correctors="
                   << hybrid.correctors().diagnostics.skipped_patch_count
                   << " skipped_work_units="

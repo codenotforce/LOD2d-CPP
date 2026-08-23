@@ -46,6 +46,11 @@ struct ReferenceEpochCorrectorObservation {
     std::size_t rebuilt_correctors = 0;
     std::size_t skipped_correctors = 0;
     std::size_t skipped_corrector_work_units = 0;
+    int hybrid_l_s = -1;
+    double hybrid_minimum_physical_radius =
+        std::numeric_limits<double>::quiet_NaN();
+    double hybrid_covered_physical_radius =
+        std::numeric_limits<double>::quiet_NaN();
     double time_corrector = 0.0;
     double time_theta = 0.0;
     double time_gram_prepare_structure = 0.0;
@@ -209,6 +214,11 @@ struct ReferenceEpochDriverRecord {
     std::size_t rebuilt_correctors = 0;
     std::size_t skipped_correctors = 0;
     std::size_t skipped_corrector_work_units = 0;
+    int hybrid_l_s = -1;
+    double hybrid_minimum_physical_radius =
+        std::numeric_limits<double>::quiet_NaN();
+    double hybrid_covered_physical_radius =
+        std::numeric_limits<double>::quiet_NaN();
     double time_corrector = 0.0;
     double time_theta = 0.0;
     double time_gram_prepare_structure = 0.0;

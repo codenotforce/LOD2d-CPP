@@ -12,6 +12,7 @@
   "localization_eigen_maximum_iterations": 300,
   "localization_eigen_relative_tolerance": 1e-4,
   "singularity_hybrid": false,
+  "hybrid_minimum_physical_radius": 0.0,
   "ell0": 2,
   "ell_max": 4,
   "theta_loc_usr": 1.961323606684523,
@@ -43,7 +44,7 @@
     "maximum_wall_seconds": 900
   },
   "repeat_index": 0,
-  "git_commit": "WORKTREE@9aeac45440f701f35131108dbec272796c6a5498",
+  "git_commit": "WORKTREE@cff786bf32343ca44df1c439e2e3743c33ec729f",
   "build_hash": "reference-epoch-e1-H2-h12-gap6-ell-inherit-cache-step8-probe-20260823",
   "manuscript_sha256": "sha256:94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9"
 }

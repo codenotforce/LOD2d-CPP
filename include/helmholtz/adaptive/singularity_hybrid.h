@@ -8,7 +8,13 @@
 namespace lod2d::helmholtz::adaptive {
 
 struct SingularRegionClassification {
-    int ell = 0;
+    // The corrector oversampling radius is only a lower bound.  The actual
+    // singular-neighborhood radius l_s is enlarged, when necessary, until
+    // N^{2 l_s}(z) covers the requested physical radius.
+    int corrector_ell = 0;
+    int l_s = 0;
+    double minimum_physical_radius = 0.0;
+    double covered_physical_radius = 0.0;
     std::vector<int> seed_elements;
     std::vector<int> omega_s_elements;
     std::vector<int> omega_f_elements;
@@ -22,6 +28,18 @@ SingularRegionClassification classify_singular_regions(
     const TriMesh &coarse_mesh,
     const std::vector<Point2> &singular_points,
     int ell,
+    double geometric_tolerance = 1e-12);
+
+// Physical-size variant used by the production E2 hybrid method.  It chooses
+// the smallest l_s >= ell for which every coarse element intersecting
+// B_{minimum_physical_radius}(z) is contained in N^{2 l_s}(z).  Consequently
+// the matching/transition region cannot collapse in physical size as H is
+// locally refined.
+SingularRegionClassification classify_singular_regions_with_physical_radius(
+    const TriMesh &coarse_mesh,
+    const std::vector<Point2> &singular_points,
+    int ell,
+    double minimum_physical_radius,
     double geometric_tolerance = 1e-12);
 
 struct HybridMatchingResult {
@@ -39,6 +57,13 @@ HybridMatchingResult restore_hybrid_reference_matching(
     ReferenceEpochHierarchy &hierarchy,
     const std::vector<Point2> &singular_points,
     int ell,
+    std::size_t maximum_rounds = 64);
+
+HybridMatchingResult restore_hybrid_reference_matching_with_physical_radius(
+    ReferenceEpochHierarchy &hierarchy,
+    const std::vector<Point2> &singular_points,
+    int ell,
+    double minimum_physical_radius,
     std::size_t maximum_rounds = 64);
 
 bool hybrid_reference_matching_holds(

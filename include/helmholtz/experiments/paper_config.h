@@ -308,6 +308,10 @@ struct ReferenceEpochPaperConfig {
     int initial_coarse_level = 3;
     int initial_reference_level = 5;
     bool singularity_hybrid = false;
+    // Case-S hybrid only.  The graph radius l_s is chosen at every matching
+    // check so that l_s >= ell and N^{2 l_s}(z) covers this fixed physical
+    // radius.  Zero is required for non-hybrid runs.
+    double hybrid_minimum_physical_radius = 0.0;
     int ell0 = 1;
     int ell_max = 4;
     double theta_loc_usr = 0.5;

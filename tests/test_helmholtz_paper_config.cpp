@@ -756,6 +756,7 @@ void verify_reference_epoch_v5_S_contract() {
     config.case_id = PaperCase::S;
     config.method = "PALOD-hybrid-reference-epoch";
     config.singularity_hybrid = true;
+    config.hybrid_minimum_physical_radius = 0.25;
     config.singular_oscillatory_fraction = 0.0;
     config.singular_cutoff_outer_radius = 0.5;
     config.singular_quintic_cutoff = false;
@@ -777,6 +778,7 @@ void verify_reference_epoch_v5_S_contract() {
     require(decoded.case_id == PaperCase::S
                 && decoded.method == config.method
                 && decoded.singularity_hybrid
+                && decoded.hybrid_minimum_physical_radius == 0.25
                 && decoded.singular_oscillatory_fraction == 0.0
                 && decoded.singular_cutoff_outer_radius == 0.5
                 && !decoded.singular_quintic_cutoff
@@ -788,6 +790,10 @@ void verify_reference_epoch_v5_S_contract() {
     changed.smooth_wave_amplitude = 0.1;
     require(canonical_config_hash(changed) != canonical_config_hash(config),
             "reference-epoch v5 identity ignores the smooth wave amplitude");
+    changed = config;
+    changed.hybrid_minimum_physical_radius = 0.2;
+    require(canonical_config_hash(changed) != canonical_config_hash(config),
+            "reference-epoch v5 identity ignores the hybrid physical radius");
     changed = config;
     changed.case_id = PaperCase::R1;
     changed.method = "PALOD-reference-epoch";

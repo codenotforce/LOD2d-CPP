@@ -314,15 +314,21 @@ Failed
 L-shaped 主实验需要：
 
 \[
-\Omega_S=N^\ell(S),\quad
-\Omega_F=N^{2\ell}(S),\quad
+l_s=\max\!\left\{\ell,\min\{j:B_{R_*}(S)\cap\Omega
+\subset N^{2j}(S)\}\right\},\quad
+\Omega_S=N^{l_s}(S),\quad
+\Omega_F=N^{2l_s}(S),\quad
 V_H|_{\Omega_F}=V_h|_{\Omega_F}.
 \]
+
+其中物理半径 (R_*>0) 在整条轨迹开始前冻结。这样 (l_s\ge\ell)，且 coarse
+网格局部加细后 matching/transition region 不会在物理空间中塌缩；
+(N^{2l_s}(S)\) 可略大于固定圆，但不得漏掉 (B_{R_*}(S)\cap\Omega)。
 
 实现要求：
 
 - 在 \(\Omega_F\) 内 coarse 与 reference 匹配；
-- 若 corrector check 导致 \(\ell\) 增大，则同步重定义 \(\Omega_S=N^\ell(S)\)、\(\Omega_F=N^{2\ell}(S)\)，并在继续 corrector solve 前恢复 matching condition；
+- 每次 corrector check 由冻结 (R_*) 与当前 \(\ell\) 重算最小 (l_s\ge\ell)，并在继续 corrector solve 前恢复 matching condition；
 - 对 \(T\subset\Omega_S\) 跳过零 kernel corrector；
 - coarse marking 仅在 regular region，global reference certificate 保持不变；
 - candidate 仍可在 singular region 加密，为下一 epoch 准备；
@@ -335,10 +341,12 @@ V_H|_{\Omega_F}=V_h|_{\Omega_F}.
 
 ### WP6--WP7 与 E0 实施状态（2026-08-23）
 
-- **WP6 / G6 已通过组件级验收**：实现
-  `classify_singular_regions/restore_hybrid_reference_matching`，按共享顶点的
-  coarse-element graph 构造 `Omega_S=N^ell(S)` 与 `Omega_F=N^(2ell)(S)`。
-  每次 global `ell` 改变后，先在固定 reference 所允许的范围内事务式加密 coarse，恢复
+- **WP6 / G6 已通过组件级验收**：实现固定物理半径版本
+  `classify_singular_regions_with_physical_radius/
+  restore_hybrid_reference_matching_with_physical_radius`。按共享顶点 coarse-element
+  graph 选择最小 (l_s\ge\ell)，使固定圆 (B_{R_*}(S)\cap\Omega) 完全包含于
+  `Omega_F=N^(2l_s)(S)`，并取 `Omega_S=N^l_s(S)`。每次 coarse 或 global `ell`
+  改变后，先在固定 reference 所允许的范围内事务式加密 coarse，恢复
   `V_H|Omega_F=V_h|Omega_F`，再组装 corrector；reference mesh/version 保持不变。
   `Omega_S` 中的零 kernel element corrector 被跳过并记录数量与工作维数；coarse
   Dörfler marking 仅使用 regular-region indicator mass，global reference residual
@@ -504,14 +512,19 @@ corrector work。必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 
   \(\gamma=0\)、quintic cutoff 外半径 1、smooth-wave amplitude \(B=0.05\)，即非振荡
   corner singularity 为主、保留小振幅 \(e^{i\kappa x}\) 光滑波。凹角边继续使用
   Dirichlet、外边 Robin，禁止退回历史默认 \(\gamma=1,B=0\)。
+- hybrid 区域不再把 (l_s) 直接等同于 corrector \(\ell\)。生产配置冻结
+  `hybrid_minimum_physical_radius=0.25`，每次选择满足 (l_s\ge\ell) 且
+  (B_{0.25}(z)\cap\Omega\subset N^{2l_s}(z)) 的最小 (l_s)。`iterations.csv` 与
+  `corrector_work.csv` 记录实际 (l_s)、请求半径和离散保证覆盖半径。
 - hybrid 的 level-gap guard 改为 regular region 中的最小**正** gap。\(\Omega_F\) 内
   \(H=h\) 的零 gap 是 matching condition，不是 reference exhaustion；若 closure 真正要求
   细化零-gap 单元，严格 proposed-to-reference containment 仍会立即触发 structural refresh。
-- 本地 `H3/h8/4-step` hybrid probe（8 threads）wall 约 45--48 s、峰值 RSS 约
-  3.6 GiB、无 swap；exact relative energy 依次为
-  `0.10921, 0.08445, 0.06691, 0.05352`。每次 corrector check 跳过 54 个 patch、约
-  2134--2200 个工作单元。主耗时为 `Theta_loc/Gram` 约 15 s 和 candidate RT2 flux
-  约 13 s，当前规模尚无单一异常瓶颈，故不在主实验前引入未经验证的新 cache。
+- 更新后的固定半径 `H3/h8/4-step` hybrid probe（8 threads）wall 约 67 s、峰值 RSS
+  约 3.16 GiB、无 swap；exact relative energy 依次为
+  `0.10921, 0.08868, 0.06430, 0.04687`。epoch 0 在粗网格取 (l_s=2)，refresh 后
+  自动取 (l_s=11)，离散保证覆盖半径约 0.254，满足 (R_*=0.25)。相比旧的
+  (l_s=\ell=2) 探针，额外 wall time 来自固定圆内 coarse/reference matching，未出现
+  新的内存或求解瓶颈；因此不在服务器主实验前引入未经验证的新 cache。
 - 同口径 standard probe 表明 H3 初始粗空间处于强预收敛区；证书自动把 ell 提至 7，
   四点 exact error 仍由 `4.46` 降至 `2.01`。这条轨迹作为消融对照保留，不与 hybrid
   共用固定 ell，也不用于声称低正则性最优阶。

@@ -179,6 +179,11 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.skipped_correctors = observation.skipped_correctors;
                 record.skipped_corrector_work_units =
                     observation.skipped_corrector_work_units;
+                record.hybrid_l_s = observation.hybrid_l_s;
+                record.hybrid_minimum_physical_radius =
+                    observation.hybrid_minimum_physical_radius;
+                record.hybrid_covered_physical_radius =
+                    observation.hybrid_covered_physical_radius;
                 record.time_corrector = observation.time_corrector;
                 record.time_theta = observation.time_theta;
                 record.time_gram_prepare_structure =

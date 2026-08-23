@@ -2042,6 +2042,9 @@ void validate_reference_epoch_paper_config(
         || !std::isfinite(config.smooth_wave_amplitude)
         || config.smooth_wave_amplitude < 0.0
         || config.smooth_wave_amplitude > 1.0
+        || !std::isfinite(config.hybrid_minimum_physical_radius)
+        || config.hybrid_minimum_physical_radius < 0.0
+        || config.hybrid_minimum_physical_radius > 1.0
         || config.initial_coarse_level < 0
         || config.initial_reference_level <= config.initial_coarse_level
         || config.ell0 < 0 || config.ell_max < config.ell0
@@ -2088,6 +2091,10 @@ void validate_reference_epoch_paper_config(
         throw std::invalid_argument("hybrid method and singularity_hybrid disagree");
     if (config.singularity_hybrid && config.case_id != PaperCase::S)
         throw std::invalid_argument("hybrid reference-epoch mode is restricted to case S");
+    if (config.singularity_hybrid
+        != (config.hybrid_minimum_physical_radius > 0.0))
+        throw std::invalid_argument(
+            "hybrid_minimum_physical_radius must be positive exactly for hybrid runs");
     if (!valid_sha256_digest(config.manuscript_sha256))
         throw std::invalid_argument("manuscript_sha256 must be a sha256 digest");
 }
@@ -2125,6 +2132,8 @@ std::string canonical_json(const ReferenceEpochPaperConfig &config) {
         << ",\"ell0\":" << config.ell0
         << ",\"ell_max\":" << config.ell_max
         << ",\"git_commit\":" << json_string(config.git_commit)
+        << ",\"hybrid_minimum_physical_radius\":"
+        << number(config.hybrid_minimum_physical_radius)
         << ",\"initial_coarse_level\":" << config.initial_coarse_level
         << ",\"initial_reference_level\":" << config.initial_reference_level
         << ",\"localization_eigen_maximum_iterations\":"
@@ -2190,7 +2199,8 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     const JsonObject &root = as_object(parsed, "root");
     require_keys(root,
         {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
-         "ell_max", "git_commit", "initial_coarse_level",
+         "ell_max", "git_commit", "hybrid_minimum_physical_radius",
+         "initial_coarse_level",
            "initial_reference_level", "localization_eigen_maximum_iterations",
            "localization_eigen_relative_tolerance", "m_dual", "manuscript_sha256", "method",
          "minimum_H_steps_per_epoch",
@@ -2208,6 +2218,9 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     config.case_id = parse_paper_case(as_string(get(root, "case"), "case"));
     config.method = as_string(get(root, "method"), "method");
     config.wavenumber = as_number(get(root, "wavenumber"), "wavenumber");
+    config.hybrid_minimum_physical_radius = as_number(
+        get(root, "hybrid_minimum_physical_radius"),
+        "hybrid_minimum_physical_radius");
     config.singular_oscillatory_fraction = as_number(
         get(root, "singular_oscillatory_fraction"),
         "singular_oscillatory_fraction");

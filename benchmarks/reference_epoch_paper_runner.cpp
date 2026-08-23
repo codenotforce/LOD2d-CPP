@@ -196,8 +196,10 @@ public:
         const Clock::time_point total_start = Clock::now();
         std::vector<int> skipped;
         if (config_.singularity_hybrid) {
-            HybridMatchingResult matching = restore_hybrid_reference_matching(
-                hierarchy_, {Point2(0.0, 0.0)}, ell);
+            HybridMatchingResult matching =
+                restore_hybrid_reference_matching_with_physical_radius(
+                    hierarchy_, {Point2(0.0, 0.0)}, ell,
+                    config_.hybrid_minimum_physical_radius);
             regions_ = matching.regions;
             skipped = matching.regions.omega_s_elements;
         }
@@ -248,6 +250,13 @@ public:
             model_->correctors().diagnostics.skipped_patch_count);
         result.skipped_corrector_work_units =
             model_->correctors().diagnostics.skipped_patch_work_units;
+        if (regions_) {
+            result.hybrid_l_s = regions_->l_s;
+            result.hybrid_minimum_physical_radius =
+                regions_->minimum_physical_radius;
+            result.hybrid_covered_physical_radius =
+                regions_->covered_physical_radius;
+        }
         result.time_corrector = model_->build_timings().correctors_ms / 1000.0;
         result.time_theta = seconds_since(theta_start);
         result.time_gram_prepare_structure =
@@ -399,9 +408,10 @@ public:
         if (config_.singularity_hybrid && regions_) {
             if (hierarchy_.has_proposed_coarse_refinement()) {
                 const SingularRegionClassification proposed_regions =
-                    classify_singular_regions(
+                    classify_singular_regions_with_physical_radius(
                         hierarchy_.proposed_coarse_mesh(),
-                        {Point2(0.0, 0.0)}, regions_->ell);
+                        {Point2(0.0, 0.0)}, regions_->corrector_ell,
+                        config_.hybrid_minimum_physical_radius);
                 return prospective_reference_level_gap(
                     hierarchy_, &proposed_regions.in_regular);
             }
@@ -579,6 +589,7 @@ void write_iterations(
            "minimum_reference_level_gap,level_gap_dual_trigger,"
            "relative_reference_energy,relative_exact_energy,relative_exact_L2,marked_H,marked_c,"
            "rebuilt_correctors,skipped_correctors,skipped_corrector_work_units,"
+           "hybrid_l_s,hybrid_minimum_physical_radius,hybrid_covered_physical_radius,"
            "time_corrector,time_theta,"
            "time_gram_prepare_structure,time_gram_prepare_factorization,"
            "time_gram_action_rhs,time_gram_action_patch_solve,time_gram_action_scatter,"
@@ -631,6 +642,9 @@ void write_iterations(
             << row.marked_c << ',' << row.rebuilt_correctors << ','
             << row.skipped_correctors << ','
             << row.skipped_corrector_work_units << ','
+            << (row.hybrid_l_s < 0 ? "NA" : std::to_string(row.hybrid_l_s)) << ','
+            << number(row.hybrid_minimum_physical_radius) << ','
+            << number(row.hybrid_covered_physical_radius) << ','
             << number(row.time_corrector) << ','
             << number(row.time_theta) << ','
             << number(row.time_gram_prepare_structure) << ','
@@ -733,7 +747,9 @@ void write_auxiliary_outputs(
     }
     {
         std::ofstream out(directory / "corrector_work.csv");
-        out << "schema_version,epoch,iteration,ell,rebuilt,reused,skipped,skipped_work_units,"
+        out << "schema_version,epoch,iteration,ell,hybrid_l_s,"
+               "hybrid_minimum_physical_radius,hybrid_covered_physical_radius,"
+               "rebuilt,reused,skipped,skipped_work_units,"
                "time_corrector,time_theta,time_gram_prepare_structure,"
                "time_gram_prepare_factorization,time_gram_action_rhs,"
                "time_gram_action_patch_solve,time_gram_action_scatter,"
@@ -744,7 +760,11 @@ void write_auxiliary_outputs(
             if (row.action == ReferenceEpochDriverAction::AcceptCorrector
                 || row.action == ReferenceEpochDriverAction::IncreaseGlobalEll) {
                 out << config.schema_version << ',' << row.epoch << ',' << row.sequence
-                    << ',' << row.ell << ',' << row.rebuilt_correctors << ",0,"
+                    << ',' << row.ell << ','
+                    << (row.hybrid_l_s < 0 ? "NA" : std::to_string(row.hybrid_l_s))
+                    << ',' << number(row.hybrid_minimum_physical_radius)
+                    << ',' << number(row.hybrid_covered_physical_radius)
+                    << ',' << row.rebuilt_correctors << ",0,"
                     << row.skipped_correctors << ',' << row.skipped_corrector_work_units
                     << ',' << number(row.time_corrector) << ','
                     << number(row.time_theta) << ','
@@ -842,8 +862,9 @@ void write_auxiliary_outputs(
                 });
             if (solved != result.journal.rend()) {
                 const SingularRegionClassification regions =
-                    classify_singular_regions(
-                        *latest_solved_coarse, {Point2(0.0, 0.0)}, solved->ell);
+                    classify_singular_regions_with_physical_radius(
+                        *latest_solved_coarse, {Point2(0.0, 0.0)}, solved->ell,
+                        config.hybrid_minimum_physical_radius);
                 std::vector<int> region_code(
                     latest_solved_coarse->elems.size(), 0);
                 for (int element : regions.omega_f_elements)

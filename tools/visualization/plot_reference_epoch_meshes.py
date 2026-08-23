@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection, PolyCollection
+from matplotlib.patches import Circle
 
 from paper_style import apply_paper_style
 
@@ -144,6 +146,18 @@ def save_evolution(
     plt.close(figure)
 
 
+def hybrid_physical_radius(run_dir: Path) -> float | None:
+    run_json = run_dir / "run.json"
+    if not run_json.exists():
+        return None
+    value = json.loads(run_json.read_text(encoding="utf-8")).get(
+        "config", {}
+    ).get("hybrid_minimum_physical_radius")
+    if value is None or float(value) <= 0.0:
+        return None
+    return float(value)
+
+
 def save_hybrid_final(run_dir: Path, output_dir: Path, entry: MeshEntry) -> None:
     path = run_dir / entry.filename
     points, triangles = read_vtu(path)
@@ -157,6 +171,7 @@ def save_hybrid_final(run_dir: Path, output_dir: Path, entry: MeshEntry) -> None
     if regions.size != triangles.shape[0]:
         raise ValueError(f"hybrid_region has the wrong size in {path}")
     colors = np.asarray(["#f7f7f7", "#9ecae1", "#fdae6b"])[regions]
+    physical_radius = hybrid_physical_radius(run_dir)
     figure, axes = plt.subplots(1, 2, figsize=(7.0, 3.35), constrained_layout=True)
     for ax, zoom in zip(axes, (False, True)):
         ax.add_collection(PolyCollection(
@@ -164,6 +179,11 @@ def save_hybrid_final(run_dir: Path, output_dir: Path, entry: MeshEntry) -> None
             linewidths=0.12,
         ))
         ax.set_aspect("equal", adjustable="box")
+        if physical_radius is not None:
+            ax.add_patch(Circle(
+                (0.0, 0.0), physical_radius, fill=False,
+                edgecolor="#7b3294", linewidth=1.0, linestyle="--", zorder=5,
+            ))
         if zoom:
             ax.set_xlim(-0.35, 0.35)
             ax.set_ylim(-0.35, 0.35)
@@ -175,8 +195,13 @@ def save_hybrid_final(run_dir: Path, output_dir: Path, entry: MeshEntry) -> None
             ax.set_title("Final solved hybrid mesh", fontsize=8.5)
         ax.set_xticks([])
         ax.set_yticks([])
+    radius_text = (
+        rf", $B_{{R_*}}$ dashed ($R_*={physical_radius:g}$)"
+        if physical_radius is not None else ""
+    )
     figure.suptitle(
-        r"E2 matching regions: regular (white), $\Omega_F$ (blue), $\Omega_S$ (orange)",
+        r"E2 matching regions: regular (white), $\Omega_F$ (blue), "
+        r"$\Omega_S$ (orange)" + radius_text,
         fontsize=9.5,
     )
     figure.savefig(output_dir / "E2_final_hybrid_matching_mesh.png", dpi=260)

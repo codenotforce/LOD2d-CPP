@@ -108,9 +108,17 @@ u=\chi(r)r^{2/3}\sin(2\theta/3)+0.05\,\psi(x,y)e^{i\kappa x},
 
 凹角两条边为 homogeneous Dirichlet，外边为 homogeneous Robin。E2 hybrid 与 standard
 均从 H-level 3、h-level 12 开始；hybrid `ell<=4`，standard 允许证书自动增长到
-`ell<=10`。hybrid 的 level-gap guard 只检查 regular region 中的正 gap；匹配区
+`ell<=10`。E2 hybrid 冻结 `hybrid_minimum_physical_radius=0.25`，并在每次
+corrector check 选择最小的 (l_s\ge\ell)，使
+(B_{0.25}(z)\cap\Omega\subset N^{2l_s}(z))；因此局部加细不会让奇异/过渡区域的
+物理范围缩小。hybrid 的 level-gap guard 只检查 regular region 中的正 gap；匹配区
 `H=h` 的零 gap 由严格 containment 判据保护。禁止改回全局最小 gap，否则每个 hybrid
 epoch 会被构造性的零 gap 立即刷新。
+
+本地 H3/h8 固定半径探针在 refresh 后得到 `hybrid_l_s=11`、
+`hybrid_covered_physical_radius=0.254116...`，wall 约 67 s、峰值 RSS 约 3.16 GiB、
+无 swap。服务器上 (l_s) 可能因 h12 的更细局部单元继续增大，这是维持固定物理圆的
+预期结果，不应手工截断；应以实际 coarse/reference DoF 与 RSS 判断资源是否可接受。
 
 ## 6. 完成验收
 
@@ -133,6 +141,8 @@ E2 headline gate：
 - 收敛阶只按 epoch 分段拟合；目标是自适应二维能量误差约 `N^{-1/2}`，不能跨 refresh
   拼接制造该斜率；
 - hybrid 的 `skipped_corrector_work_units` 必须为正；
+- hybrid 每个 corrector record 必须满足 `hybrid_l_s >= ell`、
+  `hybrid_covered_physical_radius >= hybrid_minimum_physical_radius = 0.25`；
 - standard 的大 `ell`、预收敛段和较高成本原样保留；
 - mixed boundary 与上述制造解四个参数必须出现在 v5 `run.json.config` 中。
 
