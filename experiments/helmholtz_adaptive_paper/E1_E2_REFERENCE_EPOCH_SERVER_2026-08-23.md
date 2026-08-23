@@ -51,10 +51,14 @@ RESULT_DIR="$PWD/results/E2-radius-pilot-$(git rev-parse --short HEAD)" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
+提交 `2fd2ec3` 的两组 pilot 均已完成。`R_*=0.0625/0.125` 的 wall 为
+`13.98/14.84 s`，峰值 RSS 约 `2.095/2.099 GiB`，最大 patch 均为 3360，exact
+relative energy 为 `0.100152/0.100157`，skipped work units 为 `2200/6408`。因此正式
+E2 hybrid 冻结 `R_*=0.125`。
+
 运行时查看新增的 `[hybrid-matching]`、`[hybrid-preflight]` 和模型阶段日志。每个 hybrid
 配置在 corrector 前以 `100000` 个 reference elements 为单 patch 硬上限；超过即明确
-失败。先通过较小半径，再测试较大半径。最终冻结值取满足覆盖约束、误差确实下降且
-wall/RSS 可接受的较大者；pilot 未结束前不运行 `MODE=e2-main`。
+失败。若网格、参考层或制造解改变，必须重新运行本节 pilot，不得直接沿用该冻结值。
 
 ### 3.2 正式运行
 
@@ -130,8 +134,8 @@ u=\chi(r)r^{2/3}\sin(2\theta/3)+0.05\,\psi(x,y)e^{i\kappa x},
 
 凹角两条边为 homogeneous Dirichlet，外边为 homogeneous Robin。E2 hybrid 与 standard
 均从 H-level 3、h-level 12 开始；hybrid `ell<=4`，standard 允许证书自动增长到
-`ell<=10`。E2 hybrid 的 `hybrid_minimum_physical_radius` 必须采用上述 h12 pilot
-冻结值，并在每次 corrector check 选择最小的 (l_s\ge\ell)，使
+`ell<=10`。E2 hybrid 冻结 `hybrid_minimum_physical_radius=0.125`，并在每次
+corrector check 选择最小的 (l_s\ge\ell)，使
 (B_{R_*}(z)\cap\Omega\subset N^{2l_s}(z))；因此局部加细不会让奇异/过渡区域的
 物理范围缩小。hybrid 的 level-gap guard 只检查 regular region 中的正 gap；匹配区
 `H=h` 的零 gap 由严格 containment 判据保护。禁止改回全局最小 gap，否则每个 hybrid
@@ -139,8 +143,8 @@ epoch 会被构造性的零 gap 立即刷新。
 
 历史 H3/h8、`R_*=0.25` 固定半径探针在 refresh 后得到 `hybrid_l_s=11`、
 `hybrid_covered_physical_radius=0.254116...`，wall 约 67 s、峰值 RSS 约 3.16 GiB、
-无 swap。h12 已证明这一半径会形成不可接受的大 patch，因此现在必须以 h12 pilot 的
-preflight patch count、wall 与 RSS 冻结 `0.0625--0.125` 范围内的新值。
+无 swap。h12 已证明 `0.25` 会形成不可接受的大 patch；当前 h12 pilot 已据 preflight
+patch count、wall 与 RSS 将生产值校准为 `0.125`。
 
 ## 6. 完成验收
 

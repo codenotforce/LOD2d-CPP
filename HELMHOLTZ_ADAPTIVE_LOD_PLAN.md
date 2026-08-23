@@ -531,12 +531,15 @@ corrector work。必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 
 - `R_*=0.25` 的 `H3/h12` 服务器首轮在 matching 后形成病态大的 transition corrector
   patch：运行约 7 小时仍由单线程 SparseLU 占据，15 个 OpenMP worker 等待，RSS 约
   36.6 GiB。这是固定物理圆与 h12 matching 的尺度组合问题，不是内存不足。该任务已
-  停止，E1 完成结果保留。正式半径改为在 `0.0625` 与 `0.125` 两个 h12 单步 pilot 中
-  校准；在 pilot 完成前，`0.25` 只作为失败的压力测试记录，不再视为冻结参数。
+  停止，E1 完成结果保留。`0.25` 只作为失败的压力测试记录，不再视为冻结参数。
 - schema-v5 hybrid 配置增加 `hybrid_maximum_corrector_patch_fine_elements`。corrector 前
   必须输出 matching 时间、(l_s)、最大和 p95 patch fine-element count；最大值超过
-  `100000` 时立即失败，禁止再次无进度运行数小时。pilot 先跑 `R_*=0.0625`，通过后
-  再跑 `0.125`；选择满足物理覆盖、误差下降且运行成本可接受的较大半径。
+  `100000` 时立即失败，禁止再次无进度运行数小时。
+- 提交 `2fd2ec3` 的 h12 单步 pilot 已完成：`R_*=0.0625/0.125` 的 wall 分别为
+  `13.98/14.84 s`，峰值 RSS 分别约 `2.095/2.099 GiB`，两者最大 patch 均为 3360；
+  exact relative energy 为 `0.100152/0.100157`，而 skipped work units 为
+  `2200/6408`。二者误差与成本基本相同，较大半径省掉更多奇异区 corrector，故正式
+  E2 hybrid 冻结 `hybrid_minimum_physical_radius=0.125`。
 - 服务器正式配置为 hybrid/standard `H3/h12/15-step`、gap guard 4、refresh target 6、
   新 epoch 至少保留 4 个解点；hybrid `ell<=4`，standard `ell<=10`。另配 AFEM
   `H3->level20` 和可选 fixed-LOD `H3/h16,ell=3`。完整命令和验收见
