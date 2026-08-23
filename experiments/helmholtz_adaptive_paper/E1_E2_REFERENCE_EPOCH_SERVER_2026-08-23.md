@@ -36,6 +36,28 @@ export MIN_AVAILABLE_GIB=128
 
 ## 3. 一次运行 E1 与 E2
 
+### 3.1 先校准 E2 hybrid 的固定物理半径
+
+`R_*=0.25` 在 H3/h12 上产生了单个病态大的 transition corrector patch，服务器运行约
+7 小时仍未完成。不要直接重启该配置。先顺序运行 `R_*=0.0625,0.125` 的单 H-step
+pilot：
+
+```bash
+tmux new -s helmholtz-e2-radius-pilot
+
+MODE=e2-radius-pilot \
+JOBS=32 PATCH_THREADS=16 MIN_AVAILABLE_GIB=128 VALIDATE=1 \
+RESULT_DIR="$PWD/results/E2-radius-pilot-$(git rev-parse --short HEAD)" \
+  scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
+运行时查看新增的 `[hybrid-matching]`、`[hybrid-preflight]` 和模型阶段日志。每个 hybrid
+配置在 corrector 前以 `100000` 个 reference elements 为单 patch 硬上限；超过即明确
+失败。先通过较小半径，再测试较大半径。最终冻结值取满足覆盖约束、误差确实下降且
+wall/RSS 可接受的较大者；pilot 未结束前不运行 `MODE=e2-main`。
+
+### 3.2 正式运行
+
 ```bash
 chmod +x scripts/run_helmholtz_adaptive_paper_server.sh
 tmux new -s helmholtz-e1-e2
@@ -108,17 +130,17 @@ u=\chi(r)r^{2/3}\sin(2\theta/3)+0.05\,\psi(x,y)e^{i\kappa x},
 
 凹角两条边为 homogeneous Dirichlet，外边为 homogeneous Robin。E2 hybrid 与 standard
 均从 H-level 3、h-level 12 开始；hybrid `ell<=4`，standard 允许证书自动增长到
-`ell<=10`。E2 hybrid 冻结 `hybrid_minimum_physical_radius=0.25`，并在每次
-corrector check 选择最小的 (l_s\ge\ell)，使
-(B_{0.25}(z)\cap\Omega\subset N^{2l_s}(z))；因此局部加细不会让奇异/过渡区域的
+`ell<=10`。E2 hybrid 的 `hybrid_minimum_physical_radius` 必须采用上述 h12 pilot
+冻结值，并在每次 corrector check 选择最小的 (l_s\ge\ell)，使
+(B_{R_*}(z)\cap\Omega\subset N^{2l_s}(z))；因此局部加细不会让奇异/过渡区域的
 物理范围缩小。hybrid 的 level-gap guard 只检查 regular region 中的正 gap；匹配区
 `H=h` 的零 gap 由严格 containment 判据保护。禁止改回全局最小 gap，否则每个 hybrid
 epoch 会被构造性的零 gap 立即刷新。
 
-本地 H3/h8 固定半径探针在 refresh 后得到 `hybrid_l_s=11`、
+历史 H3/h8、`R_*=0.25` 固定半径探针在 refresh 后得到 `hybrid_l_s=11`、
 `hybrid_covered_physical_radius=0.254116...`，wall 约 67 s、峰值 RSS 约 3.16 GiB、
-无 swap。服务器上 (l_s) 可能因 h12 的更细局部单元继续增大，这是维持固定物理圆的
-预期结果，不应手工截断；应以实际 coarse/reference DoF 与 RSS 判断资源是否可接受。
+无 swap。h12 已证明这一半径会形成不可接受的大 patch，因此现在必须以 h12 pilot 的
+preflight patch count、wall 与 RSS 冻结 `0.0625--0.125` 范围内的新值。
 
 ## 6. 完成验收
 
@@ -142,7 +164,7 @@ E2 headline gate：
   拼接制造该斜率；
 - hybrid 的 `skipped_corrector_work_units` 必须为正；
 - hybrid 每个 corrector record 必须满足 `hybrid_l_s >= ell`、
-  `hybrid_covered_physical_radius >= hybrid_minimum_physical_radius = 0.25`；
+  `hybrid_covered_physical_radius >= hybrid_minimum_physical_radius`；
 - standard 的大 `ell`、预收敛段和较高成本原样保留；
 - mixed boundary 与上述制造解四个参数必须出现在 v5 `run.json.config` 中。
 

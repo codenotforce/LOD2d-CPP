@@ -85,6 +85,12 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H3-h16-ell3-step12-v4.json
     )
     ;;
+  e2-radius-pilot)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-radius00625-h12-step1-pilot-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-radius0125-h12-step1-pilot-v5.json
+    )
+    ;;
   e1-e2-main)
     DEFAULT_CONFIGS=(
       experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H2-h12-gap4-step15-v5.json
@@ -101,7 +107,7 @@ case "$MODE" in
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, s-corner-wave-medium, e1-main, e2-main, e1-e2-main, or custom" >&2
+    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, s-corner-wave-medium, e1-main, e2-main, e2-radius-pilot, e1-e2-main, or custom" >&2
     exit 2
     ;;
 esac

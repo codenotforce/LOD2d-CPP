@@ -13,6 +13,7 @@
   "localization_eigen_relative_tolerance": 1e-7,
   "singularity_hybrid": false,
   "hybrid_minimum_physical_radius": 0.0,
+  "hybrid_maximum_corrector_patch_fine_elements": 0,
   "ell0": 1,
   "ell_max": 3,
   "theta_loc_usr": 10,

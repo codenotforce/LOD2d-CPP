@@ -312,6 +312,10 @@ struct ReferenceEpochPaperConfig {
     // check so that l_s >= ell and N^{2 l_s}(z) covers this fixed physical
     // radius.  Zero is required for non-hybrid runs.
     double hybrid_minimum_physical_radius = 0.0;
+    // Abort before corrector assembly when an active coarse patch expands to
+    // more reference elements than this guard.  This is a reproducible pilot
+    // safety limit; zero disables it and is required for non-hybrid runs.
+    std::size_t hybrid_maximum_corrector_patch_fine_elements = 0;
     int ell0 = 1;
     int ell_max = 4;
     double theta_loc_usr = 0.5;

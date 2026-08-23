@@ -11,6 +11,7 @@
 #include "helmholtz/experiments/paper_config.h"
 #include "helmholtz/model.h"
 #include "io/vtk_writer.h"
+#include "lod/patches.h"
 
 #include <algorithm>
 #include <array>
@@ -164,6 +165,61 @@ int prospective_reference_level_gap(
     return gap;
 }
 
+struct HybridCorrectorPatchAudit {
+    std::size_t active_patches = 0;
+    std::size_t maximum_fine_elements = 0;
+    std::size_t p95_fine_elements = 0;
+    int maximum_target = -1;
+};
+
+HybridCorrectorPatchAudit audit_hybrid_corrector_patch_costs(
+    const ReferenceEpochHierarchy &hierarchy, const int ell,
+    const SingularRegionClassification &regions) {
+    const std::size_t coarse_elements = hierarchy.coarse_mesh().elems.size();
+    const Eigen::SparseMatrix<double> &embedding =
+        hierarchy.coarse_elements_to_reference();
+    if (embedding.cols() != static_cast<int>(coarse_elements)
+        || regions.in_omega_s.size() != coarse_elements) {
+        throw std::logic_error(
+            "hybrid corrector preflight metadata has inconsistent dimensions");
+    }
+
+    std::vector<std::size_t> reference_children(coarse_elements, 0);
+    for (int coarse = 0; coarse < embedding.outerSize(); ++coarse) {
+        for (Eigen::SparseMatrix<double>::InnerIterator it(embedding, coarse);
+             it; ++it) {
+            if (it.value() != 0.0) ++reference_children[coarse];
+        }
+    }
+
+    const Eigen::SparseMatrix<double> patches =
+        build_patches(hierarchy.coarse_mesh(), ell);
+    std::vector<std::size_t> costs;
+    costs.reserve(coarse_elements);
+    HybridCorrectorPatchAudit audit;
+    for (int target = 0; target < patches.outerSize(); ++target) {
+        if (regions.in_omega_s[target]) continue;
+        std::size_t cost = 0;
+        for (Eigen::SparseMatrix<double>::InnerIterator it(patches, target);
+             it; ++it) {
+            if (it.value() != 0.0) cost += reference_children[it.row()];
+        }
+        costs.push_back(cost);
+        if (cost > audit.maximum_fine_elements) {
+            audit.maximum_fine_elements = cost;
+            audit.maximum_target = target;
+        }
+    }
+    audit.active_patches = costs.size();
+    if (!costs.empty()) {
+        std::sort(costs.begin(), costs.end());
+        const std::size_t p95_index =
+            (95 * costs.size() + 99) / 100 - 1;
+        audit.p95_fine_elements = costs[p95_index];
+    }
+    return audit;
+}
+
 class NumericalReferenceEpochBackend final : public ReferenceEpochDriverBackend {
 public:
     NumericalReferenceEpochBackend(
@@ -196,12 +252,59 @@ public:
         const Clock::time_point total_start = Clock::now();
         std::vector<int> skipped;
         if (config_.singularity_hybrid) {
+            std::cerr
+                << "[hybrid-matching] begin ell=" << ell
+                << " R=" << config_.hybrid_minimum_physical_radius
+                << " coarse_elements=" << hierarchy_.coarse_mesh().elems.size()
+                << " reference_elements="
+                << hierarchy_.reference_mesh().elems.size() << std::endl;
+            const Clock::time_point matching_start = Clock::now();
             HybridMatchingResult matching =
                 restore_hybrid_reference_matching_with_physical_radius(
                     hierarchy_, {Point2(0.0, 0.0)}, ell,
                     config_.hybrid_minimum_physical_radius);
             regions_ = matching.regions;
             skipped = matching.regions.omega_s_elements;
+            std::cerr
+                << "[hybrid-matching] end seconds="
+                << seconds_since(matching_start)
+                << " l_s=" << matching.regions.l_s
+                << " covered_radius=" << matching.regions.covered_physical_radius
+                << " refinement_rounds=" << matching.refinement_rounds
+                << " coarse_elements=" << hierarchy_.coarse_mesh().elems.size()
+                << " omega_s=" << matching.regions.omega_s_elements.size()
+                << " omega_f=" << matching.regions.omega_f_elements.size()
+                << std::endl;
+            const HybridCorrectorPatchAudit patch_audit =
+                audit_hybrid_corrector_patch_costs(
+                    hierarchy_, ell, matching.regions);
+            std::cerr
+                << "[hybrid-preflight] ell=" << ell
+                << " l_s=" << matching.regions.l_s
+                << " active_patches=" << patch_audit.active_patches
+                << " max_patch_fine_elements="
+                << patch_audit.maximum_fine_elements
+                << " p95_patch_fine_elements="
+                << patch_audit.p95_fine_elements
+                << " max_target=" << patch_audit.maximum_target
+                << " guard="
+                << config_.hybrid_maximum_corrector_patch_fine_elements
+                << std::endl;
+            if (patch_audit.maximum_fine_elements
+                > config_.hybrid_maximum_corrector_patch_fine_elements) {
+                std::ostringstream message;
+                message
+                    << "hybrid corrector preflight rejected pathological patch: "
+                    << "target=" << patch_audit.maximum_target
+                    << ", fine_elements="
+                    << patch_audit.maximum_fine_elements
+                    << ", limit="
+                    << config_.hybrid_maximum_corrector_patch_fine_elements
+                    << ", ell=" << ell
+                    << ", l_s=" << matching.regions.l_s
+                    << ", R=" << config_.hybrid_minimum_physical_radius;
+                throw std::runtime_error(message.str());
+            }
         }
         HelmholtzProblemConfig model_config;
         model_config.ell = ell;
@@ -209,6 +312,7 @@ public:
         model_config.initial_mesh = data_.initial_mesh;
         model_config.quadrature = config_.quadrature;
         model_config.quadrature_context = data_.quadrature_context;
+        model_config.progress = config_.singularity_hybrid;
         if (config_.singularity_hybrid) {
             model_ = std::make_unique<HelmholtzLodModel>(
                 HelmholtzLodModel::build_adaptive_hybrid(

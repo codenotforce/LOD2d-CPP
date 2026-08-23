@@ -512,9 +512,9 @@ corrector work。必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 
   \(\gamma=0\)、quintic cutoff 外半径 1、smooth-wave amplitude \(B=0.05\)，即非振荡
   corner singularity 为主、保留小振幅 \(e^{i\kappa x}\) 光滑波。凹角边继续使用
   Dirichlet、外边 Robin，禁止退回历史默认 \(\gamma=1,B=0\)。
-- hybrid 区域不再把 (l_s) 直接等同于 corrector \(\ell\)。生产配置冻结
-  `hybrid_minimum_physical_radius=0.25`，每次选择满足 (l_s\ge\ell) 且
-  (B_{0.25}(z)\cap\Omega\subset N^{2l_s}(z)) 的最小 (l_s)。`iterations.csv` 与
+- hybrid 区域不再把 (l_s) 直接等同于 corrector \(\ell\)。每次选择满足
+  (l_s\ge\ell) 且 (B_{R_*}(z)\cap\Omega\subset N^{2l_s}(z)) 的最小 (l_s)。
+  `iterations.csv` 与
   `corrector_work.csv` 记录实际 (l_s)、请求半径和离散保证覆盖半径。
 - hybrid 的 level-gap guard 改为 regular region 中的最小**正** gap。\(\Omega_F\) 内
   \(H=h\) 的零 gap 是 matching condition，不是 reference exhaustion；若 closure 真正要求
@@ -528,6 +528,15 @@ corrector work。必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 
 - 同口径 standard probe 表明 H3 初始粗空间处于强预收敛区；证书自动把 ell 提至 7，
   四点 exact error 仍由 `4.46` 降至 `2.01`。这条轨迹作为消融对照保留，不与 hybrid
   共用固定 ell，也不用于声称低正则性最优阶。
+- `R_*=0.25` 的 `H3/h12` 服务器首轮在 matching 后形成病态大的 transition corrector
+  patch：运行约 7 小时仍由单线程 SparseLU 占据，15 个 OpenMP worker 等待，RSS 约
+  36.6 GiB。这是固定物理圆与 h12 matching 的尺度组合问题，不是内存不足。该任务已
+  停止，E1 完成结果保留。正式半径改为在 `0.0625` 与 `0.125` 两个 h12 单步 pilot 中
+  校准；在 pilot 完成前，`0.25` 只作为失败的压力测试记录，不再视为冻结参数。
+- schema-v5 hybrid 配置增加 `hybrid_maximum_corrector_patch_fine_elements`。corrector 前
+  必须输出 matching 时间、(l_s)、最大和 p95 patch fine-element count；最大值超过
+  `100000` 时立即失败，禁止再次无进度运行数小时。pilot 先跑 `R_*=0.0625`，通过后
+  再跑 `0.125`；选择满足物理覆盖、误差下降且运行成本可接受的较大半径。
 - 服务器正式配置为 hybrid/standard `H3/h12/15-step`、gap guard 4、refresh target 6、
   新 epoch 至少保留 4 个解点；hybrid `ell<=4`，standard `ell<=10`。另配 AFEM
   `H3->level20` 和可选 fixed-LOD `H3/h16,ell=3`。完整命令和验收见
