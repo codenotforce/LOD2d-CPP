@@ -63,17 +63,45 @@ case "$MODE" in
     ;;
   s-corner-wave-medium)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-H6-level20-step14-v4.json
-      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-H6-level20-step14-v4.json
+#      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-ufem-k16-H6-level20-step14-v4.json
+#      experiments/helmholtz_adaptive_paper/configs/S-corner-wave-afem-k16-H6-level20-step14-v4.json
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-slod-k16-H6-ell2-gap4-h20-step10-v4.json
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-H6-h12-to-h20-gap4-step10-v4.json
+    )
+    ;;
+  e1-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H2-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H2-level18-step40-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H2-level18-step16-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H2-h15-ell3-step15-v4.json
+    )
+    ;;
+  e2-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-afem-k16-H3-level20-step40-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H3-h16-ell3-step12-v4.json
+    )
+    ;;
+  e1-e2-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H2-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H2-level18-step40-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H2-level18-step16-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H2-h15-ell3-step15-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-afem-k16-H3-level20-step40-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H3-h16-ell3-step12-v4.json
     )
     ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, s-corner-wave-medium, or custom" >&2
+    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, s-corner-wave-medium, e1-main, e2-main, e1-e2-main, or custom" >&2
     exit 2
     ;;
 esac
@@ -118,18 +146,27 @@ cmake --build "$BUILD_DIR" -j "$JOBS" --target \
   test_helmholtz_practical_driver \
   test_helmholtz_reference_retraction \
   test_helmholtz_reference_solution_cache \
+  test_helmholtz_paper_config \
+  test_helmholtz_paper_cases \
+  test_helmholtz_reference_epoch_hierarchy \
+  test_helmholtz_singularity_hybrid \
   bench_helmholtz_adaptive_paper
 
 if [[ "$VALIDATE" == 1 ]]; then
   "$BUILD_DIR/tests/test_helmholtz_practical_driver"
   "$BUILD_DIR/tests/test_helmholtz_reference_retraction"
   "$BUILD_DIR/tests/test_helmholtz_reference_solution_cache"
+  "$BUILD_DIR/tests/test_helmholtz_paper_config"
+  "$BUILD_DIR/tests/test_helmholtz_paper_cases"
+  "$BUILD_DIR/tests/test_helmholtz_reference_epoch_hierarchy"
+  "$BUILD_DIR/tests/test_helmholtz_singularity_hybrid"
 fi
 
 BINARY="$BUILD_DIR/benchmarks/bench_helmholtz_adaptive_paper"
 GIT_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD)
 BUILD_HASH="sha256:$(sha256sum "$BINARY" | awk '{print $1}')"
-BASELINE="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256"
+BASELINE_V5="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256"
+BASELINE_V4="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE_LEGACY_V4.sha256"
 
 printf 'git_commit=%s\nbuild_hash=%s\npatch_threads=%s\n' \
   "$GIT_COMMIT" "$BUILD_HASH" "$PATCH_THREADS" \
@@ -176,13 +213,21 @@ pathlib.Path(destination).write_text(
 PY
 
   echo "start $stem; MemAvailable=$(available_gib) GiB"
+  schema_version=$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["schema_version"])' \
+    "$runtime_config")
+  if [[ "$schema_version" == 5 ]]; then
+    baseline="$BASELINE_V5"
+  else
+    baseline="$BASELINE_V4"
+  fi
   set +e
   /usr/bin/time -v -o "$time_file" \
     "$BINARY" \
       --config="$runtime_config" \
       --output-dir="$case_dir" \
       --reference-cache-dir="$REFERENCE_CACHE_DIR" \
-      --manuscript-baseline="$BASELINE" \
+      --manuscript-baseline="$baseline" \
       > "$stdout_file" 2>&1
   status=$?
   set -e
@@ -198,6 +243,21 @@ manifests = list(root.glob("*/run.json"))
 if len(manifests) != 1:
     raise SystemExit(f"expected one run.json below {root}, found {len(manifests)}")
 manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
+schema = int(manifest["schema_version"])
+if schema == 5:
+    if manifest["status"] == "Failed":
+        raise SystemExit(
+            f"reference-epoch run failed: reason={manifest.get('stop_reason', '<missing>')}")
+    required = (
+        "iterations.csv", "summary.csv", "epoch_history.csv",
+        "mesh_manifest.csv", "corrector_work.csv")
+    for name in required:
+        if not (manifests[0].parent / name).is_file():
+            raise SystemExit(f"missing schema-v5 artifact: {name}")
+    print(
+        f"validated {manifest['run_id']}: state={manifest['status']} "
+        f"reason={manifest.get('stop_reason', '')}")
+    raise SystemExit(0)
 if manifest["status"] != "success":
     raise SystemExit(
         f"run did not complete successfully: status={manifest['status']} "

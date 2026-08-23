@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -145,6 +146,13 @@ struct ReferenceEpochRefinementResult {
     std::size_t previous_element_count = 0;
     std::size_t current_element_count = 0;
     std::string detail;
+    // Candidate-refinement phase timings. They remain zero for operations
+    // that do not use the incremental candidate path.
+    double time_nvb_refine = 0.0;
+    double time_embedding_composition = 0.0;
+    double time_parent_map_update = 0.0;
+    double time_candidate_quasi_interpolation = 0.0;
+    double time_embedding_validation = 0.0;
 
     bool changed() const {
         return status == ReferenceEpochRefinementStatus::Refined;
@@ -181,6 +189,41 @@ public:
     }
     const TriMesh &ambient_mesh() const {
         return reference_to_ambient_.mesh;
+    }
+
+    // Revised reference-epoch terminology.  The legacy ambient accessors
+    // above remain available for old runners, but new code must treat this
+    // mesh only as the candidate for the next reference epoch.
+    const TriMesh &candidate_mesh() const { return ambient_mesh(); }
+    const std::vector<int> &candidate_element_levels() const {
+        return ambient_element_levels_;
+    }
+    const Eigen::SparseMatrix<double> &reference_to_candidate() const {
+        return reference_to_ambient();
+    }
+    const Eigen::SparseMatrix<double> &coarse_to_candidate() const {
+        return coarse_to_ambient();
+    }
+    const Eigen::SparseMatrix<double> &reference_elements_to_candidate() const {
+        return reference_elements_to_ambient();
+    }
+    const Eigen::SparseMatrix<double> &coarse_elements_to_candidate() const {
+        return coarse_elements_to_ambient();
+    }
+    const Eigen::SparseMatrix<double> &reference_dg_to_candidate() const {
+        return reference_dg_to_ambient();
+    }
+    const Eigen::SparseMatrix<double> &coarse_dg_to_candidate() const {
+        return coarse_dg_to_ambient();
+    }
+    const Eigen::SparseMatrix<double> &candidate_quasi_interpolation() const {
+        return ambient_quasi_interpolation();
+    }
+    const std::vector<int> &candidate_parent_coarse_elements() const {
+        return ambient_parent_coarse_elements();
+    }
+    const std::vector<int> &candidate_parent_reference_elements() const {
+        return ambient_parent_reference_elements();
     }
 
     const std::vector<int> &coarse_levels() const { return coarse_levels_; }
@@ -242,6 +285,9 @@ public:
         return reference_mesh_version_;
     }
     std::uint64_t ambient_mesh_version() const { return ambient_mesh_version_; }
+    std::uint64_t candidate_mesh_version() const {
+        return ambient_mesh_version_;
+    }
     std::uint64_t interpolation_version() const {
         return interpolation_version_;
     }
@@ -259,6 +305,38 @@ public:
     // Explicit epoch boundary.  This is the only operation that may change
     // reference_mesh() and advance reference_mesh_version().
     void refresh_reference_from_ambient();
+
+    // Transactional hierarchy API used by the revised paper.  A proposed
+    // coarse refinement is kept separate from the committed coarse mesh.
+    // Candidate enrichment may then make the proposal geometrically
+    // representable, while commit remains forbidden until the fixed
+    // reference itself contains the proposal.
+    void begin_reference_epoch();
+    ReferenceEpochRefinementResult propose_coarse_refinement(
+        const std::vector<int> &marked_elements);
+    ReferenceEpochRefinementResult enrich_candidate(
+        const std::vector<int> &marked_candidate_elements);
+    ReferenceEpochRefinementResult close_candidate_over_proposed_coarse();
+    ReferenceEpochRefinementResult deepen_candidate_over_proposed_coarse(
+        int minimum_level_gap);
+    bool candidate_contains_proposed_coarse() const;
+    bool reference_contains_proposed_coarse() const;
+    int minimum_proposed_reference_level_gap() const;
+    // Minimum over reference children whose proposed coarse parent is selected.
+    // This is used by the hybrid method to exclude the deliberately matching
+    // Omega_F cells and any formerly matching zero-gap cells from the early
+    // exhaustion guard. Refining a zero-gap cell remains protected by the
+    // stronger reference-containment check.
+    int minimum_proposed_reference_level_gap(
+        const std::vector<char> &included_proposed_elements) const;
+    int minimum_proposed_candidate_level_gap() const;
+    bool has_proposed_coarse_refinement() const {
+        return proposed_coarse_.has_value();
+    }
+    const TriMesh &proposed_coarse_mesh() const;
+    const std::vector<int> &proposed_coarse_levels() const;
+    ReferenceEpochRefinementResult commit_coarse_refinement();
+    void refresh_reference_from_candidate();
 
 private:
     TriMesh initial_mesh_;
@@ -282,9 +360,26 @@ private:
     std::uint64_t boundary_version_ = 0;
     std::uint64_t corrector_space_version_ = 0;
 
+    struct ProposedCoarseState {
+        struct CachedEmbedding {
+            Eigen::SparseMatrix<double> P_node;
+            Eigen::SparseMatrix<double> P_elem;
+            Eigen::SparseMatrix<double> P_dg;
+        };
+        RefineOutput refinement;
+        std::vector<int> levels;
+        std::optional<CachedEmbedding> to_reference;
+        std::optional<CachedEmbedding> to_candidate;
+    };
+    std::optional<ProposedCoarseState> proposed_coarse_;
+
     void refresh_embeddings();
     void refresh_embedding_metadata();
     void validate_current_embeddings() const;
+    void validate_incremental_candidate_metadata() const;
+    void replace_candidate(
+        TriMesh mesh,
+        std::vector<int> element_levels);
 };
 
 NestedFineMesh complete_to_fine_level(

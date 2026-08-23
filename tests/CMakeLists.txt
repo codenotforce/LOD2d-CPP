@@ -75,6 +75,34 @@ target_link_libraries(test_helmholtz_reference_epoch_hierarchy PRIVATE lod2d_cor
 add_test(NAME helmholtz_reference_epoch_hierarchy
     COMMAND test_helmholtz_reference_epoch_hierarchy)
 
+add_executable(test_helmholtz_reference_corrector_certificate
+    test_helmholtz_reference_corrector_certificate.cpp)
+target_link_libraries(test_helmholtz_reference_corrector_certificate PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_corrector_certificate
+    COMMAND test_helmholtz_reference_corrector_certificate)
+
+add_executable(test_helmholtz_candidate_flux
+    test_helmholtz_candidate_flux.cpp)
+target_link_libraries(test_helmholtz_candidate_flux PRIVATE lod2d_core)
+add_test(NAME helmholtz_candidate_flux COMMAND test_helmholtz_candidate_flux)
+
+add_executable(test_helmholtz_candidate_dual
+    test_helmholtz_candidate_dual.cpp)
+target_link_libraries(test_helmholtz_candidate_dual PRIVATE lod2d_core)
+add_test(NAME helmholtz_candidate_dual COMMAND test_helmholtz_candidate_dual)
+
+add_executable(test_helmholtz_reference_epoch_driver
+    test_helmholtz_reference_epoch_driver.cpp)
+target_link_libraries(test_helmholtz_reference_epoch_driver PRIVATE lod2d_core)
+add_test(NAME helmholtz_reference_epoch_driver
+    COMMAND test_helmholtz_reference_epoch_driver)
+
+add_executable(test_helmholtz_singularity_hybrid
+    test_helmholtz_singularity_hybrid.cpp)
+target_link_libraries(test_helmholtz_singularity_hybrid PRIVATE lod2d_core)
+add_test(NAME helmholtz_singularity_hybrid
+    COMMAND test_helmholtz_singularity_hybrid)
+
 add_executable(test_helmholtz_error_control test_helmholtz_error_control.cpp)
 target_link_libraries(test_helmholtz_error_control PRIVATE lod2d_core)
 add_test(NAME helmholtz_error_control COMMAND test_helmholtz_error_control)

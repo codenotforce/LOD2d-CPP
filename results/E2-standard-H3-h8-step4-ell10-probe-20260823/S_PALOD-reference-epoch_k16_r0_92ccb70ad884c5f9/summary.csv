@@ -1,0 +1,6 @@
+schema_version,run_id,row_type,target,achieved,epoch,iteration,N_H,relative_energy,time_total_cumulative,status,stop_reason
+5,S_PALOD-reference-epoch_k16_r0_92ccb70ad884c5f9,target,0.10000000000000001,false,NA,NA,NA,NA,NA,WorkLimitReached,maximum_H_steps reached
+5,S_PALOD-reference-epoch_k16_r0_92ccb70ad884c5f9,target,0.050000000000000003,false,NA,NA,NA,NA,NA,WorkLimitReached,maximum_H_steps reached
+5,S_PALOD-reference-epoch_k16_r0_92ccb70ad884c5f9,target,0.02,false,NA,NA,NA,NA,NA,WorkLimitReached,maximum_H_steps reached
+5,S_PALOD-reference-epoch_k16_r0_92ccb70ad884c5f9,target,0.01,false,NA,NA,NA,NA,NA,WorkLimitReached,maximum_H_steps reached
+5,S_PALOD-reference-epoch_k16_r0_92ccb70ad884c5f9,run,NA,NA,NA,NA,NA,NA,NA,WorkLimitReached,maximum_H_steps reached

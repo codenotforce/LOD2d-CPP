@@ -4,6 +4,7 @@
 #include "helmholtz/boundary.h"
 #include "helmholtz/experiments/paper_config.h"
 #include "helmholtz/experiments/reference_solution_cache.h"
+#include "helmholtz/experiments/reference_epoch_runner.h"
 #include "helmholtz/operators.h"
 #include "io/vtk_writer.h"
 
@@ -1037,7 +1038,9 @@ void write_iterations(
            "time_localization_ambient_patch_solve,"
            "time_localization_ambient_gram_reduction,"
            "time_localization_coarse_energy,time_localization_spectrum,"
-           "time_certificate,time_solve,"
+           "time_certificate,time_solve,estimator_patch_threads,"
+           "estimator_patch_factorizations,time_estimator_prepare,"
+           "time_estimator_patch_solve,time_estimator_reduction,"
            "time_estimator,time_total_cumulative,peak_memory_mb\n";
     const bool ell_method = config.method_id == PracticalPaperMethod::Palod
         || config.method_id == PracticalPaperMethod::HlodFixed
@@ -1052,6 +1055,10 @@ void write_iterations(
     const bool slod_method = config.method_id == PracticalPaperMethod::Slod;
     std::optional<std::pair<std::size_t, double>> previous_reference_point;
     for (const PracticalIterationRecord &record : result.journal) {
+        const bool lod_model_profile =
+            record.action == PracticalDriverAction::AcceptLocalization
+            || record.action == PracticalDriverAction::AcceptFixedEll
+            || record.action == PracticalDriverAction::SolveStandardLod;
         std::optional<double> error_ratio;
         std::optional<double> log_improvement;
         std::optional<double> dof_log_slope;
@@ -1115,46 +1122,39 @@ void write_iterations(
                     ? std::to_string(
                         record.localization_ambient_max_active_columns)
                     : "") << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? patch_solver_label(record.patch_solver_kind_used) : "")
             << ','
             << (slod_method
                     && record.action == PracticalDriverAction::SolveStandardLod
                     ? std::to_string(record.slod_auto_direct_schur ? 1 : 0)
                     : "") << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? std::to_string(record.corrector_parallel_threads) : "")
             << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? std::to_string(record.corrector_symbolic_analyses) : "")
             << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? std::to_string(record.corrector_symbolic_reuses) : "")
             << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? std::to_string(record.corrector_factorization_reuses) : "")
             << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? std::to_string(record.corrector_maximum_patch_dofs) : "")
             << ','
-            << (slod_method
-                    && record.action == PracticalDriverAction::SolveStandardLod
+            << (lod_model_profile
                     ? std::to_string(
                         record.corrector_maximum_patch_constraints) : "")
             << ','
-            << (slod_method
+            << (lod_model_profile
                     ? numeric(record.corrector_patch_assembly_work_seconds) : "")
             << ','
-            << (slod_method
+            << (lod_model_profile
                     ? numeric(record.corrector_patch_solve_work_seconds) : "")
             << ','
-            << (slod_method
+            << (lod_model_profile
                     ? numeric(record.corrector_patch_pack_work_seconds) : "")
             << ','
             << (practical_bound_method ? numeric(record.U_practical) : "") << ','
@@ -1192,6 +1192,11 @@ void write_iterations(
             << numeric(record.time_localization_spectrum_seconds) << ','
             << numeric(record.time_certificate_seconds) << ','
             << numeric(record.time_solve_seconds) << ','
+            << record.estimator_patch_threads << ','
+            << record.estimator_patch_factorizations << ','
+            << numeric(record.time_estimator_prepare_seconds) << ','
+            << numeric(record.time_estimator_patch_solve_seconds) << ','
+            << numeric(record.time_estimator_reduction_seconds) << ','
             << numeric(record.time_estimator_seconds) << ','
             << numeric(record.time_total_cumulative_seconds) << ','
             << numeric(peak_mb) << '\n';
@@ -1455,8 +1460,15 @@ void write_run_json(
 int main(const int argc, char **argv) {
     try {
         const Arguments arguments = parse_arguments(argc, argv);
+        const std::string config_text = read_text(arguments.config);
+        if (is_reference_epoch_paper_config(config_text)) {
+            return run_reference_epoch_paper(
+                config_text, arguments.output_directory,
+                arguments.manuscript_baseline, arguments.check,
+                arguments.validate_only);
+        }
         const PracticalPaperConfig config =
-            parse_practical_paper_config(read_text(arguments.config));
+            parse_practical_paper_config(config_text);
         if (config.method_id != PracticalPaperMethod::Palod
             && config.method_id != PracticalPaperMethod::HlodFixed
             && config.method_id != PracticalPaperMethod::Slod

@@ -1,0 +1,23 @@
+	Command being timed: "/home/qcxubuntu/learning/LOD2d-C++/build/benchmarks/bench_helmholtz_adaptive_paper --config=/home/qcxubuntu/learning/LOD2d-C++/experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h8-step4-probe-v5.json --output-dir=/home/qcxubuntu/learning/LOD2d-C++/results/E2-hybrid-H3-h8-step4-positive-gap-probe-20260823 --manuscript-baseline=/home/qcxubuntu/learning/LOD2d-C++/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256 --check"
+	User time (seconds): 101.95
+	System time (seconds): 2.62
+	Percent of CPU this job got: 229%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:45.64
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 3849180
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 5
+	Minor (reclaiming a frame) page faults: 980198
+	Voluntary context switches: 1604
+	Involuntary context switches: 183
+	Swaps: 0
+	File system inputs: 520
+	File system outputs: 10848
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

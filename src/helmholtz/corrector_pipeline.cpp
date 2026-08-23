@@ -8,6 +8,8 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <list>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <numeric>
@@ -286,28 +288,41 @@ bool patch_system_equal(
 
 struct HelmholtzCorrectorPatchCache::Impl {
     struct Entry {
+        std::uint64_t hash = 0;
         HelmholtzPatchSystem system;
         HelmholtzPatchSolverConfig solver_config;
         HelmholtzPatchSolveResult solved;
     };
 
-    explicit Impl(const std::size_t maximum) : maximum_entries(maximum) {
-        if (maximum_entries == 0)
+    using EntryList = std::list<Entry>;
+    using EntryIterator = EntryList::iterator;
+
+    Impl(const std::size_t maximum, const std::size_t maximum_dofs)
+        : maximum_entries(maximum), maximum_patch_dofs(maximum_dofs) {
+        if (maximum_entries == 0 || maximum_patch_dofs == 0)
             throw std::invalid_argument(
-                "Helmholtz corrector patch cache capacity must be positive");
+                "Helmholtz corrector patch cache bounds must be positive");
     }
 
     bool lookup(
         const HelmholtzPatchSystem &system,
         const HelmholtzPatchSolverConfig &config,
         HelmholtzPatchSolveResult &solved) {
+        if (static_cast<std::size_t>(system.helmholtz.rows())
+            > maximum_patch_dofs) {
+            std::lock_guard<std::mutex> lock(mutex);
+            ++stats.misses;
+            return false;
+        }
         const std::uint64_t hash = patch_cache_hash(system, config);
         std::lock_guard<std::mutex> lock(mutex);
-        const auto range = entries.equal_range(hash);
+        const auto range = index.equal_range(hash);
         for (auto it = range.first; it != range.second; ++it) {
-            if (solver_config_equal(it->second.solver_config, config)
-                && patch_system_equal(it->second.system, system)) {
-                solved = it->second.solved;
+            const EntryIterator entry = it->second;
+            if (solver_config_equal(entry->solver_config, config)
+                && patch_system_equal(entry->system, system)) {
+                solved = entry->solved;
+                entries.splice(entries.end(), entries, entry);
                 ++stats.hits;
                 return true;
             }
@@ -320,25 +335,41 @@ struct HelmholtzCorrectorPatchCache::Impl {
         HelmholtzPatchSystem system,
         const HelmholtzPatchSolverConfig &config,
         HelmholtzPatchSolveResult solved) {
+        if (static_cast<std::size_t>(system.helmholtz.rows())
+            > maximum_patch_dofs)
+            return;
         const std::uint64_t hash = patch_cache_hash(system, config);
         std::lock_guard<std::mutex> lock(mutex);
         if (entries.size() >= maximum_entries) {
-            stats.evictions += entries.size();
-            entries.clear();
+            const EntryIterator oldest = entries.begin();
+            const auto range = index.equal_range(oldest->hash);
+            for (auto it = range.first; it != range.second; ++it) {
+                if (it->second == oldest) {
+                    index.erase(it);
+                    break;
+                }
+            }
+            entries.erase(oldest);
+            ++stats.evictions;
         }
-        entries.emplace(hash, Entry{std::move(system), config, std::move(solved)});
+        entries.push_back(Entry{
+            hash, std::move(system), config, std::move(solved)});
+        index.emplace(hash, std::prev(entries.end()));
         ++stats.stores;
     }
 
     const std::size_t maximum_entries;
+    const std::size_t maximum_patch_dofs;
     mutable std::mutex mutex;
-    std::unordered_multimap<std::uint64_t, Entry> entries;
+    EntryList entries;
+    std::unordered_multimap<std::uint64_t, EntryIterator> index;
     Statistics stats;
 };
 
 HelmholtzCorrectorPatchCache::HelmholtzCorrectorPatchCache(
-    const std::size_t maximum_entries)
-    : impl_(std::make_unique<Impl>(maximum_entries)) {}
+    const std::size_t maximum_entries,
+    const std::size_t maximum_patch_dofs)
+    : impl_(std::make_unique<Impl>(maximum_entries, maximum_patch_dofs)) {}
 
 HelmholtzCorrectorPatchCache::~HelmholtzCorrectorPatchCache() = default;
 HelmholtzCorrectorPatchCache::HelmholtzCorrectorPatchCache(
@@ -349,6 +380,7 @@ HelmholtzCorrectorPatchCache &HelmholtzCorrectorPatchCache::operator=(
 void HelmholtzCorrectorPatchCache::clear() {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->entries.clear();
+    impl_->index.clear();
     impl_->stats.entries = 0;
 }
 
@@ -372,7 +404,8 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
     const std::vector<Eigen::SparseMatrix<double>> &element_level_prolongations,
     const HelmholtzOperators &operators,
     const HelmholtzPatchSolverConfig &solver_config,
-    HelmholtzCorrectorPatchCache *cache) {
+    HelmholtzCorrectorPatchCache *cache,
+    const std::vector<int> &skipped_coarse_elements) {
     HelmholtzPatchAssembler assembler(
         coarse, fine, fine_element_prolongation, fine_dg_prolongation,
         quasi_interpolation, patches, hierarchy_meshes,
@@ -382,8 +415,18 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
         throw std::invalid_argument(
             "maximum parallel patch solves must be nonnegative");
     }
-    std::vector<int> target_order(patch_count);
-    std::iota(target_order.begin(), target_order.end(), 0);
+    std::vector<char> skipped(patch_count, false);
+    for (int target : skipped_coarse_elements) {
+        if (target < 0 || target >= patch_count)
+            throw std::out_of_range("skipped corrector element is out of range");
+        if (skipped[target])
+            throw std::invalid_argument("skipped corrector elements contain a duplicate");
+        skipped[target] = true;
+    }
+    std::vector<int> target_order;
+    target_order.reserve(patch_count - skipped_coarse_elements.size());
+    for (int target = 0; target < patch_count; ++target)
+        if (!skipped[target]) target_order.push_back(target);
     std::stable_sort(target_order.begin(), target_order.end(), [&](int lhs, int rhs) {
         const std::size_t lhs_cost = assembler.patch_cost(lhs);
         const std::size_t rhs_cost = assembler.patch_cost(rhs);
@@ -395,9 +438,10 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
     std::exception_ptr first_exception;
     std::mutex exception_mutex;
     int used_threads = 1;
-    const auto run_target = [&](int ordered_index) {
+    const auto run_target = [&](
+        const int target,
+        const bool shared_direct_schur_block) {
         if (failed.load(std::memory_order_relaxed)) return;
-        const int target = target_order[ordered_index];
         try {
             const auto assembly_begin = std::chrono::steady_clock::now();
             HelmholtzPatchSystem system = assembler.assemble(target);
@@ -405,12 +449,27 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
                 std::chrono::steady_clock::now() - assembly_begin).count();
             const auto solve_begin = std::chrono::steady_clock::now();
             HelmholtzPatchSolveResult solved;
+            HelmholtzPatchSolverConfig effective_solver = solver_config;
+            if (solver_config.kind == HelmholtzPatchSolverKind::DirectSchur
+                && solver_config.reuse_identical_factorization
+                && system.helmholtz.rows() <= 8192
+                && (!shared_direct_schur_block
+                    || system.constraints.rows() > 32)) {
+                // Schur reduction pays off when one A factorization serves
+                // several small constraint/RHS blocks.  A singleton support
+                // or a large dense Schur complement on a modest patch is
+                // faster with the mathematically equivalent saddle solve.
+                // Large patches never take this fallback: sparse indefinite
+                // saddle fill-in dominates the Schur overhead there.
+                effective_solver.kind = HelmholtzPatchSolverKind::DirectSaddle;
+                effective_solver.reuse_identical_factorization = false;
+            }
             const bool cache_hit = cache != nullptr
-                && cache->impl_->lookup(system, solver_config, solved);
+                && cache->impl_->lookup(system, effective_solver, solved);
             if (!cache_hit) {
-                solved = solve_helmholtz_patch(system, solver_config);
+                solved = solve_helmholtz_patch(system, effective_solver);
                 if (cache != nullptr)
-                    cache->impl_->store(system, solver_config, solved);
+                    cache->impl_->store(system, effective_solver, solved);
             }
             const double solve_seconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - solve_begin).count();
@@ -431,30 +490,67 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
         }
     };
 
+    std::vector<std::vector<int>> work_groups;
+    if (solver_config.kind == HelmholtzPatchSolverKind::DirectSchur
+        && solver_config.reuse_identical_factorization) {
+        // DirectSchur factorizes only the local energy block.  All targets
+        // with exactly the same fine-element support have the same block but
+        // different constraints/RHS.  Keep such targets on one worker so the
+        // thread-local SparseLU cache factorizes the block once.
+        std::map<std::vector<int>, std::vector<int>> grouped;
+        for (const int target : target_order)
+            grouped[assembler.patch_fine_elements(target)].push_back(target);
+        work_groups.reserve(grouped.size());
+        for (auto &[support, targets] : grouped)
+            work_groups.push_back(std::move(targets));
+        std::stable_sort(
+            work_groups.begin(), work_groups.end(), [&](const auto &lhs, const auto &rhs) {
+                const auto work = [&](const std::vector<int> &targets) {
+                    return std::accumulate(
+                        targets.begin(), targets.end(), std::size_t{0},
+                        [&](const std::size_t sum, const int target) {
+                            return sum + assembler.patch_cost(target);
+                        });
+                };
+                return work(lhs) > work(rhs);
+            });
+    } else {
+        work_groups.reserve(target_order.size());
+        for (const int target : target_order) work_groups.push_back({target});
+    }
+    const int group_count = static_cast<int>(work_groups.size());
 #ifdef _OPENMP
     const int requested_threads = std::max(
         1, solver_config.maximum_parallel_solves > 0
-            ? std::min(solver_config.maximum_parallel_solves, patch_count)
-            : std::min(omp_get_max_threads(), patch_count));
+            ? std::min(solver_config.maximum_parallel_solves,
+                       std::max(1, group_count))
+            : std::min(omp_get_max_threads(),
+                       std::max(1, group_count)));
     #pragma omp parallel num_threads(requested_threads)
     {
         #pragma omp single
         used_threads = omp_get_num_threads();
         #pragma omp for schedule(dynamic, 1)
-        for (int ordered_index = 0; ordered_index < patch_count; ++ordered_index)
-            run_target(ordered_index);
+        for (int group = 0; group < group_count; ++group)
+            for (const int target : work_groups[group])
+                run_target(target, work_groups[group].size() > 1);
     }
 #else
-    for (int ordered_index = 0; ordered_index < patch_count; ++ordered_index)
-        run_target(ordered_index);
+    for (const auto &group : work_groups)
+        for (const int target : group)
+            run_target(target, group.size() > 1);
 #endif
     if (first_exception) std::rethrow_exception(first_exception);
 
     HelmholtzCorrectorResult result;
     result.primal.resize(patch_count);
-    result.diagnostics.patch_count = patch_count;
+    result.diagnostics.patch_count = static_cast<int>(target_order.size());
+    result.diagnostics.skipped_patch_count =
+        static_cast<int>(skipped_coarse_elements.size());
+    for (int target : skipped_coarse_elements)
+        result.diagnostics.skipped_patch_work_units += assembler.patch_cost(target);
     result.diagnostics.parallel_threads = used_threads;
-    for (int target = 0; target < patch_count; ++target) {
+    for (int target : target_order) {
         result.primal[target] = std::move(patch_results[target].primal);
         accumulate_diagnostics(patch_results[target], result.diagnostics);
     }

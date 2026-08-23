@@ -1,0 +1,2 @@
+schema_version,eta_dual_c,L_c,candidate_error,L_gap_c,reference_candidate_gap,L_c_lower_bound_holds,L_gap_lower_bound_holds,status
+5,0.94054143542003388,0.014695959928438029,2.7875293492655691,0.014695959928438029,2.7875293492655691,true,true,passed

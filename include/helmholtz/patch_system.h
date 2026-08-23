@@ -40,6 +40,10 @@ public:
         const HelmholtzOperators &operators);
 
     HelmholtzPatchSystem assemble(int target) const;
+    // Exact fine-element support of a coarse patch.  Equal supports imply an
+    // equal local Helmholtz energy block and are used only to schedule
+    // DirectSchur solves with factorization affinity.
+    std::vector<int> patch_fine_elements(int target) const;
     std::size_t patch_cost(int target) const;
     int patch_count() const { return static_cast<int>(coarse_.elems.size()); }
 

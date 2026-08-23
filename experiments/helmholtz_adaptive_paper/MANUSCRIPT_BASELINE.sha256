@@ -1,5 +1,5 @@
-03d83e0eb7128aa5ef00002c6dac110f548351e52e92e56d7adf709880854d20  ../LOD_paper/helmholtz_lod_certified_amsart.tex
+94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9  ../LOD_paper/helmholtz_lod_certified_amsart_revised.tex
 
-# Frozen 2026-08-11 after aligning the practical experimental protocol.
-# The LOD_paper directory was not a Git repository at freeze time.
+# Frozen 2026-08-23 for the reference-epoch numerical plan.
+# Paper repository base commit: 30f6c05abeafcb5b76e74cb9f23d07ee1e13b13a.
 # Every production run must copy this SHA-256 value into run.json.

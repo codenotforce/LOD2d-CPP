@@ -199,6 +199,11 @@ struct PracticalIterationRecord {
     double time_certificate_seconds = 0.0;
     double time_solve_seconds = 0.0;
     double time_estimator_seconds = 0.0;
+    int estimator_patch_threads = 0;
+    std::size_t estimator_patch_factorizations = 0;
+    double time_estimator_prepare_seconds = 0.0;
+    double time_estimator_patch_solve_seconds = 0.0;
+    double time_estimator_reduction_seconds = 0.0;
     double time_total_cumulative_seconds = 0.0;
     std::string detail;
 };
@@ -294,6 +299,14 @@ private:
     std::size_t next_reference_refresh_ = 0;
     std::vector<int> pending_marking_;
     ComplexVector reference_load_;
+    // The reference mesh, PDE coefficients and solver configuration are fixed
+    // throughout one epoch.  Keeping the patch cache at driver scope lets
+    // unchanged corrector systems survive H-refinement steps; exact cache-key
+    // validation still forces every dirty patch to be rebuilt.
+    // Complete systems are deliberately cached only for modest patches; a
+    // whole-domain early patch would otherwise duplicate the reference
+    // operator and exhaust memory before reuse can pay off.
+    HelmholtzCorrectorPatchCache corrector_patch_cache_{256, 1024};
     std::unique_ptr<HelmholtzLodModel> model_;
     std::unique_ptr<ReferenceLocalizationCertificate> localization_;
     std::unique_ptr<ReferenceResidualRiesz> estimator_;

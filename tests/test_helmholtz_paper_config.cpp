@@ -751,6 +751,51 @@ void verify_practical_v4_contract() {
                     "SLOD accepted a nonpositive wavenumber");
 }
 
+void verify_reference_epoch_v5_S_contract() {
+    ReferenceEpochPaperConfig config;
+    config.case_id = PaperCase::S;
+    config.method = "PALOD-hybrid-reference-epoch";
+    config.singularity_hybrid = true;
+    config.singular_oscillatory_fraction = 0.0;
+    config.singular_cutoff_outer_radius = 0.5;
+    config.singular_quintic_cutoff = false;
+    config.smooth_wave_amplitude = 0.05;
+    config.initial_coarse_level = 2;
+    config.initial_reference_level = 6;
+    config.reference_refresh_level_gap = 2;
+    config.reference_refresh_target_gap = 4;
+    config.minimum_H_steps_per_epoch = 1;
+    config.minimum_solved_points_per_new_epoch = 2;
+    config.git_commit = "WORKTREE@test";
+    config.build_hash = "test-build";
+    config.manuscript_sha256 =
+        "sha256:94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9";
+
+    const std::string encoded = canonical_json(config);
+    const ReferenceEpochPaperConfig decoded =
+        parse_reference_epoch_paper_config(encoded);
+    require(decoded.case_id == PaperCase::S
+                && decoded.method == config.method
+                && decoded.singularity_hybrid
+                && decoded.singular_oscillatory_fraction == 0.0
+                && decoded.singular_cutoff_outer_radius == 0.5
+                && !decoded.singular_quintic_cutoff
+                && decoded.smooth_wave_amplitude == 0.05,
+            "reference-epoch v5 lost the case-S manufactured solution");
+    require(canonical_json(decoded) == encoded,
+            "reference-epoch v5 canonical JSON changed after round trip");
+    ReferenceEpochPaperConfig changed = config;
+    changed.smooth_wave_amplitude = 0.1;
+    require(canonical_config_hash(changed) != canonical_config_hash(config),
+            "reference-epoch v5 identity ignores the smooth wave amplitude");
+    changed = config;
+    changed.case_id = PaperCase::R1;
+    changed.method = "PALOD-reference-epoch";
+    changed.singularity_hybrid = false;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "reference-epoch v5 allowed S parameters for R1");
+}
+
 } // namespace
 
 int main() {
@@ -762,6 +807,7 @@ int main() {
         verify_strict_validation();
         verify_status_contract();
         verify_practical_v4_contract();
+        verify_reference_epoch_v5_S_contract();
         std::cout << "Helmholtz paper configuration protocol passed\n";
         return 0;
     } catch (const std::exception &error) {

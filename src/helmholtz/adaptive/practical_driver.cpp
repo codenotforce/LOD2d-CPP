@@ -627,10 +627,8 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 model_ = std::make_unique<HelmholtzLodModel>(
                     HelmholtzLodModel::build_adaptive(
                         model_config,
-                        hierarchy_->coarse_mesh(),
-                        hierarchy_->coarse_levels(),
-                        hierarchy_->reference_mesh(),
-                        hierarchy_->reference_element_levels()));
+                        *hierarchy_,
+                        &corrector_patch_cache_));
                 const auto corrector_end = std::chrono::steady_clock::now();
 
                 const auto certificate_begin = std::chrono::steady_clock::now();
@@ -704,7 +702,29 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                             == PracticalLocalizationPolicy::AdaptiveGlobalEll
                         ? elapsed_seconds(certificate_begin, certificate_end)
                         : 0.0;
-                record.rebuilt_correctors = model_->correctors().primal.size();
+                record.rebuilt_correctors = static_cast<std::size_t>(
+                    model_->correctors().diagnostics.patch_cache_misses);
+                const HelmholtzCorrectorDiagnostics &corrector_diagnostics =
+                    model_->correctors().diagnostics;
+                record.patch_solver_kind_used = config_.patch_solver.kind;
+                record.corrector_parallel_threads =
+                    corrector_diagnostics.parallel_threads;
+                record.corrector_symbolic_analyses =
+                    corrector_diagnostics.symbolic_analyses;
+                record.corrector_symbolic_reuses =
+                    corrector_diagnostics.symbolic_reuses;
+                record.corrector_factorization_reuses =
+                    corrector_diagnostics.factorization_reuses;
+                record.corrector_maximum_patch_dofs =
+                    corrector_diagnostics.maximum_patch_dofs;
+                record.corrector_maximum_patch_constraints =
+                    corrector_diagnostics.maximum_patch_constraints;
+                record.corrector_patch_assembly_work_seconds =
+                    corrector_diagnostics.patch_assembly_work_seconds;
+                record.corrector_patch_solve_work_seconds =
+                    corrector_diagnostics.patch_solve_work_seconds;
+                record.corrector_patch_pack_work_seconds =
+                    corrector_diagnostics.patch_pack_work_seconds;
                 if (localization_) {
                     record.localization_eigen_iterations =
                         localization_->spectrum.iterations;
@@ -811,7 +831,12 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                         reference_load_,
                         candidate,
                         config_.theta_H,
-                        config_.riesz_solver));
+                        config_.riesz_solver,
+                        std::min(
+                            4,
+                            config_.patch_solver.maximum_parallel_solves > 0
+                                ? config_.patch_solver.maximum_parallel_solves
+                                : 4)));
                 const auto estimator_end = std::chrono::steady_clock::now();
                 eta_H_ = estimator_->eta;
                 U_practical_ =
@@ -825,6 +850,15 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                 record.time_solve_seconds = elapsed_seconds(solve_begin, solve_end);
                 record.time_estimator_seconds =
                     elapsed_seconds(estimator_begin, estimator_end);
+                record.estimator_patch_threads = estimator_->parallel_threads;
+                record.estimator_patch_factorizations =
+                    estimator_->patch_factorizations;
+                record.time_estimator_prepare_seconds =
+                    estimator_->prepare_seconds;
+                record.time_estimator_patch_solve_seconds =
+                    estimator_->patch_solve_seconds;
+                record.time_estimator_reduction_seconds =
+                    estimator_->reduction_seconds;
                 record.evaluation_candidate = candidate;
                 std::string operation_limit;
                 if (work_limit_exceeded(operation_limit)) {
@@ -931,6 +965,10 @@ PracticalDriverResult PracticalAdaptiveDriver::run() {
                     reference_load_ = assemble_helmholtz_load(
                         hierarchy_->reference_mesh(), problem_.source,
                         problem_.quadrature, problem_.quadrature_context);
+                    // A promoted reference changes every fine-grid operator.
+                    // Drop the old epoch's bounded cache eagerly instead of
+                    // retaining entries that exact key validation would reject.
+                    corrector_patch_cache_.clear();
                     pending_marking_.clear();
                     // The refresh promotes the ambient mesh but leaves the
                     // coarse mesh, basis ordering, and ell unchanged.  The

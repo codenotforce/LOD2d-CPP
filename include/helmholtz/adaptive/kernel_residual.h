@@ -6,6 +6,7 @@
 #include <Eigen/Dense>
 
 #include <cstddef>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,8 +22,38 @@ enum class KernelRieszSolver {
 // defect computation is never an eta_H estimator.
 enum class KernelRieszSpace {
     ReferenceResidual,
+    CandidateResidual,
+    ReferenceDefect,
     AmbientDefect,
 };
+
+struct LocalizationEigenConfig {
+    int maximum_iterations = 1000;
+    double relative_tolerance = 1e-11;
+    int dense_cross_check_max_dimension = 64;
+    int dense_fallback_max_dimension = 1024;
+    int sparse_generalized_min_dimension = 1025;
+    ComplexVector warm_start;
+};
+
+struct LocalizationSpectrum {
+    double lambda_max = 0.0;
+    ComplexVector dominant_vector;
+    int iterations = 0;
+    double relative_residual = 0.0;
+    bool converged = false;
+    bool dense_cross_checked = false;
+    bool used_dense_fallback = false;
+    bool used_sparse_generalized_solver = false;
+    bool used_warm_start = false;
+    double dense_lambda_max = 0.0;
+    double dense_relative_difference = 0.0;
+};
+
+LocalizationSpectrum compute_localization_spectrum(
+    const ComplexMatrix &numerator,
+    const Eigen::SparseMatrix<double> &denominator,
+    const LocalizationEigenConfig &config = {});
 
 enum class KernelResidualEvidenceLevel {
     Diagnostic,
@@ -149,6 +180,12 @@ struct ReferenceResidualRiesz {
     std::vector<double> element_eta_squared;
     std::vector<int> marked_elements;
     double eta = 0.0;
+    std::size_t skipped_zero_kernel_patches = 0;
+    std::size_t patch_factorizations = 0;
+    int parallel_threads = 1;
+    double prepare_seconds = 0.0;
+    double patch_solve_seconds = 0.0;
+    double reduction_seconds = 0.0;
     double local_square_sum_relative_error = 0.0;
     double allocation_relative_error = 0.0;
 };
@@ -162,6 +199,11 @@ struct AmbientDefectLocalRiesz {
     ComplexMatrix gram;
     double hermitian_relative_error = 0.0;
 };
+
+// Same localized residual construction on W_c.  The distinct public alias
+// and space discriminator prevent a lazy epoch check from being reused as
+// the reference eta_H marking result.
+using CandidateResidualRiesz = ReferenceResidualRiesz;
 
 enum class AmbientDefectDetail {
     SummaryOnly,
@@ -201,6 +243,12 @@ struct AmbientDefectRiesz {
     double gram_accumulation_relative_error = 0.0;
 };
 
+// Same streamed constrained-Riesz reduction, but entirely in W_h.  The
+// alias keeps the storage format shared while the `space` discriminator and
+// entry point prevent a reference defect from being confused with legacy
+// ambient/retraction evidence.
+using ReferenceDefectRiesz = AmbientDefectRiesz;
+
 KernelPatchPolicy kernel_riesz_patch_policy(
     const ReferenceEpochHierarchy &hierarchy,
     KernelRieszSpace space);
@@ -216,7 +264,8 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
     const ComplexVector &reference_load,
     const ComplexVector &candidate_on_reference,
     double doerfler_theta,
-    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint);
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint,
+    int maximum_parallel_patch_solves = 0);
 
 AmbientDefectRiesz compute_ambient_defect_riesz(
     const ReferenceEpochHierarchy &hierarchy,
@@ -225,6 +274,96 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     KernelRieszSolver solver = KernelRieszSolver::SaddlePoint,
     AmbientDefectDetail detail = AmbientDefectDetail::SummaryOnly,
     int maximum_parallel_patch_solves = 0);
+
+ReferenceDefectRiesz compute_reference_defect_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint,
+    AmbientDefectDetail detail = AmbientDefectDetail::SummaryOnly,
+    int maximum_parallel_patch_solves = 0);
+
+// Matrix-free action of G_loc.  It forms only one combined defect right-hand
+// side, performs the patch Riesz solves, and scatters R_z^* G_z^{-1} R_z x;
+// no dense N_H-by-N_H Gram matrix is allocated.
+ComplexVector apply_reference_defect_gram(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    const ComplexVector &coarse_coefficients,
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint);
+
+struct ReferenceDefectGramOperatorDiagnostics {
+    std::size_t patch_count = 0;
+    std::size_t patch_factorizations = 0;
+    std::size_t factor_cache_hits = 0;
+    std::size_t factor_cache_misses = 0;
+    std::size_t action_calls = 0;
+    int parallel_threads = 1;
+    double prepare_structure_seconds = 0.0;
+    double prepare_factorization_seconds = 0.0;
+    double action_rhs_seconds = 0.0;
+    double action_patch_solve_seconds = 0.0;
+    double action_scatter_seconds = 0.0;
+};
+
+// Bounded cross-H-step LRU for unchanged reference-defect patch factors.
+// The cache is explicitly owned by one trajectory backend and is cleared at
+// a reference refresh, so factors never leak across unrelated experiments.
+class ReferenceDefectGramFactorCache {
+public:
+    explicit ReferenceDefectGramFactorCache(std::size_t capacity = 512);
+    ~ReferenceDefectGramFactorCache();
+    ReferenceDefectGramFactorCache(ReferenceDefectGramFactorCache &&) noexcept;
+    ReferenceDefectGramFactorCache &operator=(
+        ReferenceDefectGramFactorCache &&) noexcept;
+    ReferenceDefectGramFactorCache(
+        const ReferenceDefectGramFactorCache &) = delete;
+    ReferenceDefectGramFactorCache &operator=(
+        const ReferenceDefectGramFactorCache &) = delete;
+    void clear();
+    std::size_t size() const;
+
+private:
+    struct Implementation;
+    std::unique_ptr<Implementation> implementation_;
+    friend class ReferenceDefectGramOperator;
+};
+
+// Prepared matrix-free G_loc action.  Patch topology, local energy/constraint
+// matrices and saddle SparseLU factors are built once and reused by every Ritz
+// action.  Patch solves may run concurrently; their compact contributions are
+// scattered in patch-index order for deterministic output.
+class ReferenceDefectGramOperator {
+public:
+    ReferenceDefectGramOperator(
+        const ReferenceEpochHierarchy &hierarchy,
+        const HelmholtzOperators &reference_operators,
+        const ComplexSparseMatrix &defect_rhs,
+        KernelRieszSolver solver = KernelRieszSolver::SaddlePoint,
+        int maximum_parallel_patch_solves = 0,
+        ReferenceDefectGramFactorCache *factor_cache = nullptr);
+    ~ReferenceDefectGramOperator();
+    ReferenceDefectGramOperator(ReferenceDefectGramOperator &&) noexcept;
+    ReferenceDefectGramOperator &operator=(ReferenceDefectGramOperator &&) noexcept;
+    ReferenceDefectGramOperator(const ReferenceDefectGramOperator &) = delete;
+    ReferenceDefectGramOperator &operator=(const ReferenceDefectGramOperator &) = delete;
+
+    ComplexVector apply(const ComplexVector &coarse_coefficients);
+    ComplexMatrix apply(const ComplexMatrix &coarse_coefficients);
+    const ReferenceDefectGramOperatorDiagnostics &diagnostics() const;
+
+private:
+    struct Implementation;
+    std::unique_ptr<Implementation> implementation_;
+};
+
+CandidateResidualRiesz compute_candidate_residual_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &candidate_operators,
+    const ComplexVector &candidate_load,
+    const ComplexVector &lod_on_candidate,
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint);
 
 // Determine the verified support-propagation radius of I_H and freeze the
 // corresponding D_z/D_z^+ construction in a deterministic policy hash.

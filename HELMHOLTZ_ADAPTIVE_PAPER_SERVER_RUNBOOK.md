@@ -1,5 +1,10 @@
 # Helmholtz 自适应 LOD 论文实验服务器操作手册
 
+> **当前 E1/E2 reference-epoch 主实验请以**
+> `experiments/helmholtz_adaptive_paper/E1_E2_REFERENCE_EPOCH_SERVER_2026-08-23.md`
+> **为准。** 本文件下方章节主要保留 schema-v4 历史 reference-gate 流程，不能替代
+> schema-v5 的 E1/E2 配置、双 manuscript baseline 和验收口径。
+
 > 说明：本手册前半部分保留历史 reference-gate 流程。当前 case-S 深层四方法
 > 收敛实验的直接执行与验收命令见
 > `experiments/helmholtz_adaptive_paper/S_K16_DEEP_CONVERGENCE_SERVER_2026-08-13.md`。

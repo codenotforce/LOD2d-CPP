@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <chrono>
 #include <cmath>
 #include <complex>
 #include <cstdint>
@@ -1035,6 +1036,407 @@ std::vector<double> cluster_contributions(
 }
 
 } // namespace
+
+namespace {
+
+Eigen::SparseMatrix<double> select_sparse_columns(
+    const Eigen::SparseMatrix<double> &matrix,
+    const std::vector<int> &columns) {
+    std::vector<Eigen::Triplet<double>> triplets;
+    for (int output = 0; output < static_cast<int>(columns.size()); ++output) {
+        const int input = columns[output];
+        if (input < 0 || input >= matrix.cols()) {
+            throw std::out_of_range(
+                "reference corrector coarse basis node is out of range");
+        }
+        for (Eigen::SparseMatrix<double>::InnerIterator it(matrix, input);
+             it; ++it) {
+            triplets.emplace_back(it.row(), output, it.value());
+        }
+    }
+    Eigen::SparseMatrix<double> result(matrix.rows(), columns.size());
+    result.setFromTriplets(triplets.begin(), triplets.end());
+    result.makeCompressed();
+    return result;
+}
+
+ComplexVector multiply_real_sparse(
+    const Eigen::SparseMatrix<double> &matrix,
+    const ComplexVector &vector) {
+    ComplexVector result(vector.size());
+    result.real() = matrix * vector.real();
+    result.imag() = matrix * vector.imag();
+    return result;
+}
+
+ComplexMatrix multiply_real_sparse(
+    const Eigen::SparseMatrix<double> &matrix,
+    const ComplexMatrix &vectors) {
+    ComplexMatrix result(vectors.rows(), vectors.cols());
+    result.real() = matrix * vectors.real();
+    result.imag() = matrix * vectors.imag();
+    return result;
+}
+
+ComplexVector solve_real_sparse(
+    const Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> &factorization,
+    const ComplexVector &rhs) {
+    ComplexVector result(rhs.size());
+    result.real() = factorization.solve(rhs.real());
+    result.imag() = factorization.solve(rhs.imag());
+    return result;
+}
+
+ComplexMatrix solve_real_sparse(
+    const Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> &factorization,
+    const ComplexMatrix &rhs) {
+    ComplexMatrix result(rhs.rows(), rhs.cols());
+    result.real() = factorization.solve(rhs.real());
+    result.imag() = factorization.solve(rhs.imag());
+    return result;
+}
+
+LocalizationSpectrum reference_defect_spectrum_matrix_free(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    const Eigen::SparseMatrix<double> &denominator,
+    KernelRieszSolver riesz_solver,
+    const LocalizationEigenConfig &config,
+    ComplexMatrix &dense_cross_check,
+    ReferenceDefectGramOperatorDiagnostics &gram_diagnostics,
+    ReferenceDefectGramFactorCache *factor_cache) {
+    if (defect_rhs.cols() != denominator.rows()
+        || denominator.rows() != denominator.cols()
+        || config.maximum_iterations <= 0
+        || !(config.relative_tolerance > 0.0)) {
+        throw std::invalid_argument(
+            "reference corrector eigensystem inputs are invalid");
+    }
+    const int dimension = defect_rhs.cols();
+    ReferenceDefectGramOperator gram_operator(
+        hierarchy, reference_operators, defect_rhs, riesz_solver, 0,
+        factor_cache);
+    const auto apply = [&](const ComplexVector &vector) {
+        return gram_operator.apply(vector);
+    };
+    const auto apply_block = [&](const ComplexMatrix &vectors) {
+        return gram_operator.apply(vectors);
+    };
+    const auto dense_spectrum = [&](bool fallback) {
+        dense_cross_check = ComplexMatrix::Zero(dimension, dimension);
+        constexpr int block_columns = 16;
+        for (int first = 0; first < dimension; first += block_columns) {
+            const int count = std::min(block_columns, dimension - first);
+            ComplexMatrix units = ComplexMatrix::Zero(dimension, count);
+            for (int column = 0; column < count; ++column)
+                units(first + column, column) = Complex(1.0, 0.0);
+            dense_cross_check.middleCols(first, count) = apply_block(units);
+        }
+        dense_cross_check =
+            (0.5 * (dense_cross_check + dense_cross_check.adjoint())).eval();
+        LocalizationEigenConfig dense_config = config;
+        dense_config.sparse_generalized_min_dimension =
+            std::numeric_limits<int>::max();
+        LocalizationSpectrum result = compute_localization_spectrum(
+            dense_cross_check, denominator, dense_config);
+        result.dense_cross_checked = true;
+        result.used_dense_fallback = fallback;
+        result.dense_lambda_max = result.lambda_max;
+        result.dense_relative_difference = 0.0;
+        return result;
+    };
+    if (dimension <= config.dense_cross_check_max_dimension) {
+        LocalizationSpectrum result = dense_spectrum(false);
+        gram_diagnostics = gram_operator.diagnostics();
+        return result;
+    }
+
+    Eigen::SparseMatrix<double> energy = 0.5 * (
+        denominator
+        + Eigen::SparseMatrix<double>(denominator.transpose()));
+    energy.makeCompressed();
+    Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> factorization;
+    factorization.compute(energy);
+    if (factorization.info() != Eigen::Success) {
+        throw std::runtime_error(
+            "reference corrector coarse energy factorization failed");
+    }
+
+    LocalizationSpectrum result;
+    result.used_sparse_generalized_solver = true;
+    result.used_warm_start = config.warm_start.size() == dimension
+        && config.warm_start.allFinite()
+        && config.warm_start.norm() > 0.0;
+    const auto append_orthonormal = [&](std::vector<ComplexVector> &basis,
+                                        ComplexVector candidate) {
+        for (int pass = 0; pass < 2; ++pass) {
+            for (const ComplexVector &vector : basis) {
+                candidate -= vector * vector.dot(
+                    multiply_real_sparse(energy, candidate));
+            }
+        }
+        const double squared = std::real(candidate.dot(
+            multiply_real_sparse(energy, candidate)));
+        if (!(squared > 256.0 * std::numeric_limits<double>::epsilon()))
+            return false;
+        candidate /= std::sqrt(squared);
+        basis.push_back(std::move(candidate));
+        return true;
+    };
+    const auto deterministic_vector = [&](int seed) {
+        ComplexVector vector(dimension);
+        for (int index = 0; index < dimension; ++index) {
+            const double phase = static_cast<double>(
+                (index + 1) * (seed + 1));
+            vector(index) = Complex(
+                std::sin(phase), 0.5 * std::cos(phase * 1.6180339887498948));
+        }
+        return vector;
+    };
+    const auto as_matrix = [&](const std::vector<ComplexVector> &columns) {
+        ComplexMatrix matrix(dimension, columns.size());
+        for (int column = 0; column < static_cast<int>(columns.size()); ++column)
+            matrix.col(column) = columns[column];
+        return matrix;
+    };
+
+    // Four vectors cover the clustered dominant modes seen in E1 without the
+    // memory and RHS traffic of the earlier eight-vector prototype.
+    const int block_size = std::min(4, dimension);
+    std::vector<ComplexVector> initial;
+    initial.reserve(block_size);
+    if (result.used_warm_start)
+        (void)append_orthonormal(initial, config.warm_start);
+    for (int seed = 0;
+         static_cast<int>(initial.size()) < block_size
+         && seed < 4 * dimension; ++seed) {
+        (void)append_orthonormal(initial, deterministic_vector(seed));
+    }
+    if (static_cast<int>(initial.size()) != block_size) {
+        throw std::runtime_error(
+            "reference corrector block eigensolve could not initialize an energy-orthonormal basis");
+    }
+    ComplexMatrix iterate = as_matrix(initial);
+    ComplexMatrix applied = apply_block(iterate);
+    ComplexMatrix search_direction(dimension, 0);
+    for (int iteration = 1; iteration <= config.maximum_iterations;
+         ++iteration) {
+        ComplexMatrix energy_times = multiply_real_sparse(energy, iterate);
+        ComplexMatrix projected = iterate.adjoint() * applied;
+        projected = (0.5 * (projected + projected.adjoint())).eval();
+        Eigen::SelfAdjointEigenSolver<ComplexMatrix> eigensolver(projected);
+        if (eigensolver.info() != Eigen::Success) {
+            throw std::runtime_error(
+                "reference corrector matrix-free block Ritz solve failed");
+        }
+        iterate = iterate * eigensolver.eigenvectors();
+        applied = applied * eigensolver.eigenvectors();
+        energy_times = energy_times * eigensolver.eigenvectors();
+        const Eigen::VectorXd eigenvalues = eigensolver.eigenvalues();
+        result.lambda_max = std::max(0.0, eigenvalues(block_size - 1));
+        ComplexMatrix residual = applied;
+        for (int column = 0; column < block_size; ++column)
+            residual.col(column) -=
+                eigenvalues(column) * energy_times.col(column);
+        const ComplexMatrix inverse_residual = solve_real_sparse(
+            factorization, residual);
+        const ComplexVector top_residual = residual.col(block_size - 1);
+        const ComplexVector top_inverse_residual =
+            inverse_residual.col(block_size - 1);
+        const double dual_squared = std::max(
+            0.0, std::real(top_residual.dot(top_inverse_residual)));
+        result.relative_residual = std::sqrt(dual_squared)
+            / std::max(1.0, std::abs(result.lambda_max));
+        result.iterations = iteration;
+        if (result.relative_residual <= config.relative_tolerance) {
+            result.converged = true;
+            result.dominant_vector = iterate.col(block_size - 1);
+            break;
+        }
+
+        std::vector<ComplexVector> basis;
+        basis.reserve(2 * block_size);
+        for (int column = 0; column < block_size; ++column)
+            (void)append_orthonormal(basis, iterate.col(column));
+        for (int column = 0; column < block_size; ++column)
+            (void)append_orthonormal(basis, inverse_residual.col(column));
+        for (int column = 0; column < search_direction.cols(); ++column)
+            (void)append_orthonormal(basis, search_direction.col(column));
+        for (int seed = iteration * block_size;
+             static_cast<int>(basis.size()) == block_size
+             && seed < (iteration + 4) * block_size; ++seed) {
+            (void)append_orthonormal(basis, deterministic_vector(seed));
+        }
+        if (static_cast<int>(basis.size()) == block_size) {
+            if (dimension <= config.dense_fallback_max_dimension) {
+                LocalizationSpectrum fallback = dense_spectrum(true);
+                gram_diagnostics = gram_operator.diagnostics();
+                return fallback;
+            }
+            throw std::runtime_error(
+                "reference corrector block Ritz iteration stagnated without an independent residual direction");
+        }
+        const ComplexMatrix subspace = as_matrix(basis);
+        const ComplexMatrix subspace_action = apply_block(subspace);
+        ComplexMatrix small = subspace.adjoint() * subspace_action;
+        small = (0.5 * (small + small.adjoint())).eval();
+        Eigen::SelfAdjointEigenSolver<ComplexMatrix> subspace_solver(small);
+        if (subspace_solver.info() != Eigen::Success) {
+            throw std::runtime_error(
+                "reference corrector matrix-free block subspace solve failed");
+        }
+        const ComplexMatrix selected =
+            subspace_solver.eigenvectors().rightCols(block_size);
+        ComplexMatrix direction_coefficients = selected;
+        direction_coefficients.topRows(block_size).setZero();
+        search_direction = subspace * direction_coefficients;
+        iterate = subspace * selected;
+        applied = subspace_action * selected;
+    }
+    if (!result.converged) {
+        if (dimension <= config.dense_fallback_max_dimension) {
+            LocalizationSpectrum fallback = dense_spectrum(true);
+            gram_diagnostics = gram_operator.diagnostics();
+            return fallback;
+        }
+        std::ostringstream detail;
+        detail << std::setprecision(17)
+               << "reference corrector matrix-free eigensolve did not converge: "
+               << "dimension=" << dimension
+               << ", iterations=" << result.iterations
+               << ", relative_residual=" << result.relative_residual
+               << ", tolerance=" << config.relative_tolerance;
+        throw std::runtime_error(detail.str());
+    }
+    result.dominant_vector = iterate.col(block_size - 1);
+    gram_diagnostics = gram_operator.diagnostics();
+    return result;
+}
+
+} // namespace
+
+ReferenceCorrectorCertificate build_reference_corrector_certificate(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &localized_adjoint_basis,
+    const std::vector<int> &coarse_basis_nodes,
+    KernelRieszSolver riesz_solver,
+    const LocalizationEigenConfig &eigen_config,
+    ReferenceDefectGramFactorCache *factor_cache) {
+    const auto total_begin = std::chrono::steady_clock::now();
+    const int reference_nodes = static_cast<int>(
+        hierarchy.reference_mesh().nodes.size());
+    if (localized_adjoint_basis.rows() != reference_nodes
+        || localized_adjoint_basis.cols()
+            != static_cast<int>(coarse_basis_nodes.size())
+        || reference_operators.system.rows() != reference_nodes
+        || coarse_basis_nodes.empty()) {
+        throw std::invalid_argument(
+            "reference corrector certificate inputs do not match the hierarchy");
+    }
+
+    ReferenceCorrectorCertificate result;
+    auto stage_begin = std::chrono::steady_clock::now();
+    result.defect_rhs = reference_operators.system.adjoint()
+        * localized_adjoint_basis;
+    result.defect_rhs.makeCompressed();
+    result.timings.defect_rhs_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - stage_begin).count();
+
+    const Eigen::SparseMatrix<double> coarse_basis = select_sparse_columns(
+        hierarchy.coarse_to_reference(), coarse_basis_nodes);
+    Eigen::SparseMatrix<double> reference_energy =
+        reference_operators.stiffness
+        + reference_operators.wavenumber * reference_operators.wavenumber
+            * reference_operators.mass;
+    result.coarse_energy_operator = coarse_basis.transpose()
+        * reference_energy * coarse_basis;
+    result.coarse_energy_operator = 0.5 * (
+        result.coarse_energy_operator
+        + Eigen::SparseMatrix<double>(
+            result.coarse_energy_operator.transpose()));
+    result.coarse_energy_operator.makeCompressed();
+
+    stage_begin = std::chrono::steady_clock::now();
+    result.spectrum = reference_defect_spectrum_matrix_free(
+        hierarchy, reference_operators, result.defect_rhs,
+        result.coarse_energy_operator, riesz_solver, eigen_config,
+        result.dense_gram_cross_check, result.gram_operator, factor_cache);
+    result.matrix_free_action_used = true;
+    result.theta_loc = std::sqrt(std::max(0.0, result.spectrum.lambda_max));
+    if (result.spectrum.dense_cross_checked) {
+        result.theta_loc_diagnostic_lower = std::nextafter(
+            result.theta_loc, -std::numeric_limits<double>::infinity());
+        result.theta_loc_diagnostic_upper = std::nextafter(
+            result.theta_loc, std::numeric_limits<double>::infinity());
+    } else {
+        const double radius = result.spectrum.relative_residual
+            * std::max(1.0, result.spectrum.lambda_max);
+        result.theta_loc_diagnostic_lower = std::sqrt(std::max(
+            0.0, result.spectrum.lambda_max - radius));
+        result.theta_loc_diagnostic_upper = std::sqrt(
+            std::max(0.0, result.spectrum.lambda_max + radius));
+    }
+    result.timings.spectrum_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - stage_begin).count();
+    result.timings.total_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - total_begin).count();
+    return result;
+}
+
+ReferenceCorrectorDirectValidation
+validate_reference_corrector_certificate_small_matrix(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &localized_adjoint_basis,
+    const ComplexSparseMatrix &ideal_adjoint_basis,
+    const std::vector<int> &coarse_basis_nodes,
+    const ReferenceCorrectorCertificate &certificate,
+    double continuity_constant,
+    double overlap_constant,
+    double stable_decomposition_constant,
+    double kernel_coercivity_constant,
+    int maximum_free_dofs) {
+    if (localized_adjoint_basis.rows() != ideal_adjoint_basis.rows()
+        || localized_adjoint_basis.cols() != ideal_adjoint_basis.cols()
+        || localized_adjoint_basis.cols()
+            != static_cast<int>(coarse_basis_nodes.size())
+        || localized_adjoint_basis.rows() > maximum_free_dofs
+        || !(continuity_constant > 0.0)
+        || !(overlap_constant > 0.0)
+        || !(stable_decomposition_constant > 0.0)
+        || !(kernel_coercivity_constant > 0.0)) {
+        throw std::invalid_argument(
+            "reference corrector direct validation inputs are invalid");
+    }
+    Eigen::SparseMatrix<double> reference_energy =
+        reference_operators.stiffness
+        + reference_operators.wavenumber * reference_operators.wavenumber
+            * reference_operators.mass;
+    const ComplexSparseMatrix difference =
+        ideal_adjoint_basis - localized_adjoint_basis;
+    ComplexMatrix numerator = difference.adjoint()
+        * reference_energy.cast<Complex>() * difference;
+    numerator = (0.5 * (numerator + numerator.adjoint())).eval();
+    LocalizationEigenConfig dense_config;
+    dense_config.sparse_generalized_min_dimension =
+        std::numeric_limits<int>::max();
+    const LocalizationSpectrum direct = compute_localization_spectrum(
+        numerator, certificate.coarse_energy_operator, dense_config);
+
+    ReferenceCorrectorDirectValidation result;
+    result.direct_delta = std::sqrt(std::max(0.0, direct.lambda_max));
+    result.theorem_lower = certificate.theta_loc
+        / (continuity_constant * overlap_constant);
+    result.theorem_upper = stable_decomposition_constant
+        / kernel_coercivity_constant * certificate.theta_loc;
+    const double tolerance = 2e-9 * std::max({
+        1.0, result.direct_delta, result.theorem_upper});
+    result.bracket_holds = result.theorem_lower <= result.direct_delta + tolerance
+        && result.direct_delta <= result.theorem_upper + tolerance;
+    return result;
+}
 
 bool CertificateContextFingerprint::complete() const {
     return !mesh.empty() && !pde.empty() && !patch_policy.empty()

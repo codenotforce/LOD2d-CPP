@@ -283,7 +283,16 @@ void verify_reference_residual_riesz() {
         problem.reference_load,
         candidate,
         0.5,
-        KernelRieszSolver::SaddlePoint);
+        KernelRieszSolver::SaddlePoint,
+        1);
+    const ReferenceResidualRiesz parallel = compute_reference_residual_riesz(
+        problem.hierarchy,
+        problem.reference_operators,
+        problem.reference_load,
+        candidate,
+        0.5,
+        KernelRieszSolver::SaddlePoint,
+        4);
     const ReferenceResidualRiesz basis = compute_reference_residual_riesz(
         problem.hierarchy,
         problem.reference_operators,
@@ -307,6 +316,16 @@ void verify_reference_residual_riesz() {
             "reference node-to-element allocation is not conservative");
     require_close(saddle.eta, basis.eta, 2e-10,
                   "reference saddle and kernel-basis eta_H disagree");
+    require_close(saddle.eta, parallel.eta, 2e-13,
+                  "serial and parallel reference eta_H disagree");
+    require(saddle.marked_elements == parallel.marked_elements,
+            "serial and parallel reference marking differs");
+    require(parallel.parallel_threads >= 1
+                && parallel.patch_factorizations > 0
+                && parallel.patch_factorizations
+                    + parallel.skipped_zero_kernel_patches
+                    <= parallel.patches.size(),
+            "parallel reference residual diagnostics are inconsistent");
 
     for (int index = 0; index < static_cast<int>(saddle.patches.size()); ++index) {
         const KernelRieszPatch &patch = saddle.patches[index];
@@ -319,6 +338,8 @@ void verify_reference_residual_riesz() {
                 "reference local Riesz energy identity failed");
         require_close(local.eta, basis.local_results[index].eta, 2e-10,
                       "reference local Riesz solvers disagree");
+        require_close(local.eta, parallel.local_results[index].eta, 2e-13,
+                      "serial and parallel local eta_H,z disagree");
 
         ComplexVector extended = ComplexVector::Zero(
             problem.reference_load.size());

@@ -117,6 +117,11 @@ public:
         const HelmholtzProblemConfig &config,
         const adaptive::ReferenceEpochHierarchy &hierarchy,
         HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
+    static HelmholtzLodModel build_adaptive_hybrid(
+        const HelmholtzProblemConfig &config,
+        const adaptive::ReferenceEpochHierarchy &hierarchy,
+        const std::vector<int> &skipped_corrector_elements,
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
 
     HelmholtzLodSolution solve_load(const ComplexVector &fine_load) const;
     HelmholtzLodSolution solve_source(const ComplexFunction &source) const;
@@ -140,7 +145,8 @@ private:
         HelmholtzProblemConfig config,
         HelmholtzProblemData problem,
         double mesh_and_interpolation_ms,
-        HelmholtzCorrectorPatchCache *corrector_cache = nullptr);
+        HelmholtzCorrectorPatchCache *corrector_cache = nullptr,
+        const std::vector<int> &skipped_corrector_elements = {});
 
     HelmholtzProblemConfig config_;
     HelmholtzProblemData problem_;

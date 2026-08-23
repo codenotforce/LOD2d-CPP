@@ -50,41 +50,6 @@ private:
 ReferenceRetraction build_reference_retraction(
     const ReferenceEpochHierarchy &hierarchy);
 
-struct LocalizationEigenConfig {
-    // Large production spectra can have a small dominant eigengap.  Small
-    // diagnostics keep the dense whitening path for exact cross-checks;
-    // production dimensions use a sparse-denominator generalized iteration
-    // and never form an inverse Cholesky factor or a whitened dense matrix.
-    int maximum_iterations = 1000;
-    double relative_tolerance = 1e-11;
-    int dense_cross_check_max_dimension = 64;
-    int dense_fallback_max_dimension = 1024;
-    int sparse_generalized_min_dimension = 1025;
-    ComplexVector warm_start;
-};
-
-struct LocalizationSpectrum {
-    double lambda_max = 0.0;
-    ComplexVector dominant_vector;
-    int iterations = 0;
-    double relative_residual = 0.0;
-    bool converged = false;
-    bool dense_cross_checked = false;
-    bool used_dense_fallback = false;
-    bool used_sparse_generalized_solver = false;
-    bool used_warm_start = false;
-    double dense_lambda_max = 0.0;
-    double dense_relative_difference = 0.0;
-};
-
-// Solves G x = lambda E x for the largest eigenvalue. This public entry
-// point is also used by focused numerical regressions; production
-// certificates call the same implementation.
-LocalizationSpectrum compute_localization_spectrum(
-    const ComplexMatrix &numerator,
-    const Eigen::SparseMatrix<double> &denominator,
-    const LocalizationEigenConfig &config = {});
-
 enum class LocalizationCertificateStatus {
     ImplementationStudy,
 };

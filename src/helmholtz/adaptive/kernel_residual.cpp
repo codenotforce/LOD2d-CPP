@@ -8,6 +8,7 @@
 #include <Eigen/Eigenvalues>
 #include <Eigen/QR>
 #include <Eigen/SVD>
+#include <Eigen/SparseCholesky>
 #include <Eigen/SparseLU>
 
 #include <algorithm>
@@ -19,11 +20,13 @@
 #include <exception>
 #include <iomanip>
 #include <limits>
+#include <list>
 #include <mutex>
 #include <numeric>
 #include <queue>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <utility>
 
 #ifdef _OPENMP
@@ -458,10 +461,17 @@ ReferenceEpochSpaceView reference_epoch_space_view(
     result.coarse = &hierarchy.coarse_mesh();
     switch (space) {
     case KernelRieszSpace::ReferenceResidual:
+    case KernelRieszSpace::ReferenceDefect:
         result.discrete = &hierarchy.reference_mesh();
         result.interpolation = &hierarchy.reference_quasi_interpolation();
         result.coarse_elements_to_discrete =
             &hierarchy.coarse_elements_to_reference();
+        break;
+    case KernelRieszSpace::CandidateResidual:
+        result.discrete = &hierarchy.candidate_mesh();
+        result.interpolation = &hierarchy.candidate_quasi_interpolation();
+        result.coarse_elements_to_discrete =
+            &hierarchy.coarse_elements_to_candidate();
         break;
     case KernelRieszSpace::AmbientDefect:
         result.discrete = &hierarchy.ambient_mesh();
@@ -810,6 +820,44 @@ std::vector<LocalKernelRieszResult> solve_local_riesz_columns(
             multipliers.real() = qr.solve(imbalance.real());
             multipliers.imag() = qr.solve(imbalance.imag());
         }
+    } else if (unknowns > 0 && constraint_count <= 256) {
+        // The Riesz energy is real SPD.  For a modest constraint space,
+        // factor A with a symmetric solver and enforce Cx=0 through the
+        // small dense Schur complement C A^{-1} C^T.  This is algebraically
+        // identical to the indefinite saddle solve but avoids a much larger
+        // SparseLU factorization on early whole-domain patches.
+        Eigen::SimplicialLDLT<Eigen::SparseMatrix<double>> energy_factor;
+        energy_factor.compute(energy);
+        if (energy_factor.info() != Eigen::Success)
+            throw std::runtime_error("kernel Riesz energy factorization failed");
+        local_values.real() = energy_factor.solve(right_hand_sides.real());
+        local_values.imag() = energy_factor.solve(right_hand_sides.imag());
+        if (energy_factor.info() != Eigen::Success || !local_values.allFinite())
+            throw std::runtime_error("kernel Riesz energy solve failed");
+        if (constraint_count > 0) {
+            const Eigen::MatrixXd energy_inverse_constraints =
+                energy_factor.solve(constraints.transpose());
+            if (energy_factor.info() != Eigen::Success
+                || !energy_inverse_constraints.allFinite()) {
+                throw std::runtime_error(
+                    "kernel Riesz constraint-block solve failed");
+            }
+            const Eigen::MatrixXd schur =
+                constraints * energy_inverse_constraints;
+            Eigen::LDLT<Eigen::MatrixXd> schur_factor(schur);
+            if (schur_factor.info() != Eigen::Success)
+                throw std::runtime_error("kernel Riesz Schur factorization failed");
+            const ComplexMatrix constraint_rhs =
+                constraints.cast<Complex>() * local_values;
+            multipliers.real() = schur_factor.solve(constraint_rhs.real());
+            multipliers.imag() = schur_factor.solve(constraint_rhs.imag());
+            if (schur_factor.info() != Eigen::Success
+                || !multipliers.allFinite()) {
+                throw std::runtime_error("kernel Riesz Schur solve failed");
+            }
+            local_values -= energy_inverse_constraints.cast<Complex>()
+                * multipliers;
+        }
     } else if (unknowns > 0) {
         std::vector<ComplexTriplet> triplets;
         triplets.reserve(static_cast<std::size_t>(
@@ -1048,7 +1096,8 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
     const ComplexVector &reference_load,
     const ComplexVector &candidate_on_reference,
     double doerfler_theta,
-    KernelRieszSolver solver) {
+    KernelRieszSolver solver,
+    int maximum_parallel_patch_solves) {
     const int reference_nodes = static_cast<int>(
         hierarchy.reference_mesh().nodes.size());
     if (reference_operators.system.rows() != reference_nodes
@@ -1070,7 +1119,12 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
         throw std::invalid_argument(
             "reference residual Doerfler theta must lie in (0,1]");
     }
+    if (maximum_parallel_patch_solves < 0) {
+        throw std::invalid_argument(
+            "maximum parallel reference-residual patch solves must be nonnegative");
+    }
 
+    const auto prepare_begin = std::chrono::steady_clock::now();
     ReferenceResidualRiesz result;
     result.policy = kernel_riesz_patch_policy(
         hierarchy, KernelRieszSpace::ReferenceResidual);
@@ -1088,19 +1142,126 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
         hierarchy.coarse_mesh().nodes.size());
     result.node_eta.assign(coarse_nodes, 0.0);
     result.node_eta_squared.assign(coarse_nodes, 0.0);
-    result.local_results.reserve(result.patches.size());
-    for (const KernelRieszPatch &patch : result.patches) {
-        const Eigen::SparseMatrix<double> local_energy =
-            restrict_sparse_matrix(global_energy, patch.discrete_dofs);
-        const ComplexVector local_rhs = restrict_vector(
-            result.global_residual, patch.discrete_dofs);
-        LocalKernelRieszResult local = solve_local_riesz(
-            local_energy, patch.constraints, local_rhs, solver);
-        result.node_eta[patch.coarse_node] = local.eta;
-        result.node_eta_squared[patch.coarse_node] = local.eta_squared;
-        result.local_results.push_back(std::move(local));
+    result.local_results.resize(result.patches.size());
+    struct ResidualPatchGroup {
+        int representative = -1;
+        std::vector<int> patch_indices;
+    };
+    std::vector<ResidualPatchGroup> groups;
+    std::unordered_map<std::string, std::vector<int>> group_candidates;
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(result.patches.size());
+         ++patch_index) {
+        const KernelRieszPatch &patch = result.patches[patch_index];
+        if (patch.discrete_dofs.empty()) {
+            ++result.skipped_zero_kernel_patches;
+            continue;
+        }
+        FingerprintBuilder fingerprint;
+        fingerprint.add_u64(patch.discrete_dofs.size());
+        for (const int dof : patch.discrete_dofs) fingerprint.add_i64(dof);
+        fingerprint.add_i64(patch.constraints.rows());
+        fingerprint.add_i64(patch.constraints.cols());
+        for (int column = 0; column < patch.constraints.cols(); ++column)
+            for (int row = 0; row < patch.constraints.rows(); ++row)
+                fingerprint.add_double(patch.constraints(row, column));
+        const std::string key = fingerprint.finish();
+        int group_index = -1;
+        for (const int candidate : group_candidates[key]) {
+            const KernelRieszPatch &representative =
+                result.patches[groups[candidate].representative];
+            if (representative.discrete_dofs == patch.discrete_dofs
+                && representative.constraints.rows() == patch.constraints.rows()
+                && representative.constraints.cols() == patch.constraints.cols()
+                && (representative.constraints.array()
+                    == patch.constraints.array()).all()) {
+                group_index = candidate;
+                break;
+            }
+        }
+        if (group_index < 0) {
+            group_index = static_cast<int>(groups.size());
+            groups.push_back({patch_index, {}});
+            group_candidates[key].push_back(group_index);
+        }
+        groups[group_index].patch_indices.push_back(patch_index);
     }
+    result.prepare_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - prepare_begin).count();
 
+    int maximum_threads = 1;
+#ifdef _OPENMP
+    maximum_threads = std::max(1, omp_get_max_threads());
+#endif
+    if (maximum_parallel_patch_solves > 0) {
+        maximum_threads = std::min(
+            maximum_threads, maximum_parallel_patch_solves);
+    }
+    maximum_threads = std::min(
+        maximum_threads,
+        static_cast<int>(std::max<std::size_t>(1, groups.size())));
+    std::atomic<bool> failed{false};
+    std::exception_ptr first_exception;
+    std::mutex exception_mutex;
+    const auto patch_solve_begin = std::chrono::steady_clock::now();
+#ifdef _OPENMP
+    #pragma omp parallel num_threads(maximum_threads)
+    {
+        #pragma omp single
+        result.parallel_threads = omp_get_num_threads();
+        #pragma omp for schedule(dynamic, 1)
+        for (int group_index = 0;
+             group_index < static_cast<int>(groups.size());
+             ++group_index) {
+#else
+    for (int group_index = 0;
+         group_index < static_cast<int>(groups.size());
+         ++group_index) {
+#endif
+        if (failed.load(std::memory_order_relaxed)) continue;
+        try {
+            const ResidualPatchGroup &group = groups[group_index];
+            const KernelRieszPatch &patch =
+                result.patches[group.representative];
+            const Eigen::SparseMatrix<double> local_energy =
+                restrict_sparse_matrix(global_energy, patch.discrete_dofs);
+            ComplexMatrix local_rhs(
+                patch.discrete_dofs.size(), group.patch_indices.size());
+            for (int column = 0;
+                 column < static_cast<int>(group.patch_indices.size());
+                 ++column) {
+                local_rhs.col(column) = restrict_vector(
+                    result.global_residual, patch.discrete_dofs);
+            }
+            std::vector<LocalKernelRieszResult> locals =
+                solve_local_riesz_columns(
+                    local_energy, patch.constraints, local_rhs, solver);
+            for (int column = 0;
+                 column < static_cast<int>(group.patch_indices.size());
+                 ++column) {
+                const int patch_index = group.patch_indices[column];
+                const KernelRieszPatch &column_patch =
+                    result.patches[patch_index];
+                result.node_eta[column_patch.coarse_node] = locals[column].eta;
+                result.node_eta_squared[column_patch.coarse_node] =
+                    locals[column].eta_squared;
+                result.local_results[patch_index] = std::move(locals[column]);
+            }
+        } catch (...) {
+            failed.store(true, std::memory_order_relaxed);
+            std::lock_guard<std::mutex> lock(exception_mutex);
+            if (!first_exception) first_exception = std::current_exception();
+        }
+    }
+#ifdef _OPENMP
+    }
+#endif
+    result.patch_solve_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - patch_solve_begin).count();
+    if (first_exception) std::rethrow_exception(first_exception);
+    result.patch_factorizations = groups.size();
+
+    const auto reduction_begin = std::chrono::steady_clock::now();
     result.element_eta_squared.assign(
         hierarchy.coarse_mesh().elems.size(), 0.0);
     for (const KernelRieszPatch &patch : result.patches) {
@@ -1132,39 +1293,169 @@ ReferenceResidualRiesz compute_reference_residual_riesz(
         result.marked_elements = mark_doerfler(
             result.element_eta_squared, doerfler_theta);
     }
+    result.reduction_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - reduction_begin).count();
     return result;
 }
 
-AmbientDefectRiesz compute_ambient_defect_riesz(
+CandidateResidualRiesz compute_candidate_residual_riesz(
     const ReferenceEpochHierarchy &hierarchy,
-    const HelmholtzOperators &ambient_operators,
+    const HelmholtzOperators &candidate_operators,
+    const ComplexVector &candidate_load,
+    const ComplexVector &lod_on_candidate,
+    KernelRieszSolver solver) {
+    const int candidate_nodes = static_cast<int>(
+        hierarchy.candidate_mesh().nodes.size());
+    if (candidate_operators.system.rows() != candidate_nodes
+        || candidate_operators.system.cols() != candidate_nodes
+        || candidate_operators.stiffness.rows() != candidate_nodes
+        || candidate_operators.mass.rows() != candidate_nodes
+        || candidate_load.size() != candidate_nodes
+        || lod_on_candidate.size() != candidate_nodes) {
+        throw std::invalid_argument(
+            "candidate residual Riesz inputs do not match candidate_mesh");
+    }
+    if (!(candidate_operators.wavenumber > 0.0)
+        || !candidate_load.allFinite() || !lod_on_candidate.allFinite()) {
+        throw std::invalid_argument(
+            "candidate residual Riesz inputs are invalid");
+    }
+
+    CandidateResidualRiesz result;
+    const auto prepare_begin = std::chrono::steady_clock::now();
+    result.space = KernelRieszSpace::CandidateResidual;
+    result.policy = kernel_riesz_patch_policy(
+        hierarchy, KernelRieszSpace::CandidateResidual);
+    result.solver = solver;
+    result.patches = build_kernel_riesz_patches(
+        hierarchy, KernelRieszSpace::CandidateResidual, result.policy);
+    result.global_residual = candidate_load
+        - candidate_operators.system * lod_on_candidate;
+    for (int node : candidate_operators.dirichlet_nodes)
+        result.global_residual(node) = Complex(0.0, 0.0);
+
+    const Eigen::SparseMatrix<double> global_energy =
+        energy_matrix(candidate_operators);
+    const int coarse_nodes = static_cast<int>(
+        hierarchy.coarse_mesh().nodes.size());
+    result.node_eta.assign(coarse_nodes, 0.0);
+    result.node_eta_squared.assign(coarse_nodes, 0.0);
+    result.local_results.resize(result.patches.size());
+    result.prepare_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - prepare_begin).count();
+    std::vector<char> skipped(result.patches.size(), false);
+    std::vector<std::exception_ptr> errors(result.patches.size());
+    const auto solve_begin = std::chrono::steady_clock::now();
+#ifdef _OPENMP
+    const int maximum_threads = std::min(
+        omp_get_max_threads(),
+        static_cast<int>(std::max<std::size_t>(1, result.patches.size())));
+#pragma omp parallel num_threads(maximum_threads)
+    {
+#pragma omp single
+        result.parallel_threads = omp_get_num_threads();
+#pragma omp for schedule(dynamic, 1)
+        for (int patch_index = 0;
+             patch_index < static_cast<int>(result.patches.size());
+             ++patch_index) {
+#else
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(result.patches.size());
+         ++patch_index) {
+#endif
+        try {
+        const KernelRieszPatch &patch = result.patches[patch_index];
+        if (patch.discrete_dofs.empty()) {
+            skipped[patch_index] = true;
+            continue;
+        }
+        const Eigen::SparseMatrix<double> local_energy =
+            restrict_sparse_matrix(global_energy, patch.discrete_dofs);
+        const ComplexVector local_rhs = restrict_vector(
+            result.global_residual, patch.discrete_dofs);
+        LocalKernelRieszResult local = solve_local_riesz(
+            local_energy, patch.constraints, local_rhs, solver);
+        result.node_eta[patch.coarse_node] = local.eta;
+        result.node_eta_squared[patch.coarse_node] = local.eta_squared;
+        result.local_results[patch_index] = std::move(local);
+        } catch (...) {
+            errors[patch_index] = std::current_exception();
+        }
+    }
+#ifdef _OPENMP
+    }
+#endif
+    result.patch_solve_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - solve_begin).count();
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(result.patches.size());
+         ++patch_index) {
+        if (errors[patch_index]) std::rethrow_exception(errors[patch_index]);
+        if (skipped[patch_index]) ++result.skipped_zero_kernel_patches;
+        else ++result.patch_factorizations;
+    }
+    const auto reduction_begin = std::chrono::steady_clock::now();
+    const double local_sum = std::accumulate(
+        result.local_results.begin(), result.local_results.end(), 0.0,
+        [](double sum, const LocalKernelRieszResult &local) {
+            return sum + local.eta_squared;
+        });
+    const double node_sum = std::accumulate(
+        result.node_eta_squared.begin(), result.node_eta_squared.end(), 0.0);
+    result.eta = std::sqrt(std::max(0.0, node_sum));
+    result.local_square_sum_relative_error = std::abs(local_sum - node_sum)
+        / std::max(1.0, node_sum);
+    // Candidate dual checks do not allocate or mark eta on coarse elements.
+    result.element_eta_squared.clear();
+    result.marked_elements.clear();
+    result.allocation_relative_error = 0.0;
+    result.reduction_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - reduction_begin).count();
+    return result;
+}
+
+namespace {
+
+AmbientDefectRiesz compute_defect_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &operators,
     const ComplexSparseMatrix &defect_rhs,
+    const KernelRieszSpace space,
     KernelRieszSolver solver,
     AmbientDefectDetail detail,
     int maximum_parallel_patch_solves) {
-    const int ambient_nodes = static_cast<int>(
-        hierarchy.ambient_mesh().nodes.size());
+    if (space != KernelRieszSpace::ReferenceDefect
+        && space != KernelRieszSpace::AmbientDefect) {
+        throw std::invalid_argument("invalid defect Riesz space");
+    }
+    const TriMesh &mesh = space == KernelRieszSpace::ReferenceDefect
+        ? hierarchy.reference_mesh() : hierarchy.ambient_mesh();
+    const char *space_name = space == KernelRieszSpace::ReferenceDefect
+        ? "reference" : "ambient";
+    const int nodes = static_cast<int>(mesh.nodes.size());
     const int input_columns = static_cast<int>(defect_rhs.cols());
-    if (ambient_operators.system.rows() != ambient_nodes
-        || ambient_operators.system.cols() != ambient_nodes
-        || ambient_operators.stiffness.rows() != ambient_nodes
-        || ambient_operators.mass.rows() != ambient_nodes
-        || defect_rhs.rows() != ambient_nodes
+    if (operators.system.rows() != nodes
+        || operators.system.cols() != nodes
+        || operators.stiffness.rows() != nodes
+        || operators.mass.rows() != nodes
+        || defect_rhs.rows() != nodes
         || input_columns <= 0) {
         throw std::invalid_argument(
-            "ambient defect Riesz inputs do not match ambient_mesh");
+            std::string(space_name)
+            + " defect Riesz inputs do not match the selected mesh");
     }
-    if (!(ambient_operators.wavenumber > 0.0)
+    if (!(operators.wavenumber > 0.0)
         || !defect_rhs.coeffs().allFinite()) {
-        throw std::invalid_argument("ambient defect Riesz inputs are invalid");
+        throw std::invalid_argument(
+            std::string(space_name) + " defect Riesz inputs are invalid");
     }
 
     AmbientDefectRiesz result;
-    result.policy = kernel_riesz_patch_policy(
-        hierarchy, KernelRieszSpace::AmbientDefect);
+    result.space = space;
+    result.policy = kernel_riesz_patch_policy(hierarchy, space);
     result.solver = solver;
     std::vector<KernelRieszPatch> patches = build_kernel_riesz_patches(
-        hierarchy, KernelRieszSpace::AmbientDefect, result.policy);
+        hierarchy, space, result.policy);
     result.patch_count = patches.size();
     result.local_details_stored =
         detail == AmbientDefectDetail::StoreLocalDetails;
@@ -1174,7 +1465,7 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     result.column_eta_squared = Eigen::VectorXd::Zero(input_columns);
 
     const Eigen::SparseMatrix<double> global_energy =
-        energy_matrix(ambient_operators);
+        energy_matrix(operators);
     using RowMajorComplexSparse =
         Eigen::SparseMatrix<Complex, Eigen::RowMajor>;
     const RowMajorComplexSparse defect_by_row = defect_rhs;
@@ -1360,6 +1651,397 @@ AmbientDefectRiesz compute_ambient_defect_riesz(
     if (result.local_details_stored)
         result.patches = std::move(patches);
     return result;
+}
+
+} // namespace
+
+AmbientDefectRiesz compute_ambient_defect_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &ambient_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    KernelRieszSolver solver,
+    AmbientDefectDetail detail,
+    int maximum_parallel_patch_solves) {
+    return compute_defect_riesz(
+        hierarchy, ambient_operators, defect_rhs,
+        KernelRieszSpace::AmbientDefect, solver, detail,
+        maximum_parallel_patch_solves);
+}
+
+ReferenceDefectRiesz compute_reference_defect_riesz(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    KernelRieszSolver solver,
+    AmbientDefectDetail detail,
+    int maximum_parallel_patch_solves) {
+    return compute_defect_riesz(
+        hierarchy, reference_operators, defect_rhs,
+        KernelRieszSpace::ReferenceDefect, solver, detail,
+        maximum_parallel_patch_solves);
+}
+
+using ReferenceDefectGramSparseFactor =
+    Eigen::SparseLU<ComplexSparseMatrix>;
+
+struct ReferenceDefectGramFactorCache::Implementation {
+    struct Entry {
+        std::shared_ptr<ReferenceDefectGramSparseFactor> factor;
+        std::list<std::string>::iterator lru;
+    };
+    explicit Implementation(const std::size_t requested_capacity)
+        : capacity(std::max<std::size_t>(1, requested_capacity)) {}
+
+    std::shared_ptr<ReferenceDefectGramSparseFactor> find(
+        const std::string &key) {
+        const auto found = entries.find(key);
+        if (found == entries.end()) return {};
+        order.splice(order.begin(), order, found->second.lru);
+        return found->second.factor;
+    }
+
+    void insert(
+        std::string key,
+        std::shared_ptr<ReferenceDefectGramSparseFactor> factor) {
+        const auto found = entries.find(key);
+        if (found != entries.end()) {
+            found->second.factor = std::move(factor);
+            order.splice(order.begin(), order, found->second.lru);
+            return;
+        }
+        order.push_front(key);
+        entries.emplace(
+            std::move(key), Entry{std::move(factor), order.begin()});
+        while (entries.size() > capacity) {
+            entries.erase(order.back());
+            order.pop_back();
+        }
+    }
+
+    std::size_t capacity;
+    std::list<std::string> order;
+    std::unordered_map<std::string, Entry> entries;
+};
+
+ReferenceDefectGramFactorCache::ReferenceDefectGramFactorCache(
+    const std::size_t capacity)
+    : implementation_(std::make_unique<Implementation>(capacity)) {}
+ReferenceDefectGramFactorCache::~ReferenceDefectGramFactorCache() = default;
+ReferenceDefectGramFactorCache::ReferenceDefectGramFactorCache(
+    ReferenceDefectGramFactorCache &&) noexcept = default;
+ReferenceDefectGramFactorCache &
+ReferenceDefectGramFactorCache::operator=(
+    ReferenceDefectGramFactorCache &&) noexcept = default;
+void ReferenceDefectGramFactorCache::clear() {
+    implementation_->entries.clear();
+    implementation_->order.clear();
+}
+std::size_t ReferenceDefectGramFactorCache::size() const {
+    return implementation_->entries.size();
+}
+
+struct ReferenceDefectGramOperator::Implementation {
+    using RowMajorComplexSparse = Eigen::SparseMatrix<Complex, Eigen::RowMajor>;
+    struct PreparedPatch {
+        std::vector<int> discrete_dofs;
+        std::vector<int> active_columns;
+        int unknowns = 0;
+        int constraint_count = 0;
+        std::string factor_cache_key;
+        Eigen::SparseMatrix<double> energy;
+        Eigen::MatrixXd constraints;
+        ComplexSparseMatrix defect_restriction;
+        std::shared_ptr<ReferenceDefectGramSparseFactor> saddle_factorization;
+    };
+    struct Contribution {
+        ComplexMatrix values;
+    };
+
+    ComplexSparseMatrix defect_rhs;
+    RowMajorComplexSparse defect_by_row;
+    KernelRieszSolver solver = KernelRieszSolver::SaddlePoint;
+    std::vector<PreparedPatch> patches;
+    ReferenceDefectGramOperatorDiagnostics diagnostics;
+};
+
+ReferenceDefectGramOperator::ReferenceDefectGramOperator(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    const KernelRieszSolver solver,
+    const int maximum_parallel_patch_solves,
+    ReferenceDefectGramFactorCache *factor_cache)
+    : implementation_(std::make_unique<Implementation>()) {
+    const int reference_nodes = static_cast<int>(
+        hierarchy.reference_mesh().nodes.size());
+    if (defect_rhs.rows() != reference_nodes
+        || reference_operators.system.rows() != reference_nodes
+        || !defect_rhs.coeffs().allFinite()
+        || defect_rhs.cols() <= 0) {
+        throw std::invalid_argument(
+            "reference defect Gram operator dimensions are inconsistent");
+    }
+    Implementation &data = *implementation_;
+    data.solver = solver;
+    data.defect_rhs = defect_rhs;
+    data.defect_by_row = defect_rhs;
+
+    const auto structure_begin = std::chrono::steady_clock::now();
+    const KernelPatchPolicy policy = kernel_riesz_patch_policy(
+        hierarchy, KernelRieszSpace::ReferenceDefect);
+    const std::vector<KernelRieszPatch> kernel_patches = build_kernel_riesz_patches(
+        hierarchy, KernelRieszSpace::ReferenceDefect, policy);
+    const Eigen::SparseMatrix<double> global_energy =
+        energy_matrix(reference_operators);
+    data.patches.reserve(kernel_patches.size());
+    for (const KernelRieszPatch &patch : kernel_patches) {
+        Implementation::PreparedPatch prepared;
+        prepared.discrete_dofs = patch.discrete_dofs;
+        prepared.energy = restrict_sparse_matrix(global_energy, patch.discrete_dofs);
+        prepared.constraints = patch.constraints;
+        prepared.unknowns = prepared.energy.rows();
+        prepared.constraint_count = prepared.constraints.rows();
+        FingerprintBuilder fingerprint;
+        add_integral_vector_fingerprint(
+            fingerprint, prepared.discrete_dofs);
+        add_sparse_fingerprint(fingerprint, prepared.energy);
+        fingerprint.add_i64(prepared.constraints.rows());
+        fingerprint.add_i64(prepared.constraints.cols());
+        for (int row = 0; row < prepared.constraints.rows(); ++row)
+            for (int column = 0; column < prepared.constraints.cols(); ++column)
+                fingerprint.add_double(prepared.constraints(row, column));
+        prepared.factor_cache_key = fingerprint.finish();
+        for (int global_row : patch.discrete_dofs) {
+            for (Implementation::RowMajorComplexSparse::InnerIterator it(
+                     data.defect_by_row, global_row); it; ++it) {
+                prepared.active_columns.push_back(it.col());
+            }
+        }
+        std::sort(prepared.active_columns.begin(), prepared.active_columns.end());
+        prepared.active_columns.erase(
+            std::unique(prepared.active_columns.begin(), prepared.active_columns.end()),
+            prepared.active_columns.end());
+        std::vector<ComplexTriplet> restriction_triplets;
+        for (int local_row = 0;
+             local_row < static_cast<int>(patch.discrete_dofs.size()); ++local_row) {
+            const int global_row = patch.discrete_dofs[local_row];
+            for (Implementation::RowMajorComplexSparse::InnerIterator it(
+                     data.defect_by_row, global_row); it; ++it) {
+                const auto found = std::lower_bound(
+                    prepared.active_columns.begin(),
+                    prepared.active_columns.end(), it.col());
+                restriction_triplets.emplace_back(
+                    local_row,
+                    static_cast<int>(found - prepared.active_columns.begin()),
+                    it.value());
+            }
+        }
+        prepared.defect_restriction.resize(
+            patch.discrete_dofs.size(), prepared.active_columns.size());
+        prepared.defect_restriction.setFromTriplets(
+            restriction_triplets.begin(), restriction_triplets.end());
+        prepared.defect_restriction.makeCompressed();
+        data.patches.push_back(std::move(prepared));
+    }
+    data.diagnostics.prepare_structure_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - structure_begin).count();
+    data.diagnostics.patch_count = data.patches.size();
+#ifdef _OPENMP
+    data.diagnostics.parallel_threads = maximum_parallel_patch_solves > 0
+        ? std::min(maximum_parallel_patch_solves, omp_get_max_threads())
+        : omp_get_max_threads();
+#else
+    (void)maximum_parallel_patch_solves;
+    data.diagnostics.parallel_threads = 1;
+#endif
+    data.diagnostics.parallel_threads = std::max(1, data.diagnostics.parallel_threads);
+
+    if (solver != KernelRieszSolver::SaddlePoint) return;
+    const auto factor_begin = std::chrono::steady_clock::now();
+    if (factor_cache) {
+        // Perform all lookups before inserting misses.  This preserves hits
+        // from the previous H-step even when the LRU capacity is smaller than
+        // the current patch count.
+        for (Implementation::PreparedPatch &patch : data.patches) {
+            patch.saddle_factorization =
+                factor_cache->implementation_->find(patch.factor_cache_key);
+            if (patch.saddle_factorization)
+                ++data.diagnostics.factor_cache_hits;
+            else
+                ++data.diagnostics.factor_cache_misses;
+        }
+    }
+    for (Implementation::PreparedPatch &patch : data.patches) {
+        const int unknowns = patch.unknowns;
+        const int constraint_count = patch.constraint_count;
+        if (unknowns == 0) continue;
+        if (patch.saddle_factorization) {
+            patch.energy.resize(0, 0);
+            patch.energy.data().squeeze();
+            patch.constraints.resize(0, 0);
+            continue;
+        }
+        std::vector<ComplexTriplet> triplets;
+        triplets.reserve(static_cast<std::size_t>(
+            patch.energy.nonZeros() + 2 * patch.constraints.size()));
+        for (int column = 0; column < patch.energy.outerSize(); ++column) {
+            for (Eigen::SparseMatrix<double>::InnerIterator it(
+                     patch.energy, column); it; ++it) {
+                triplets.emplace_back(it.row(), it.col(), it.value());
+            }
+        }
+        for (int row = 0; row < constraint_count; ++row) {
+            for (int column = 0; column < unknowns; ++column) {
+                const double value = patch.constraints(row, column);
+                if (value == 0.0) continue;
+                triplets.emplace_back(unknowns + row, column, value);
+                triplets.emplace_back(column, unknowns + row, value);
+            }
+        }
+        ComplexSparseMatrix saddle(
+            unknowns + constraint_count, unknowns + constraint_count);
+        saddle.setFromTriplets(triplets.begin(), triplets.end());
+        saddle.makeCompressed();
+        patch.saddle_factorization =
+            std::make_shared<ReferenceDefectGramSparseFactor>();
+        patch.saddle_factorization->analyzePattern(saddle);
+        patch.saddle_factorization->factorize(saddle);
+        if (patch.saddle_factorization->info() != Eigen::Success) {
+            throw std::runtime_error(
+                "prepared reference defect patch factorization failed");
+        }
+        // The production action only needs the completed saddle factor and
+        // the two block dimensions.  Keeping every local energy matrix and
+        // dense constraint block duplicated their data for the lifetime of
+        // the eigensolve and dominated late-epoch memory.
+        patch.energy.resize(0, 0);
+        patch.energy.data().squeeze();
+        patch.constraints.resize(0, 0);
+        ++data.diagnostics.patch_factorizations;
+        if (factor_cache) {
+            factor_cache->implementation_->insert(
+                patch.factor_cache_key, patch.saddle_factorization);
+        }
+    }
+    data.defect_by_row.resize(0, 0);
+    data.defect_by_row.data().squeeze();
+    data.diagnostics.prepare_factorization_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - factor_begin).count();
+}
+
+ReferenceDefectGramOperator::~ReferenceDefectGramOperator() = default;
+ReferenceDefectGramOperator::ReferenceDefectGramOperator(
+    ReferenceDefectGramOperator &&) noexcept = default;
+ReferenceDefectGramOperator &ReferenceDefectGramOperator::operator=(
+    ReferenceDefectGramOperator &&) noexcept = default;
+
+ComplexVector ReferenceDefectGramOperator::apply(
+    const ComplexVector &coarse_coefficients) {
+    ComplexMatrix block(coarse_coefficients.size(), 1);
+    block.col(0) = coarse_coefficients;
+    return apply(block).col(0);
+}
+
+ComplexMatrix ReferenceDefectGramOperator::apply(
+    const ComplexMatrix &coarse_coefficients) {
+    Implementation &data = *implementation_;
+    if (coarse_coefficients.rows() != data.defect_rhs.cols()
+        || coarse_coefficients.cols() <= 0
+        || !coarse_coefficients.allFinite()) {
+        throw std::invalid_argument(
+            "reference defect Gram action dimensions are inconsistent");
+    }
+    const auto rhs_begin = std::chrono::steady_clock::now();
+    const ComplexMatrix combined_rhs = data.defect_rhs * coarse_coefficients;
+    data.diagnostics.action_rhs_seconds += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - rhs_begin).count();
+
+    std::vector<Implementation::Contribution> contributions(data.patches.size());
+    std::vector<std::string> errors(data.patches.size());
+    const auto solve_begin = std::chrono::steady_clock::now();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 1) num_threads(data.diagnostics.parallel_threads)
+#endif
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(data.patches.size()); ++patch_index) {
+        try {
+            Implementation::PreparedPatch &patch = data.patches[patch_index];
+            const int unknowns = patch.unknowns;
+            if (unknowns == 0) continue;
+            ComplexMatrix local_rhs(patch.discrete_dofs.size(), coarse_coefficients.cols());
+            for (int local = 0;
+                 local < static_cast<int>(patch.discrete_dofs.size()); ++local) {
+                local_rhs.row(local) = combined_rhs.row(patch.discrete_dofs[local]);
+            }
+            ComplexMatrix local_values;
+            if (data.solver == KernelRieszSolver::SaddlePoint) {
+                const int constraint_count = patch.constraint_count;
+                ComplexMatrix saddle_rhs = ComplexMatrix::Zero(
+                    unknowns + constraint_count, coarse_coefficients.cols());
+                saddle_rhs.topRows(unknowns) = local_rhs;
+                const ComplexMatrix solution =
+                    patch.saddle_factorization->solve(saddle_rhs);
+                if (patch.saddle_factorization->info() != Eigen::Success
+                    || !solution.allFinite()) {
+                    throw std::runtime_error(
+                        "prepared reference defect patch solve failed");
+                }
+                local_values = solution.topRows(unknowns);
+            } else {
+                const std::vector<LocalKernelRieszResult> solved =
+                    solve_local_riesz_columns(
+                    patch.energy, patch.constraints, local_rhs,
+                    data.solver);
+                local_values.resize(unknowns, coarse_coefficients.cols());
+                for (int column = 0; column < coarse_coefficients.cols(); ++column)
+                    local_values.col(column) = solved[column].local_values;
+            }
+            contributions[patch_index].values =
+                patch.defect_restriction.adjoint() * local_values;
+        } catch (const std::exception &error) {
+            errors[patch_index] = error.what();
+        }
+    }
+    data.diagnostics.action_patch_solve_seconds += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - solve_begin).count();
+    for (std::size_t patch = 0; patch < errors.size(); ++patch) {
+        if (!errors[patch].empty()) {
+            throw std::runtime_error(
+                "reference defect Gram patch " + std::to_string(patch)
+                + " failed: " + errors[patch]);
+        }
+    }
+
+    const auto scatter_begin = std::chrono::steady_clock::now();
+    ComplexMatrix result = ComplexMatrix::Zero(
+        data.defect_rhs.cols(), coarse_coefficients.cols());
+    for (std::size_t patch_index = 0;
+         patch_index < contributions.size(); ++patch_index) {
+        const auto &active = data.patches[patch_index].active_columns;
+        const ComplexMatrix &values = contributions[patch_index].values;
+        for (int local = 0; local < static_cast<int>(active.size()); ++local)
+            result.row(active[local]) += values.row(local);
+    }
+    data.diagnostics.action_scatter_seconds += std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - scatter_begin).count();
+    data.diagnostics.action_calls += coarse_coefficients.cols();
+    return result;
+}
+
+const ReferenceDefectGramOperatorDiagnostics &
+ReferenceDefectGramOperator::diagnostics() const {
+    return implementation_->diagnostics;
+}
+
+ComplexVector apply_reference_defect_gram(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &defect_rhs,
+    const ComplexVector &coarse_coefficients,
+    const KernelRieszSolver solver) {
+    ReferenceDefectGramOperator prepared(
+        hierarchy, reference_operators, defect_rhs, solver, 1);
+    return prepared.apply(coarse_coefficients);
 }
 
 AuditKernelResidualEstimate estimate_audit_kernel_residual(

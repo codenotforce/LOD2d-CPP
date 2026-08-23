@@ -2024,4 +2024,313 @@ bool operator==(const PaperConfig &lhs, const PaperConfig &rhs) {
         && lhs.git_commit == rhs.git_commit && lhs.build_hash == rhs.build_hash;
 }
 
+void validate_reference_epoch_paper_config(
+    const ReferenceEpochPaperConfig &config) {
+    if (config.schema_version != reference_epoch_paper_schema_version)
+        throw std::invalid_argument("unsupported reference-epoch schema version");
+    (void)case_definition(config.case_id);
+    if (config.method != "PALOD-reference-epoch"
+        && config.method != "PALOD-hybrid-reference-epoch")
+        throw std::invalid_argument("unsupported reference-epoch method");
+    if (!(config.wavenumber > 0.0) || !std::isfinite(config.wavenumber)
+        || !std::isfinite(config.singular_oscillatory_fraction)
+        || config.singular_oscillatory_fraction < 0.0
+        || config.singular_oscillatory_fraction > 1.0
+        || !std::isfinite(config.singular_cutoff_outer_radius)
+        || !(config.singular_cutoff_outer_radius > 0.25)
+        || config.singular_cutoff_outer_radius > 1.0
+        || !std::isfinite(config.smooth_wave_amplitude)
+        || config.smooth_wave_amplitude < 0.0
+        || config.smooth_wave_amplitude > 1.0
+        || config.initial_coarse_level < 0
+        || config.initial_reference_level <= config.initial_coarse_level
+        || config.ell0 < 0 || config.ell_max < config.ell0
+        || !(config.theta_loc_usr >= 0.0)
+        || !(config.localization_eigen_relative_tolerance > 0.0)
+        || config.localization_eigen_relative_tolerance > 1e-3
+        || config.localization_eigen_maximum_iterations <= 0
+        || !(config.C_rel_usr > 0.0)
+        || !(config.theta_H > 0.0 && config.theta_H <= 1.0)
+        || !(config.theta_c > 0.0 && config.theta_c <= 1.0)
+        || !(config.q_dual > 0.0 && config.q_dual < 1.0)
+        || config.m_dual == 0 || !(config.tau_ep > 0.0)
+        || config.reference_refresh_level_gap < 0
+        || config.reference_refresh_target_gap < 0
+        || (config.reference_refresh_target_gap > 0
+            && config.reference_refresh_target_gap
+                <= config.reference_refresh_level_gap)
+        || !(config.tolerance_reference >= 0.0)
+        || !(config.continuity_constant > 0.0)
+        || !(config.overlap_constant > 0.0)
+        || config.work_limits.maximum_H_steps == 0
+        || config.minimum_H_steps_per_epoch
+            > config.work_limits.maximum_H_steps
+        || config.minimum_solved_points_per_new_epoch
+            > config.work_limits.maximum_H_steps
+        || config.work_limits.maximum_epochs == 0
+        || config.work_limits.maximum_dual_checks == 0
+        || !(config.work_limits.maximum_wall_seconds > 0.0)
+        || config.quadrature.base_triangle_order <= 0
+        || config.quadrature.gaussian_triangle_order <= 0
+        || config.quadrature.singular_triangle_order <= 0
+        || config.quadrature.max_recursive_subdivisions < 0
+        || config.repeat_index < 0)
+        throw std::invalid_argument("reference-epoch numerical inputs are invalid");
+    if (config.case_id != PaperCase::S
+        && (config.singular_oscillatory_fraction != 1.0
+            || config.singular_cutoff_outer_radius != 0.5
+            || config.singular_quintic_cutoff
+            || config.smooth_wave_amplitude != 0.0))
+        throw std::invalid_argument(
+            "S manufactured-solution parameters require case S");
+    if (config.singularity_hybrid !=
+            (config.method == "PALOD-hybrid-reference-epoch"))
+        throw std::invalid_argument("hybrid method and singularity_hybrid disagree");
+    if (config.singularity_hybrid && config.case_id != PaperCase::S)
+        throw std::invalid_argument("hybrid reference-epoch mode is restricted to case S");
+    if (!valid_sha256_digest(config.manuscript_sha256))
+        throw std::invalid_argument("manuscript_sha256 must be a sha256 digest");
+}
+
+adaptive::ReferenceEpochDriverConfig make_reference_epoch_driver_config(
+    const ReferenceEpochPaperConfig &config) {
+    validate_reference_epoch_paper_config(config);
+    adaptive::ReferenceEpochDriverConfig result;
+    result.ell0 = config.ell0;
+    result.ell_max = config.ell_max;
+    result.tau_loc = config.theta_loc_usr;
+    result.q_dual = config.q_dual;
+    result.m_dual = config.m_dual;
+    result.tau_ep = config.tau_ep;
+    result.reference_refresh_level_gap =
+        config.reference_refresh_level_gap;
+    result.reference_refresh_target_gap =
+        config.reference_refresh_target_gap;
+    result.minimum_H_steps_per_epoch =
+        config.minimum_H_steps_per_epoch;
+    result.minimum_solved_points_per_new_epoch =
+        config.minimum_solved_points_per_new_epoch;
+    result.tolerance_reference = config.tolerance_reference;
+    result.limits = config.work_limits;
+    return result;
+}
+
+std::string canonical_json(const ReferenceEpochPaperConfig &config) {
+    validate_reference_epoch_paper_config(config);
+    std::ostringstream out;
+    out << "{\"C_rel_usr\":" << number(config.C_rel_usr)
+        << ",\"build_hash\":" << json_string(config.build_hash)
+        << ",\"case\":" << json_string(to_string(config.case_id))
+        << ",\"continuity_constant\":" << number(config.continuity_constant)
+        << ",\"ell0\":" << config.ell0
+        << ",\"ell_max\":" << config.ell_max
+        << ",\"git_commit\":" << json_string(config.git_commit)
+        << ",\"initial_coarse_level\":" << config.initial_coarse_level
+        << ",\"initial_reference_level\":" << config.initial_reference_level
+        << ",\"localization_eigen_maximum_iterations\":"
+        << config.localization_eigen_maximum_iterations
+        << ",\"localization_eigen_relative_tolerance\":"
+        << number(config.localization_eigen_relative_tolerance)
+        << ",\"m_dual\":" << config.m_dual
+        << ",\"minimum_H_steps_per_epoch\":"
+        << config.minimum_H_steps_per_epoch
+        << ",\"minimum_solved_points_per_new_epoch\":"
+        << config.minimum_solved_points_per_new_epoch
+        << ",\"manuscript_sha256\":" << json_string(config.manuscript_sha256)
+        << ",\"method\":" << json_string(config.method)
+        << ",\"overlap_constant\":" << number(config.overlap_constant)
+        << ",\"quadrature\":{\"base_triangle_order\":"
+        << config.quadrature.base_triangle_order
+        << ",\"gaussian_triangle_order\":"
+        << config.quadrature.gaussian_triangle_order
+        << ",\"max_recursive_subdivisions\":"
+        << config.quadrature.max_recursive_subdivisions
+        << ",\"singular_triangle_order\":"
+        << config.quadrature.singular_triangle_order << "}"
+        << ",\"q_dual\":" << number(config.q_dual)
+        << ",\"reference_refresh_level_gap\":"
+        << config.reference_refresh_level_gap
+        << ",\"reference_refresh_target_gap\":"
+        << config.reference_refresh_target_gap
+        << ",\"repeat_index\":" << config.repeat_index
+        << ",\"schema_version\":" << config.schema_version
+        << ",\"singular_cutoff_outer_radius\":"
+        << number(config.singular_cutoff_outer_radius)
+        << ",\"singular_oscillatory_fraction\":"
+        << number(config.singular_oscillatory_fraction)
+        << ",\"singular_quintic_cutoff\":"
+        << (config.singular_quintic_cutoff ? "true" : "false")
+        << ",\"singularity_hybrid\":"
+        << (config.singularity_hybrid ? "true" : "false")
+        << ",\"smooth_wave_amplitude\":"
+        << number(config.smooth_wave_amplitude)
+        << ",\"tau_ep\":" << number(config.tau_ep)
+        << ",\"theta_H\":" << number(config.theta_H)
+        << ",\"theta_c\":" << number(config.theta_c)
+        << ",\"theta_loc_usr\":" << number(config.theta_loc_usr)
+        << ",\"tolerance_reference\":" << number(config.tolerance_reference)
+        << ",\"wavenumber\":" << number(config.wavenumber)
+        << ",\"work_limits\":{\"maximum_H_steps\":"
+        << config.work_limits.maximum_H_steps
+        << ",\"maximum_candidate_unknowns\":"
+        << config.work_limits.maximum_candidate_unknowns
+        << ",\"maximum_dual_checks\":"
+        << config.work_limits.maximum_dual_checks
+        << ",\"maximum_epochs\":" << config.work_limits.maximum_epochs
+        << ",\"maximum_reference_unknowns\":"
+        << config.work_limits.maximum_reference_unknowns
+        << ",\"maximum_wall_seconds\":"
+        << number(config.work_limits.maximum_wall_seconds) << "}}";
+    return out.str();
+}
+
+ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
+    const std::string_view json) {
+    const JsonValue parsed = JsonParser(json).parse();
+    const JsonObject &root = as_object(parsed, "root");
+    require_keys(root,
+        {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
+         "ell_max", "git_commit", "initial_coarse_level",
+           "initial_reference_level", "localization_eigen_maximum_iterations",
+           "localization_eigen_relative_tolerance", "m_dual", "manuscript_sha256", "method",
+         "minimum_H_steps_per_epoch",
+         "minimum_solved_points_per_new_epoch",
+         "overlap_constant", "quadrature", "q_dual", "reference_refresh_level_gap",
+         "reference_refresh_target_gap",
+         "repeat_index", "schema_version",
+         "singular_cutoff_outer_radius", "singular_oscillatory_fraction",
+         "singular_quintic_cutoff", "singularity_hybrid",
+         "smooth_wave_amplitude", "tau_ep", "theta_H", "theta_c",
+         "theta_loc_usr", "tolerance_reference", "wavenumber", "work_limits"},
+        "root");
+    ReferenceEpochPaperConfig config;
+    config.schema_version = as_integer(get(root, "schema_version"), "schema_version");
+    config.case_id = parse_paper_case(as_string(get(root, "case"), "case"));
+    config.method = as_string(get(root, "method"), "method");
+    config.wavenumber = as_number(get(root, "wavenumber"), "wavenumber");
+    config.singular_oscillatory_fraction = as_number(
+        get(root, "singular_oscillatory_fraction"),
+        "singular_oscillatory_fraction");
+    config.singular_cutoff_outer_radius = as_number(
+        get(root, "singular_cutoff_outer_radius"),
+        "singular_cutoff_outer_radius");
+    config.singular_quintic_cutoff = as_bool(
+        get(root, "singular_quintic_cutoff"),
+        "singular_quintic_cutoff");
+    config.smooth_wave_amplitude = as_number(
+        get(root, "smooth_wave_amplitude"), "smooth_wave_amplitude");
+    config.initial_coarse_level = as_integer(
+        get(root, "initial_coarse_level"), "initial_coarse_level");
+    config.initial_reference_level = as_integer(
+        get(root, "initial_reference_level"), "initial_reference_level");
+    config.localization_eigen_maximum_iterations = as_integer(
+        get(root, "localization_eigen_maximum_iterations"),
+        "localization_eigen_maximum_iterations");
+    config.localization_eigen_relative_tolerance = as_number(
+        get(root, "localization_eigen_relative_tolerance"),
+        "localization_eigen_relative_tolerance");
+    config.singularity_hybrid = as_bool(
+        get(root, "singularity_hybrid"), "singularity_hybrid");
+    config.ell0 = as_integer(get(root, "ell0"), "ell0");
+    config.ell_max = as_integer(get(root, "ell_max"), "ell_max");
+    config.theta_loc_usr = as_number(get(root, "theta_loc_usr"), "theta_loc_usr");
+    config.C_rel_usr = as_number(get(root, "C_rel_usr"), "C_rel_usr");
+    config.theta_H = as_number(get(root, "theta_H"), "theta_H");
+    config.theta_c = as_number(get(root, "theta_c"), "theta_c");
+    config.q_dual = as_number(get(root, "q_dual"), "q_dual");
+    config.reference_refresh_level_gap = as_integer(
+        get(root, "reference_refresh_level_gap"),
+        "reference_refresh_level_gap");
+    config.reference_refresh_target_gap = as_integer(
+        get(root, "reference_refresh_target_gap"),
+        "reference_refresh_target_gap");
+    config.m_dual = static_cast<std::size_t>(as_uint64(get(root, "m_dual"), "m_dual"));
+    config.minimum_H_steps_per_epoch = static_cast<std::size_t>(as_uint64(
+        get(root, "minimum_H_steps_per_epoch"),
+        "minimum_H_steps_per_epoch"));
+    config.minimum_solved_points_per_new_epoch =
+        static_cast<std::size_t>(as_uint64(
+            get(root, "minimum_solved_points_per_new_epoch"),
+            "minimum_solved_points_per_new_epoch"));
+    config.tau_ep = as_number(get(root, "tau_ep"), "tau_ep");
+    config.tolerance_reference = as_number(
+        get(root, "tolerance_reference"), "tolerance_reference");
+    config.continuity_constant = as_number(
+        get(root, "continuity_constant"), "continuity_constant");
+    config.overlap_constant = as_number(
+        get(root, "overlap_constant"), "overlap_constant");
+    const JsonObject &quadrature = as_object(
+        get(root, "quadrature"), "quadrature");
+    require_keys(quadrature,
+        {"base_triangle_order", "gaussian_triangle_order",
+         "max_recursive_subdivisions", "singular_triangle_order"},
+        "quadrature");
+    config.quadrature.base_triangle_order = as_integer(
+        get(quadrature, "base_triangle_order"), "base_triangle_order");
+    config.quadrature.gaussian_triangle_order = as_integer(
+        get(quadrature, "gaussian_triangle_order"), "gaussian_triangle_order");
+    config.quadrature.max_recursive_subdivisions = as_integer(
+        get(quadrature, "max_recursive_subdivisions"),
+        "max_recursive_subdivisions");
+    config.quadrature.singular_triangle_order = as_integer(
+        get(quadrature, "singular_triangle_order"), "singular_triangle_order");
+    config.repeat_index = as_integer(get(root, "repeat_index"), "repeat_index");
+    config.git_commit = as_string(get(root, "git_commit"), "git_commit");
+    config.build_hash = as_string(get(root, "build_hash"), "build_hash");
+    config.manuscript_sha256 = as_string(
+        get(root, "manuscript_sha256"), "manuscript_sha256");
+    const JsonObject &limits = as_object(get(root, "work_limits"), "work_limits");
+    require_keys(limits,
+        {"maximum_H_steps", "maximum_candidate_unknowns", "maximum_dual_checks",
+         "maximum_epochs", "maximum_reference_unknowns", "maximum_wall_seconds"},
+        "work_limits");
+    config.work_limits.maximum_H_steps = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_H_steps"), "maximum_H_steps"));
+    config.work_limits.maximum_candidate_unknowns = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_candidate_unknowns"), "maximum_candidate_unknowns"));
+    config.work_limits.maximum_dual_checks = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_dual_checks"), "maximum_dual_checks"));
+    config.work_limits.maximum_epochs = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_epochs"), "maximum_epochs"));
+    config.work_limits.maximum_reference_unknowns = static_cast<std::size_t>(as_uint64(
+        get(limits, "maximum_reference_unknowns"), "maximum_reference_unknowns"));
+    config.work_limits.maximum_wall_seconds = as_number(
+        get(limits, "maximum_wall_seconds"), "maximum_wall_seconds");
+    validate_reference_epoch_paper_config(config);
+    return config;
+}
+
+std::string canonical_config_hash(const ReferenceEpochPaperConfig &config) {
+    const std::string canonical = canonical_json(config);
+    std::uint64_t hash = 14695981039346656037ULL;
+    for (const unsigned char byte : canonical) {
+        hash ^= byte;
+        hash *= 1099511628211ULL;
+    }
+    std::ostringstream out;
+    out << std::hex << std::setfill('0') << std::setw(16) << hash;
+    return out.str();
+}
+
+std::string make_run_id(const ReferenceEpochPaperConfig &config) {
+    validate_reference_epoch_paper_config(config);
+    std::ostringstream out;
+    out << to_string(config.case_id) << '_' << safe_component(config.method)
+        << "_k" << static_cast<int>(config.wavenumber)
+        << "_r" << config.repeat_index << '_' << canonical_config_hash(config);
+    return out.str();
+}
+
+bool is_reference_epoch_paper_config(const std::string_view json) {
+    try {
+        const JsonValue parsed = JsonParser(json).parse();
+        const JsonObject &root = as_object(parsed, "root");
+        return root.contains("schema_version")
+            && as_integer(get(root, "schema_version"), "schema_version")
+                == reference_epoch_paper_schema_version;
+    } catch (...) {
+        return false;
+    }
+}
+
 } // namespace lod2d::helmholtz::experiments

@@ -258,6 +258,21 @@ std::size_t HelmholtzPatchAssembler::patch_cost(int target) const {
     return cost;
 }
 
+std::vector<int> HelmholtzPatchAssembler::patch_fine_elements(
+    const int target) const {
+    if (target < 0 || target >= patch_count())
+        throw std::out_of_range("Helmholtz patch target is out of range");
+    std::vector<int> result;
+    for (Eigen::SparseMatrix<double>::InnerIterator it(patches_, target);
+         it; ++it) {
+        if (it.value() == 0.0) continue;
+        const auto &element_children = children_[it.row()];
+        result.insert(
+            result.end(), element_children.begin(), element_children.end());
+    }
+    return result;
+}
+
 HelmholtzPatchSystem HelmholtzPatchAssembler::assemble(int target) const {
     if (target < 0 || target >= patch_count())
         throw std::out_of_range("Helmholtz patch target is out of range");
@@ -265,12 +280,7 @@ HelmholtzPatchSystem HelmholtzPatchAssembler::assemble(int target) const {
     HelmholtzPatchSystem system;
     system.target_element = target;
     system.wavenumber = operators_.wavenumber;
-    for (Eigen::SparseMatrix<double>::InnerIterator it(patches_, target); it; ++it) {
-        if (it.value() == 0.0) continue;
-        const auto &element_children = children_[it.row()];
-        system.patch_elements.insert(
-            system.patch_elements.end(), element_children.begin(), element_children.end());
-    }
+    system.patch_elements = patch_fine_elements(target);
     if (system.patch_elements.empty())
         throw std::runtime_error("Helmholtz corrector patch is empty");
 

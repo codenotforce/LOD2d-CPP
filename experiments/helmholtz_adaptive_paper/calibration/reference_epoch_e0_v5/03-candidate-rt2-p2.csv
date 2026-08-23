@@ -1,0 +1,2 @@
+schema_version,eta_eq,discrete_residual_dual_norm,max_patch_compatibility,max_divergence_residual,max_normal_jump,max_boundary_flux_residual,status
+5,3.2604621056965297,2.1165999629600363e-16,5.082120056479053e-32,1.449228509952941e-13,1.5897278390922509e-14,6.9510956290923647e-15,passed

@@ -1,0 +1,12 @@
+{
+  "schema_version": 5,
+  "run_id": "S_PALOD-hybrid-reference-epoch_k16_r0_9c88e85e67c7bbdf",
+  "status": "WorkLimitReached",
+  "stop_reason": "maximum_epochs reached before reference refresh",
+  "claim": "implementation-study",
+  "manuscript_sha256": "sha256:94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9",
+  "code_commit": "WORKTREE@9aeac45440f701f35131108dbec272796c6a5498",
+  "build_hash": "E2-hybrid-H3-h8-step4-probe-20260823",
+  "hardware": {"compiler": "11.4.0", "hardware_threads": 16, "peak_memory_mb": 3758.96484375},
+  "config": {"C_rel_usr":1.6358263950741063,"build_hash":"E2-hybrid-H3-h8-step4-probe-20260823","case":"S","continuity_constant":8,"ell0":2,"ell_max":4,"git_commit":"WORKTREE@9aeac45440f701f35131108dbec272796c6a5498","initial_coarse_level":3,"initial_reference_level":8,"localization_eigen_maximum_iterations":300,"localization_eigen_relative_tolerance":0.0001,"m_dual":2,"minimum_H_steps_per_epoch":2,"minimum_solved_points_per_new_epoch":0,"manuscript_sha256":"sha256:94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9","method":"PALOD-hybrid-reference-epoch","overlap_constant":8,"quadrature":{"base_triangle_order":12,"gaussian_triangle_order":12,"max_recursive_subdivisions":8,"singular_triangle_order":12},"q_dual":0.75,"reference_refresh_level_gap":3,"reference_refresh_target_gap":5,"repeat_index":0,"schema_version":5,"singular_cutoff_outer_radius":1,"singular_oscillatory_fraction":0,"singular_quintic_cutoff":true,"singularity_hybrid":true,"smooth_wave_amplitude":0.050000000000000003,"tau_ep":0.25,"theta_H":0.5,"theta_c":0.5,"theta_loc_usr":1.961323606684523,"tolerance_reference":0.01,"wavenumber":16,"work_limits":{"maximum_H_steps":4,"maximum_candidate_unknowns":500000,"maximum_dual_checks":16,"maximum_epochs":2,"maximum_reference_unknowns":250000,"maximum_wall_seconds":900}}
+}

@@ -396,11 +396,46 @@ HelmholtzLodModel HelmholtzLodModel::build_adaptive(
         corrector_cache);
 }
 
+HelmholtzLodModel HelmholtzLodModel::build_adaptive_hybrid(
+    const HelmholtzProblemConfig &config,
+    const adaptive::ReferenceEpochHierarchy &hierarchy,
+    const std::vector<int> &skipped_corrector_elements,
+    HelmholtzCorrectorPatchCache *corrector_cache) {
+    if (config.wavenumber <= 0.0)
+        throw std::invalid_argument("Helmholtz wavenumber must be positive");
+    HelmholtzProblemConfig resolved = config;
+    if (!hierarchy.coarse_levels().empty()) {
+        resolved.H = *std::min_element(
+            hierarchy.coarse_levels().begin(),
+            hierarchy.coarse_levels().end());
+    }
+    if (!hierarchy.reference_element_levels().empty()) {
+        resolved.h = *std::min_element(
+            hierarchy.reference_element_levels().begin(),
+            hierarchy.reference_element_levels().end());
+    }
+    const auto mesh_start = std::chrono::steady_clock::now();
+    RefineOutput embedding;
+    embedding.mesh = hierarchy.reference_mesh();
+    embedding.P_node = hierarchy.coarse_to_reference();
+    embedding.P_elem = hierarchy.coarse_elements_to_reference();
+    embedding.P_dg = hierarchy.coarse_dg_to_reference();
+    HelmholtzProblemData problem = finish_problem_data(
+        hierarchy.coarse_mesh(), std::move(embedding),
+        hierarchy.coarse_levels(), hierarchy.reference_element_levels(),
+        resolved.ell, {}, {}, {},
+        &hierarchy.reference_quasi_interpolation());
+    return build_with_problem(
+        std::move(resolved), std::move(problem), elapsed_ms(mesh_start),
+        corrector_cache, skipped_corrector_elements);
+}
+
 HelmholtzLodModel HelmholtzLodModel::build_with_problem(
     HelmholtzProblemConfig config,
     HelmholtzProblemData problem,
     double mesh_and_interpolation_ms,
-    HelmholtzCorrectorPatchCache *corrector_cache) {
+    HelmholtzCorrectorPatchCache *corrector_cache,
+    const std::vector<int> &skipped_corrector_elements) {
     const auto total_start = std::chrono::steady_clock::now();
     HelmholtzLodModel model;
     model.config_ = std::move(config);
@@ -444,7 +479,8 @@ HelmholtzLodModel HelmholtzLodModel::build_with_problem(
         model.problem_.fine_element_level_prolongations,
         model.operators_,
         model.config_.patch_solver,
-        corrector_cache);
+        corrector_cache,
+        skipped_corrector_elements);
     model.build_timings_.correctors_ms = elapsed_ms(stage_start);
     std::size_t raw_corrector_entries = 0;
     for (const auto &element : model.correctors_.primal) {

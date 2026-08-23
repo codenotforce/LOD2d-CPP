@@ -21,12 +21,20 @@ import matplotlib
 matplotlib.use("Agg")
 
 import matplotlib.pyplot as plt
-from matplotlib.ticker import NullFormatter, ScalarFormatter
+from matplotlib.ticker import FuncFormatter, NullFormatter
 
 from paper_style import apply_paper_style
 
 
 Row = Dict[str, str]
+
+
+def _format_dof_tick(value: float, _position: int) -> str:
+    if value >= 1.0e6:
+        return f"{value / 1.0e6:g}M"
+    if value >= 1.0e3:
+        return f"{value / 1.0e3:g}k"
+    return f"{value:g}"
 
 
 @dataclass(frozen=True)
@@ -261,7 +269,7 @@ def plot_method_comparison(
 
     apply_paper_style()
     output.parent.mkdir(parents=True, exist_ok=True)
-    figure, ax = plt.subplots(figsize=(5.6, 4.05))
+    figure, ax = plt.subplots(figsize=(5.6, 4.65))
     styles = {
         "PALOD": dict(marker="o", linestyle="-", linewidth=1.5),
         "SLOD": dict(marker="s", linestyle="--", linewidth=1.3),
@@ -309,9 +317,11 @@ def plot_method_comparison(
         x = _integer(row, "DoF_H")
         y = _number(row, "relative_exact_energy_error")
         ax.scatter([x], [y], marker="*", s=80, edgecolors="black", linewidths=0.4, zorder=8)
+        epoch_offset = (6, 8) if epoch % 2 else (6, -15)
         ax.annotate(
-            f"epoch {epoch}", xy=(x, y), xytext=(5, 8), textcoords="offset points",
-            fontsize=7.3, arrowprops={"arrowstyle": "-", "linewidth": 0.5},
+            f"epoch {epoch}", xy=(x, y), xytext=epoch_offset,
+            textcoords="offset points", fontsize=6.5,
+            arrowprops={"arrowstyle": "-", "linewidth": 0.5},
         )
 
     palod_by_step: Dict[int, Row] = {}
@@ -334,8 +344,8 @@ def plot_method_comparison(
             linewidths=0.5, zorder=9,
         )
         ax.annotate(
-            label, xy=(x, y), xytext=(16, -25), textcoords="offset points",
-            fontsize=7.3, arrowprops={"arrowstyle": "->", "linewidth": 0.65},
+            label, xy=(x, y), xytext=(18, 17), textcoords="offset points",
+            fontsize=6.5, arrowprops={"arrowstyle": "->", "linewidth": 0.65},
         )
         ell_change_summary.append(
             {"H_step": step, "old_ell": previous_ell, "new_ell": new_ell}
@@ -388,13 +398,25 @@ def plot_method_comparison(
     if len(ticks) > 5:
         ticks = [ticks[0], ticks[len(ticks) // 4], ticks[len(ticks) // 2], ticks[3 * len(ticks) // 4], ticks[-1]]
     ax.set_xticks(ticks)
-    ax.xaxis.set_major_formatter(ScalarFormatter())
+    ax.xaxis.set_major_formatter(FuncFormatter(_format_dof_tick))
     ax.xaxis.set_minor_formatter(NullFormatter())
     ax.grid(True, which="major")
     ax.grid(True, which="minor", alpha=0.12)
-    ax.legend(loc="best", frameon=False, ncol=2, fontsize=7.1)
+    handles, legend_labels = ax.get_legend_handles_labels()
+    figure.legend(
+        handles,
+        legend_labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.015),
+        frameon=False,
+        ncol=2,
+        fontsize=6.1,
+        columnspacing=0.9,
+        handlelength=2.0,
+        handletextpad=0.45,
+    )
     figure.suptitle(title or f"{palod.case}, $\\kappa={palod.wavenumber:g}$: method comparison")
-    figure.tight_layout()
+    figure.tight_layout(rect=(0.0, 0.19, 1.0, 1.0))
     figure.savefig(output)
     if output.suffix.lower() != ".pdf":
         figure.savefig(output.with_suffix(".pdf"))

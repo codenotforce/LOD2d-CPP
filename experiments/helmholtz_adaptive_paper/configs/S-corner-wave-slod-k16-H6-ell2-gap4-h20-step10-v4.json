@@ -15,7 +15,7 @@
   "maximum_patch_threads": 16,
   "method": "SLOD",
   "patch_reuse_identical_factorization": true,
-  "patch_solver_kind": "direct_saddle",
+  "patch_solver_kind": "direct_schur",
   "patch_symbolic_cache_slots": 1,
   "petrov_mode": "two_sided",
   "plateau_diagnostic": {"maximum_relative_oscillation": 0.15, "minimum_geometric_mean_ratio": 0.9, "window_steps": 2},
@@ -40,5 +40,5 @@
   "tolerances": {"eigen_relative_residual": 1e-10, "interpolation_right_inverse": 1e-9, "linear_relative_residual": 1e-10, "prolongation_composition": 1e-10},
   "trajectory_policy": "fixed_work_horizon",
   "wavenumber": 16,
-  "work_limits": {"maximum_H_steps": 10, "maximum_ambient_elements": 8000000, "maximum_coarse_elements": 1000000, "maximum_iterations": 200, "maximum_unknowns": 5000000, "maximum_wall_seconds": 86400}
+  "work_limits": {"maximum_H_steps": 9, "maximum_ambient_elements": 8000000, "maximum_coarse_elements": 1000000, "maximum_iterations": 200, "maximum_unknowns": 5000000, "maximum_wall_seconds": 86400}
 }

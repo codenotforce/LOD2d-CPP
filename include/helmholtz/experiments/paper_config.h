@@ -2,6 +2,7 @@
 
 #include "helmholtz/adaptive/certified_driver.h"
 #include "helmholtz/adaptive/practical_driver.h"
+#include "helmholtz/adaptive/reference_epoch_driver.h"
 #include "helmholtz/quadrature.h"
 
 #include <array>
@@ -15,6 +16,7 @@ namespace lod2d::helmholtz::experiments {
 
 inline constexpr int paper_schema_version = 1;
 inline constexpr int practical_paper_schema_version = 4;
+inline constexpr int reference_epoch_paper_schema_version = 5;
 
 enum class PaperCase { R1, R2a, R2b, S };
 enum class PaperMethod {
@@ -289,5 +291,58 @@ std::string canonical_config_hash(const PracticalPaperConfig &config);
 std::string make_run_id(const PracticalPaperConfig &config);
 bool operator==(const PracticalPaperConfig &lhs,
                 const PracticalPaperConfig &rhs);
+
+// Revised manuscript production contract.  It deliberately contains no
+// ambient mesh, ambient ratio, or retraction field.
+struct ReferenceEpochPaperConfig {
+    int schema_version = reference_epoch_paper_schema_version;
+    PaperCase case_id = PaperCase::R1;
+    std::string method = "PALOD-reference-epoch";
+    double wavenumber = 16.0;
+    // Case S manufactured solution:
+    // u=a[(1-gamma)+gamma exp(ikx)] + B psi exp(ikx).
+    double singular_oscillatory_fraction = 1.0;
+    double singular_cutoff_outer_radius = 0.5;
+    bool singular_quintic_cutoff = false;
+    double smooth_wave_amplitude = 0.0;
+    int initial_coarse_level = 3;
+    int initial_reference_level = 5;
+    bool singularity_hybrid = false;
+    int ell0 = 1;
+    int ell_max = 4;
+    double theta_loc_usr = 0.5;
+    double localization_eigen_relative_tolerance = 1e-7;
+    int localization_eigen_maximum_iterations = 300;
+    double C_rel_usr = 1.0;
+    double theta_H = 0.5;
+    double theta_c = 0.5;
+    double q_dual = 0.5;
+    std::size_t m_dual = 3;
+    double tau_ep = 0.5;
+    int reference_refresh_level_gap = 0;
+    int reference_refresh_target_gap = 0;
+    std::size_t minimum_H_steps_per_epoch = 0;
+    std::size_t minimum_solved_points_per_new_epoch = 0;
+    double tolerance_reference = 1e-2;
+    double continuity_constant = 8.0;
+    double overlap_constant = 8.0;
+    adaptive::ReferenceEpochDriverLimits work_limits;
+    int repeat_index = 0;
+    QuadraturePolicy quadrature;
+    std::string git_commit;
+    std::string build_hash;
+    std::string manuscript_sha256;
+};
+
+void validate_reference_epoch_paper_config(
+    const ReferenceEpochPaperConfig &config);
+adaptive::ReferenceEpochDriverConfig make_reference_epoch_driver_config(
+    const ReferenceEpochPaperConfig &config);
+std::string canonical_json(const ReferenceEpochPaperConfig &config);
+ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
+    std::string_view json);
+std::string canonical_config_hash(const ReferenceEpochPaperConfig &config);
+std::string make_run_id(const ReferenceEpochPaperConfig &config);
+bool is_reference_epoch_paper_config(std::string_view json);
 
 } // namespace lod2d::helmholtz::experiments

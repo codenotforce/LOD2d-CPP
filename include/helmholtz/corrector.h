@@ -22,6 +22,8 @@ struct HelmholtzCorrectorDiagnostics {
     double max_adjoint_residual = 0.0;
     double max_constraint_residual = 0.0;
     int patch_count = 0;
+    int skipped_patch_count = 0;
+    std::size_t skipped_patch_work_units = 0;
     int patches_touching_physical_boundary = 0;
     int parallel_threads = 1;
     int symbolic_analyses = 0;
@@ -69,7 +71,9 @@ public:
         std::size_t entries = 0;
     };
 
-    explicit HelmholtzCorrectorPatchCache(std::size_t maximum_entries = 4096);
+    explicit HelmholtzCorrectorPatchCache(
+        std::size_t maximum_entries = 4096,
+        std::size_t maximum_patch_dofs = 4096);
     ~HelmholtzCorrectorPatchCache();
     HelmholtzCorrectorPatchCache(HelmholtzCorrectorPatchCache &&) noexcept;
     HelmholtzCorrectorPatchCache &operator=(HelmholtzCorrectorPatchCache &&) noexcept;
@@ -95,7 +99,8 @@ private:
         const std::vector<Eigen::SparseMatrix<double>> &,
         const HelmholtzOperators &,
         const HelmholtzPatchSolverConfig &,
-        HelmholtzCorrectorPatchCache *);
+        HelmholtzCorrectorPatchCache *,
+        const std::vector<int> &);
 };
 
 HelmholtzCorrectorResult build_helmholtz_correctors(
@@ -110,7 +115,8 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
     const std::vector<Eigen::SparseMatrix<double>> &element_level_prolongations,
     const HelmholtzOperators &operators,
     const HelmholtzPatchSolverConfig &solver_config = {},
-    HelmholtzCorrectorPatchCache *cache = nullptr);
+    HelmholtzCorrectorPatchCache *cache = nullptr,
+    const std::vector<int> &skipped_coarse_elements = {});
 
 ComplexSparseMatrix build_helmholtz_corrector_matrix(
     const TriMesh &coarse,

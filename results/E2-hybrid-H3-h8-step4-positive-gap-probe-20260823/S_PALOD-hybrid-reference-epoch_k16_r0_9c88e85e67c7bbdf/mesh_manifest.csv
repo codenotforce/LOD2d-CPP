@@ -1,0 +1,15 @@
+case,epoch,iteration,stage,mesh_role,filename,N_cells,N_dofs
+S,0,0,epoch_start,reference,mesh_E2_e000_reference.vtu,1536,800
+S,0,0,epoch_start,coarse,mesh_E2_e000_i000_coarse.vtu,48,28
+S,0,0,epoch_start,candidate,mesh_E2_e000_i000_candidate.vtu,1536,800
+S,0,6,pre_switch,coarse,mesh_E2_e000_i006_coarse.vtu,630,317
+S,0,6,pre_switch,candidate,mesh_E2_e000_i006_candidate.vtu,24936,12532
+S,0,7,committed,coarse,mesh_E2_e000_i007_coarse.vtu,764,385
+S,0,7,committed,candidate,mesh_E2_e000_i007_candidate.vtu,24936,12532
+S,1,8,epoch_start,reference,mesh_E2_e001_reference.vtu,24936,12532
+S,1,8,epoch_start,coarse,mesh_E2_e001_i008_coarse.vtu,764,385
+S,1,8,epoch_start,candidate,mesh_E2_e001_i008_candidate.vtu,24936,12532
+S,1,26,final,coarse,mesh_final_coarse.vtu,2278,1132
+S,1,26,final,reference,mesh_final_reference.vtu,24936,12532
+S,1,26,final,candidate,mesh_final_candidate.vtu,32012,16069
+S,1,22,final_solved,hybrid_regions,mesh_E2_final_hybrid_regions.vtu,2278,1132

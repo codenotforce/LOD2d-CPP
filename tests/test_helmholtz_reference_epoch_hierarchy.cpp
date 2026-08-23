@@ -285,14 +285,145 @@ void verify_mixed_boundary_contract() {
     verify_embeddings(hierarchy);
 }
 
+void verify_incremental_candidate_refinement_matches_full_rebuild() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 2, 7);
+    const Eigen::SparseMatrix<double> fixed_reference_interpolation =
+        hierarchy.reference_quasi_interpolation();
+    for (int step = 0; step < 2; ++step) {
+        const int count = static_cast<int>(hierarchy.candidate_mesh().elems.size());
+        const std::vector<int> marked{0, count / 3, 2 * count / 3};
+        const ReferenceEpochRefinementResult refined =
+            hierarchy.enrich_candidate(marked);
+        require(refined.changed(),
+                "incremental candidate refinement did not change the mesh");
+        require(refined.time_nvb_refine >= 0.0
+                    && refined.time_embedding_composition >= 0.0
+                    && refined.time_parent_map_update >= 0.0
+                    && refined.time_candidate_quasi_interpolation >= 0.0
+                    && refined.time_embedding_validation >= 0.0,
+                "incremental candidate phase timings are invalid");
+
+        const RefineOutput reference_rebuild = build_nested_mesh_embedding(
+            hierarchy.reference_mesh(), hierarchy.candidate_mesh());
+        const RefineOutput coarse_rebuild = build_nested_mesh_embedding(
+            hierarchy.coarse_mesh(), hierarchy.candidate_mesh());
+        require((hierarchy.reference_to_candidate()
+                    - reference_rebuild.P_node).norm() < 1e-12,
+                "incremental reference/candidate nodal map differs from rebuild");
+        require((hierarchy.reference_elements_to_candidate()
+                    - reference_rebuild.P_elem).norm() < 1e-12,
+                "incremental reference/candidate element map differs from rebuild");
+        require((hierarchy.reference_dg_to_candidate()
+                    - reference_rebuild.P_dg).norm() < 1e-12,
+                "incremental reference/candidate DG map differs from rebuild");
+        require((hierarchy.coarse_to_candidate()
+                    - coarse_rebuild.P_node).norm() < 1e-12,
+                "incremental coarse/candidate nodal map differs from rebuild");
+        require((hierarchy.coarse_elements_to_candidate()
+                    - coarse_rebuild.P_elem).norm() < 1e-12,
+                "incremental coarse/candidate element map differs from rebuild");
+        require((hierarchy.coarse_dg_to_candidate()
+                    - coarse_rebuild.P_dg).norm() < 1e-12,
+                "incremental coarse/candidate DG map differs from rebuild");
+        require(hierarchy.candidate_parent_reference_elements()
+                    == fine_element_parents(
+                        reference_rebuild.P_elem,
+                        static_cast<int>(hierarchy.candidate_mesh().elems.size()),
+                        static_cast<int>(hierarchy.reference_mesh().elems.size())),
+                "incremental candidate/reference parent map differs from rebuild");
+        require(hierarchy.candidate_parent_coarse_elements()
+                    == fine_element_parents(
+                        coarse_rebuild.P_elem,
+                        static_cast<int>(hierarchy.candidate_mesh().elems.size()),
+                        static_cast<int>(hierarchy.coarse_mesh().elems.size())),
+                "incremental candidate/coarse parent map differs from rebuild");
+        require((hierarchy.reference_quasi_interpolation()
+                    - fixed_reference_interpolation).norm() == 0.0,
+                "candidate-only refinement rebuilt the fixed reference interpolation");
+        verify_embeddings(hierarchy);
+    }
+}
+
+void verify_revised_candidate_transaction() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 0, 1);
+    hierarchy.begin_reference_epoch();
+    const std::vector<TriangleSignature> reference_epoch_zero =
+        canonical_triangles(hierarchy.reference_mesh());
+    require(canonical_triangles(hierarchy.candidate_mesh())
+                == reference_epoch_zero,
+            "candidate was not initialized from the reference mesh");
+
+    std::vector<int> marked(hierarchy.coarse_mesh().elems.size());
+    std::iota(marked.begin(), marked.end(), 0);
+    require(hierarchy.propose_coarse_refinement(marked).changed(),
+            "first coarse proposal was not created");
+    require(hierarchy.has_proposed_coarse_refinement(),
+            "pending coarse proposal was not retained");
+    require(hierarchy.candidate_contains_proposed_coarse(),
+            "reference-inherited candidate does not contain a representable proposal");
+    require(hierarchy.commit_coarse_refinement().changed(),
+            "representable coarse proposal was not committed");
+
+    marked.resize(hierarchy.coarse_mesh().elems.size());
+    std::iota(marked.begin(), marked.end(), 0);
+    const std::size_t committed_elements = hierarchy.coarse_mesh().elems.size();
+    require(hierarchy.propose_coarse_refinement(marked).changed(),
+            "second coarse proposal was not created");
+    require(hierarchy.coarse_mesh().elems.size() == committed_elements,
+            "coarse proposal mutated the committed coarse mesh");
+    require(!hierarchy.candidate_contains_proposed_coarse(),
+            "under-resolved candidate unexpectedly contains the proposal");
+    require(hierarchy.close_candidate_over_proposed_coarse().changed(),
+            "candidate closure did not refine the proposed region");
+    require(hierarchy.candidate_contains_proposed_coarse(),
+            "candidate closure did not contain the proposed coarse mesh");
+    require(hierarchy.minimum_proposed_candidate_level_gap() >= 0,
+            "cached proposed/candidate embedding has an invalid level gap");
+    require(canonical_triangles(hierarchy.reference_mesh())
+                == reference_epoch_zero,
+            "candidate enrichment changed the fixed reference mesh");
+
+    const ReferenceEpochRefinementResult blocked =
+        hierarchy.commit_coarse_refinement();
+    require(blocked.status
+                == ReferenceEpochRefinementStatus::ReferenceRefreshRequired,
+            "coarse proposal crossed the reference without requesting refresh");
+    require(hierarchy.coarse_mesh().elems.size() == committed_elements,
+            "failed commit partially mutated the coarse mesh");
+
+    require(hierarchy.deepen_candidate_over_proposed_coarse(2).changed(),
+            "pre-refresh candidate deepening did not refine the candidate");
+    require(hierarchy.minimum_proposed_candidate_level_gap() >= 2,
+            "pre-refresh candidate deepening missed its target gap");
+    const std::vector<TriangleSignature> enriched_candidate =
+        canonical_triangles(hierarchy.candidate_mesh());
+    hierarchy.refresh_reference_from_candidate();
+    require(hierarchy.minimum_proposed_reference_level_gap() >= 2,
+            "promoted reference did not preserve the target gap");
+    require(hierarchy.reference_epoch() == 1,
+            "candidate promotion did not advance the reference epoch");
+    require(canonical_triangles(hierarchy.reference_mesh())
+                == enriched_candidate,
+            "reference refresh did not promote the candidate mesh");
+    require(hierarchy.commit_coarse_refinement().changed(),
+            "coarse proposal was not committed after reference refresh");
+    require(hierarchy.reference_embedding_holds(),
+            "committed coarse mesh is not contained in the refreshed reference");
+    verify_embeddings(hierarchy);
+}
+
 } // namespace
 
 int main() {
     try {
         verify_incremental_embedding_matches_full_rebuild();
+        verify_incremental_candidate_refinement_matches_full_rebuild();
         verify_fixed_reference_and_ambient_ratio();
         verify_transactional_refresh_boundary();
         verify_mixed_boundary_contract();
+        verify_revised_candidate_transaction();
         std::cout << "Reference-epoch hierarchy invariants passed\n";
         return 0;
     } catch (const std::exception &error) {

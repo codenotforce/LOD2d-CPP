@@ -119,6 +119,66 @@ struct CorrectorCertificateConfig {
     double q0 = 0.5;
 };
 
+struct ReferenceCorrectorCertificateTimings {
+    double defect_rhs_seconds = 0.0;
+    double spectrum_seconds = 0.0;
+    double total_seconds = 0.0;
+};
+
+enum class ReferenceCorrectorCertificateStatus {
+    ImplementationStudy,
+    Invalid,
+};
+
+// Revised-paper WP2 implementation-study certificate.  Its defect and all
+// local Riesz representatives live in W_h; no ambient mesh or retraction is
+// involved.  The large-space path evaluates G_loc matrix-free.  A dense Gram
+// is retained only for the configured small E0 cross-check.
+struct ReferenceCorrectorCertificate {
+    ReferenceCorrectorCertificateStatus status =
+        ReferenceCorrectorCertificateStatus::ImplementationStudy;
+    ComplexSparseMatrix defect_rhs;
+    Eigen::SparseMatrix<double> coarse_energy_operator;
+    ComplexMatrix dense_gram_cross_check;
+    LocalizationSpectrum spectrum;
+    ReferenceDefectGramOperatorDiagnostics gram_operator;
+    ReferenceCorrectorCertificateTimings timings;
+    bool matrix_free_action_used = false;
+    double theta_loc = 0.0;
+    double theta_loc_diagnostic_lower = 0.0;
+    double theta_loc_diagnostic_upper = 0.0;
+};
+
+ReferenceCorrectorCertificate build_reference_corrector_certificate(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &localized_adjoint_basis,
+    const std::vector<int> &coarse_basis_nodes,
+    KernelRieszSolver riesz_solver = KernelRieszSolver::SaddlePoint,
+    const LocalizationEigenConfig &eigen_config = {},
+    ReferenceDefectGramFactorCache *factor_cache = nullptr);
+
+struct ReferenceCorrectorDirectValidation {
+    double direct_delta = 0.0;
+    double theorem_lower = 0.0;
+    double theorem_upper = 0.0;
+    bool bracket_holds = false;
+};
+
+ReferenceCorrectorDirectValidation
+validate_reference_corrector_certificate_small_matrix(
+    const ReferenceEpochHierarchy &hierarchy,
+    const HelmholtzOperators &reference_operators,
+    const ComplexSparseMatrix &localized_adjoint_basis,
+    const ComplexSparseMatrix &ideal_adjoint_basis,
+    const std::vector<int> &coarse_basis_nodes,
+    const ReferenceCorrectorCertificate &certificate,
+    double continuity_constant,
+    double overlap_constant,
+    double stable_decomposition_constant,
+    double kernel_coercivity_constant,
+    int maximum_free_dofs = 512);
+
 struct RieszCertificateDiagnostics {
     int solve_count = 0;
     int verified_solve_count = 0;
