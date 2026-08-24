@@ -117,6 +117,9 @@ def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
         r"Fixed LOD ($\ell=3$)": dict(
             color="#ff7f0e", marker="s", linestyle="--", linewidth=1.25
         ),
+        r"Standard LOD ($\ell=4$, gap 4)": dict(
+            color="#9467bd", marker="v", linestyle=(0, (4, 1.5)), linewidth=1.25
+        ),
         "Moving-reference singularity-aware PALOD": dict(
             color="#1f77b4", marker="o", linestyle="-", linewidth=1.45
         ),
@@ -166,6 +169,7 @@ def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
                         marker="*",
                         s=48,
                         zorder=5,
+                        color=styles[run.label]["color"],
                         label=None,
                     )
                     previous_epoch = point.epoch
@@ -318,6 +322,7 @@ def main() -> None:
     parser.add_argument("--hybrid", type=Path)
     parser.add_argument("--standard", type=Path)
     parser.add_argument("--fixed-lod", type=Path)
+    parser.add_argument("--slod", type=Path)
     parser.add_argument("--ufem", type=Path)
     parser.add_argument("--afem", type=Path)
     parser.add_argument("--output", type=Path, required=True)
@@ -343,6 +348,14 @@ def main() -> None:
             load_run(arguments.ufem, "UFEM"),
             load_run(arguments.afem, "AFEM"),
         ]
+        if arguments.slod is not None:
+            runs.insert(
+                2,
+                load_run(
+                    arguments.slod,
+                    r"Standard LOD ($\ell=4$, gap 4)",
+                ),
+            )
     else:
         if None in (arguments.hybrid, arguments.standard, arguments.afem):
             parser.error("E2 requires --hybrid, --standard, and --afem")

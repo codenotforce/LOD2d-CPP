@@ -262,6 +262,10 @@ struct PracticalPaperConfig {
     // threshold. Zero disables the switch. The selected solver is recorded
     // per trajectory row.
     std::size_t slod_direct_schur_min_reference_dofs = 0;
+    // SLOD-only performance policy for manufactured-solution experiments.
+    // When true, evaluate the exact errors directly on the synchronized fine
+    // mesh and skip the redundant fixed-reference solve/error pass.
+    bool manufactured_exact_only_errors = false;
     adaptive::KernelRieszSolver kernel_riesz_solver =
         adaptive::KernelRieszSolver::SaddlePoint;
     adaptive::PracticalWorkLimits work_limits;

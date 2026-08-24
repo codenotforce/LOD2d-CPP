@@ -1333,7 +1333,7 @@ void write_run_json(
     const double exact_seconds,
     const bool reference_cache_hit,
     const std::string &reference_cache_key,
-    const bool exact_only_afem,
+    const bool exact_only_evaluation,
     const double peak_mb) {
     std::ofstream out(path);
     if (!out) throw std::runtime_error("cannot write " + path.string());
@@ -1361,7 +1361,7 @@ void write_run_json(
         << "  \"driver_state\":"
         << json_string(practical_driver_state_name(result.state)) << ",\n"
         << "  \"error_evaluation_mode\":"
-        << json_string(exact_only_afem
+        << json_string(exact_only_evaluation
                 ? "manufactured-exact-only" : "fixed-reference")
         << ",\n"
         << "  \"config\":" << canonical_json(config) << ",\n"
@@ -1555,11 +1555,17 @@ int main(const int argc, char **argv) {
             return *inserted.first->second;
         };
 
-        const bool exact_only_afem =
-            config.method_id == PracticalPaperMethod::Afem
+        const bool exact_only_evaluation =
+            (config.method_id == PracticalPaperMethod::Afem
+             || config.manufactured_exact_only_errors)
             && data.exact && data.exact_gradient;
-        if (exact_only_afem) reference_cache_hit = false;
-        if (!exact_only_afem) {
+        if (config.manufactured_exact_only_errors
+            && !exact_only_evaluation) {
+            throw std::invalid_argument(
+                "manufactured_exact_only_errors requires a manufactured exact solution");
+        }
+        if (exact_only_evaluation) reference_cache_hit = false;
+        if (!exact_only_evaluation) {
             ReferenceEpochHierarchy initial_evaluation_hierarchy(
                 data.initial_mesh, config.initial_coarse_level,
                 config.reference_level, config.reference_epoch);
@@ -1577,12 +1583,19 @@ int main(const int argc, char **argv) {
                 const auto begin = std::chrono::steady_clock::now();
                 if (streamed_errors.size() <= sequence)
                     streamed_errors.resize(sequence + 1);
-                const EvaluationReference &evaluation =
-                    ensure_evaluation_reference(hierarchy);
-                streamed_errors[sequence] = postprocess_errors(
-                    config, data, evaluation.mesh, evaluation.operators,
-                    evaluation.solution, evaluation.exact_norm,
-                    candidate, reference_error_seconds, exact_error_seconds);
+                if (exact_only_evaluation) {
+                    streamed_errors[sequence] = postprocess_exact_errors(
+                        config, data, hierarchy.reference_mesh(), candidate,
+                        exact_error_seconds);
+                } else {
+                    const EvaluationReference &evaluation =
+                        ensure_evaluation_reference(hierarchy);
+                    streamed_errors[sequence] = postprocess_errors(
+                        config, data, evaluation.mesh, evaluation.operators,
+                        evaluation.solution, evaluation.exact_norm,
+                        candidate, reference_error_seconds,
+                        exact_error_seconds);
+                }
                 streamed_evaluation_seconds += elapsed_seconds(
                     begin, std::chrono::steady_clock::now());
             };
@@ -1632,6 +1645,10 @@ int main(const int argc, char **argv) {
                 assign_postprocess_errors(
                     record, *streamed_errors[record.sequence]);
             } else if (record.evaluation_candidate.size() > 0) {
+                if (exact_only_evaluation) {
+                    throw std::runtime_error(
+                        "manufactured-exact-only evaluation was not streamed on its matching mesh");
+                }
                 const EvaluationReference &evaluation =
                     *evaluation_references.at(record.reference_epoch);
                 const PostprocessErrors errors = postprocess_errors(
@@ -1658,7 +1675,7 @@ int main(const int argc, char **argv) {
             result.state = PracticalDriverState::TrajectoryComplete;
             result.stop_reason = "fixed H-step trajectory complete";
         }
-        if (fixed_empirical_trajectory && !exact_only_afem
+        if (fixed_empirical_trajectory && !exact_only_evaluation
             && result.state == PracticalDriverState::WorkLimitReached) {
             const double smallest_target = config.relative_energy_targets.back();
             const bool reached = std::any_of(
@@ -1693,7 +1710,7 @@ int main(const int argc, char **argv) {
             exact_norm_seconds + exact_error_seconds,
             reference_cache_hit,
             reference_cache_key,
-            exact_only_afem,
+            exact_only_evaluation,
             peak_mb);
 
         if (arguments.check) {
@@ -1726,10 +1743,10 @@ int main(const int argc, char **argv) {
                     return record.reference_energy_error
                         && record.reference_L2_error;
                 });
-            if (has_reference_error == exact_only_afem) {
+            if (has_reference_error == exact_only_evaluation) {
                 throw std::runtime_error(
-                    exact_only_afem
-                        ? "manufactured-exact-only AFEM unexpectedly used fixed-reference errors"
+                    exact_only_evaluation
+                        ? "manufactured-exact-only run unexpectedly used fixed-reference errors"
                         : "WP5 smoke did not compute post-run reference errors");
             }
             const bool expects_exact = data.exact && data.exact_gradient;

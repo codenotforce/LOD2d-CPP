@@ -1301,6 +1301,11 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         throw std::invalid_argument(
             "the automatic direct-Schur threshold requires SLOD with a direct-saddle base solver");
     }
+    if (config.manufactured_exact_only_errors
+        && config.method_id != PracticalPaperMethod::Slod) {
+        throw std::invalid_argument(
+            "manufactured_exact_only_errors is supported only for SLOD");
+    }
     std::size_t previous_refresh = 0;
     for (const std::size_t refresh : config.reference_refresh_H_steps) {
         if (refresh == 0 || refresh > config.work_limits.maximum_H_steps
@@ -1587,6 +1592,9 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         out << ",\"slod_direct_schur_min_reference_dofs\":"
             << config.slod_direct_schur_min_reference_dofs;
     }
+    if (config.manufactured_exact_only_errors) {
+        out << ",\"manufactured_exact_only_errors\":true";
+    }
     out << ",\"theta_H\":" << number(config.theta_H)
         << ",\"theta_loc\":" << number(config.theta_loc)
         << ",\"timing_repeats\":" << config.timing_repeats
@@ -1633,6 +1641,8 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         root.contains("patch_reuse_identical_factorization");
     const bool has_slod_direct_schur_min_reference_dofs =
         root.contains("slod_direct_schur_min_reference_dofs");
+    const bool has_manufactured_exact_only_errors =
+        root.contains("manufactured_exact_only_errors");
     const bool has_singular_oscillatory_fraction =
         root.contains("singular_oscillatory_fraction");
     const bool has_singular_cutoff_outer_radius =
@@ -1649,6 +1659,7 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     contract_root.erase("patch_symbolic_cache_slots");
     contract_root.erase("patch_reuse_identical_factorization");
     contract_root.erase("slod_direct_schur_min_reference_dofs");
+    contract_root.erase("manufactured_exact_only_errors");
     contract_root.erase("singular_oscillatory_fraction");
     contract_root.erase("singular_cutoff_outer_radius");
     contract_root.erase("singular_quintic_cutoff");
@@ -1741,6 +1752,11 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
             static_cast<std::size_t>(as_uint64(
                 get(root, "slod_direct_schur_min_reference_dofs"),
                 "slod_direct_schur_min_reference_dofs"));
+    }
+    if (has_manufactured_exact_only_errors) {
+        config.manufactured_exact_only_errors = as_bool(
+            get(root, "manufactured_exact_only_errors"),
+            "manufactured_exact_only_errors");
     }
     if (has_refresh_schedule) {
         const JsonArray &refreshes = as_array(
@@ -1934,6 +1950,8 @@ bool operator==(const PracticalPaperConfig &lhs,
         lhs.maximum_patch_threads == rhs.maximum_patch_threads &&
         lhs.slod_direct_schur_min_reference_dofs ==
             rhs.slod_direct_schur_min_reference_dofs &&
+        lhs.manufactured_exact_only_errors ==
+            rhs.manufactured_exact_only_errors &&
         lhs.kernel_riesz_solver == rhs.kernel_riesz_solver &&
         lhs.work_limits.maximum_iterations == rhs.work_limits.maximum_iterations &&
         lhs.work_limits.maximum_H_steps == rhs.work_limits.maximum_H_steps &&

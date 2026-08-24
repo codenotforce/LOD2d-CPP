@@ -92,6 +92,7 @@ python3 tools/visualization/plot_reference_epoch_e1.py \
   --experiment E1 \
   --palod /path/to/PALOD/run-dir \
   --fixed-lod /path/to/fixed-LOD/run-dir \
+  --slod /path/to/standard-LOD/run-dir \
   --ufem /path/to/UFEM/run-dir \
   --afem /path/to/AFEM/run-dir \
   --output figures/paper/E1-unified-H4-theta03-main
@@ -119,3 +120,26 @@ python3 tools/visualization/plot_reference_epoch_meshes.py \
 
 同一 epoch 的 reference 每个 H-step 都绘制；JSON 必须报告
 `reference_unchanged_within_epoch=true`。
+
+## 6. Standard LOD 补测
+
+非自适应 standard LOD 从同一粗层 `H=4` 开始，采用先验半径
+`ell=ceil(log2(16))=4`，并同步均匀加细 H/h、始终保持 level gap 为 4。
+12 次同步加细后到达 `H=16`、`h=20`。R1 有制造精确解，因此该配置直接
+计算 exact errors，跳过冗余的 fixed-reference 解与 reference-error 后处理；
+这不会改变 SLOD 解或 exact-error 曲线。
+
+不要与高内存 PALOD 主实验并发：
+
+```bash
+RESULT_DIR="$PWD/results/E1-standard-LOD-H4-gap4-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
+tmux new-session -d -s e1-standard-lod \
+  "cd '$PWD' && systemd-run --user --scope -p MemoryMax=340G -p MemorySwapMax=0 env MODE=e1-standard-lod-main VALIDATE=1 JOBS=16 PATCH_THREADS=16 RESULT_DIR='$RESULT_DIR' bash scripts/run_helmholtz_adaptive_paper_server.sh 2>&1 | tee '$RESULT_DIR.launch.log'"
+```
+
+当前 runner 已在同步均匀加细时组合精确 NVB prolongation，不会重新引入旧的
+全局几何 hierarchy search；patch solve 也已经并行。reference DoF 达到
+24000 后，局部 patch 后端从 direct-saddle 切到 direct-Schur。剩余的大型
+global coarse factorization 仍是基本串行的 Eigen SparseLU；服务器当前没有
+可直接启用的 Pardiso/MUMPS 后端，因此必须先做后端基准，不能未经验证替换
+论文主实验求解器。

@@ -128,6 +128,14 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=200
     MODE_TIMEOUT_SECONDS=58500
     ;;
+  e1-standard-lod-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-slod-k16-H4-h8-gap4-ell4-step12-v4.json
+    )
+    MODE_MIN_AVAILABLE_GIB=192
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   e2-revised-factor)
     DEFAULT_CONFIGS=(
       experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-reference-k16-H3-h12-radius0125-theta03-step2-factor-v6.json

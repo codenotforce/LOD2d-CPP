@@ -746,6 +746,18 @@ void verify_practical_v4_contract() {
             "SLOD direct-Schur switch threshold was not part of run identity");
     require_invalid([&] { (void)make_practical_driver_config(changed); },
             "SLOD was silently relabelled as the adaptive LOD backend");
+    const PracticalPaperConfig exact_only_baseline = changed;
+    changed.manufactured_exact_only_errors = true;
+    require(parse_practical_paper_config(canonical_json(changed)) == changed
+                && canonical_config_hash(changed)
+                    != canonical_config_hash(exact_only_baseline),
+            "SLOD exact-only evaluation policy was not part of run identity");
+    PracticalPaperConfig invalid_exact_only = original;
+    invalid_exact_only.manufactured_exact_only_errors = true;
+    require_invalid(
+        [&] { validate_practical_paper_config(invalid_exact_only); },
+        "non-SLOD method accepted the SLOD exact-only evaluation policy");
+    changed.manufactured_exact_only_errors = false;
     changed.patch_solver_kind =
         lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
     require_invalid([&] { validate_practical_paper_config(changed); },

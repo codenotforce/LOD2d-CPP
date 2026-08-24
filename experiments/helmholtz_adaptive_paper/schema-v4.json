@@ -86,6 +86,10 @@
       "maximum": 9007199254740991,
       "description": "SLOD-only reference-space DoF threshold for switching a direct-saddle base solver to direct-Schur; zero disables."
     },
+    "manufactured_exact_only_errors": {
+      "type": "boolean",
+      "description": "SLOD-only optimization: evaluate manufactured exact errors directly and skip fixed-reference error post-processing."
+    },
     "theta_H": {"const": 0.5},
     "theta_loc": {"type": "number", "exclusiveMinimum": 0},
     "timing_repeats": {"enum": [1, 3]},
