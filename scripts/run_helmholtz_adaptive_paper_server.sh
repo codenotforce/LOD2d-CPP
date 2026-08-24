@@ -136,6 +136,34 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=100
     MODE_TIMEOUT_SECONDS=87300
     ;;
+  e1-revised-h6-pilot)
+    # Validate the reduced reserve and the cheaper standard-LOD
+    # oversampling before committing server resources to the long curves.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-trigger2-target6-schur-thetaH01-thetaC03-step12-pilot-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-slod-k16-H6-h10-gap4-ell3-step5-probe-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-slod-k16-H6-h10-gap4-ell4-step5-probe-v4.json
+    )
+    MODE_MIN_AVAILABLE_GIB=32
+    MODE_MIN_FREE_DISK_GIB=50
+    MODE_TIMEOUT_SECONDS=15300
+    ;;
+  e1-revised-h6-main)
+    # Short/low-memory methods precede uniform standard LOD and the two
+    # expensive adaptive LOD trajectories.  Runs remain serial so peak-memory
+    # measurements are attributable to one method and the common build tree is
+    # never configured concurrently.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H6-level20-thetaH01-step160-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H6-level20-step14-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-slod-k16-H6-h10-gap4-ell3-step10-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H6-h18-ell3-thetaH01-step36-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-gap6-schur-thetaH01-thetaC03-step36-main-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=300
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   e2-revised-factor)
     DEFAULT_CONFIGS=(
       experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-reference-k16-H3-h12-radius0125-theta03-step2-factor-v6.json

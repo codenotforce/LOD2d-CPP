@@ -370,6 +370,143 @@ def save_multi_epoch_triplet_pages(
             plt.close(figure)
 
 
+def save_unique_epoch_meshes(
+    run_dir: Path,
+    output_dir: Path,
+    epoch_triplets: list[tuple[int, list[tuple[MeshEntry, MeshEntry, MeshEntry]]]],
+    experiment: str,
+) -> None:
+    """Render each distinct mesh once per epoch while retaining all role labels."""
+    role_names = ("Coarse $\\mathcal{T}_H$", "Reference $\\mathcal{T}_h$",
+                  "Candidate $\\mathcal{T}_c$")
+    role_keys = ("coarse", "reference", "candidate")
+    widths = (0.42, 0.10, 0.10)
+    audit = {"experiment": experiment, "epochs": []}
+
+    pdf_path = output_dir / (
+        f"{experiment}_epochs" + "-".join(str(epoch) for epoch, _ in epoch_triplets)
+        + "_unique_coarse_reference_candidate.pdf"
+    )
+    with PdfPages(pdf_path) as pdf:
+        for epoch, triplets in epoch_triplets:
+            role_entries: list[list[MeshEntry]] = [[], [], []]
+            role_hashes: list[list[str]] = [[], [], []]
+            suppressed: list[dict[str, object]] = []
+
+            for role_index in range(3):
+                seen: dict[str, MeshEntry] = {}
+                for triplet in triplets:
+                    entry = triplet[role_index]
+                    digest = file_sha256(run_dir / entry.filename)
+                    if digest in seen:
+                        suppressed.append({
+                            "role": role_keys[role_index],
+                            "filename": entry.filename,
+                            "same_as": seen[digest].filename,
+                            "reason": "identical within role",
+                        })
+                        continue
+                    seen[digest] = entry
+                    role_entries[role_index].append(entry)
+                    role_hashes[role_index].append(digest)
+
+            # At epoch start the candidate commonly equals the fixed reference.
+            # Show that geometry only in the reference row and record the alias.
+            reference_by_hash = {
+                digest: entry
+                for digest, entry in zip(role_hashes[1], role_entries[1])
+            }
+            filtered_candidates: list[MeshEntry] = []
+            filtered_candidate_hashes: list[str] = []
+            for digest, entry in zip(role_hashes[2], role_entries[2]):
+                if digest in reference_by_hash:
+                    suppressed.append({
+                        "role": "candidate",
+                        "filename": entry.filename,
+                        "same_as": reference_by_hash[digest].filename,
+                        "reason": "candidate geometry identical to reference",
+                    })
+                else:
+                    filtered_candidates.append(entry)
+                    filtered_candidate_hashes.append(digest)
+            role_entries[2] = filtered_candidates
+            role_hashes[2] = filtered_candidate_hashes
+
+            columns = max(max(len(entries), 1) for entries in role_entries)
+            figure, axes = plt.subplots(
+                3, columns, figsize=(3.15 * columns, 8.4),
+                constrained_layout=True, squeeze=False,
+            )
+            for role_index, entries in enumerate(role_entries):
+                for column in range(columns):
+                    ax = axes[role_index, column]
+                    if column >= len(entries):
+                        ax.axis("off")
+                        note = None
+                        if role_index == 1:
+                            note = "Reference unchanged within epoch"
+                        elif role_index == 2:
+                            note = (
+                                "Epoch-start candidate = reference\n"
+                                "(identical mesh not repeated)"
+                            )
+                        if note is not None and column == len(entries):
+                            ax.text(
+                                0.5, 0.5, note,
+                                ha="center", va="center", fontsize=8.5,
+                                transform=ax.transAxes,
+                            )
+                        continue
+                    entry = entries[column]
+                    stage_label = entry.stage.replace("_", "-")
+                    draw_mesh(
+                        ax, run_dir / entry.filename,
+                        rf"$H$-step {entry.h_step}, $i={entry.iteration}$"
+                        + "\n" + f"{stage_label}; {entry.cells} cells",
+                        widths[role_index],
+                    )
+                axes[role_index, 0].set_ylabel(role_names[role_index], fontsize=8.5)
+
+            figure.suptitle(
+                f"{experiment} epoch {epoch}: distinct mesh states",
+                fontsize=10,
+            )
+            stem = (
+                f"{experiment}_epoch{epoch}_unique_"
+                "coarse_reference_candidate"
+            )
+            figure.savefig(output_dir / f"{stem}.png", dpi=260)
+            figure.savefig(output_dir / f"{stem}.pdf")
+            pdf.savefig(figure)
+            plt.close(figure)
+            audit["epochs"].append({
+                "epoch": epoch,
+                "distinct_by_role": {
+                    role: [
+                        {
+                            "filename": entry.filename,
+                            "stage": entry.stage,
+                            "H_step": entry.h_step,
+                            "iteration": entry.iteration,
+                            "cells": entry.cells,
+                            "sha256": digest,
+                        }
+                        for entry, digest in zip(entries, hashes)
+                    ]
+                    for role, entries, hashes in zip(
+                        role_keys, role_entries, role_hashes
+                    )
+                },
+                "suppressed_identical_snapshots": suppressed,
+            })
+
+    json_path = output_dir / (
+        f"{experiment}_epochs" + "-".join(str(epoch) for epoch, _ in epoch_triplets)
+        + "_unique_coarse_reference_candidate.json"
+    )
+    json_path.write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+
+
 def hybrid_physical_radius(run_dir: Path) -> float | None:
     run_json = run_dir / "run.json"
     if not run_json.exists():
@@ -450,6 +587,14 @@ def main() -> None:
         help="comma-separated epochs rendered together, for example 0,1",
     )
     parser.add_argument("--experiment-label", default="E1")
+    parser.add_argument(
+        "--deduplicate-identical", action="store_true",
+        help=(
+            "write one figure per epoch and suppress repeated mesh geometries; "
+            "candidate snapshots identical to the fixed reference are recorded "
+            "in the JSON audit but not drawn twice"
+        ),
+    )
     arguments = parser.parse_args()
     if not arguments.all_checkpoints and arguments.checkpoints < 2:
         raise ValueError("--checkpoints must be at least two")
@@ -478,7 +623,12 @@ def main() -> None:
     triplets = epoch_triplets[0][1]
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     apply_paper_style()
-    if len(epoch_triplets) == 1:
+    if arguments.deduplicate_identical:
+        save_unique_epoch_meshes(
+            arguments.run_dir, arguments.output_dir, epoch_triplets,
+            arguments.experiment_label,
+        )
+    elif len(epoch_triplets) == 1:
         save_reference(
             arguments.run_dir, arguments.output_dir, references[0],
             arguments.experiment_label,

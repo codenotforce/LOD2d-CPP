@@ -1,0 +1,176 @@
+{
+  "experiment": "E2",
+  "epochs": [
+    {
+      "epoch": 0,
+      "distinct_by_role": {
+        "coarse": [
+          {
+            "filename": "mesh_E2_e000_i000_coarse.vtu",
+            "stage": "epoch_start",
+            "H_step": 0,
+            "iteration": 0,
+            "cells": 1032,
+            "sha256": "6bd9e72dcd00530ac824ac8b423b779152dd8f1e60d07019b1e1b656614c4428"
+          },
+          {
+            "filename": "mesh_E2_e000_i005_coarse.vtu",
+            "stage": "pre_switch",
+            "H_step": 0,
+            "iteration": 5,
+            "cells": 1060,
+            "sha256": "da6323d25059ffc0cf3494b9d37fede2b8dfdff5e15c5116f592ee47a9729421"
+          }
+        ],
+        "reference": [
+          {
+            "filename": "mesh_E2_e000_reference.vtu",
+            "stage": "epoch_start",
+            "H_step": 0,
+            "iteration": 0,
+            "cells": 24576,
+            "sha256": "a9eab25e5f9d3701e5b8c67507cfc7ef7f5009d8a677913949ea641cb81e5e16"
+          }
+        ],
+        "candidate": [
+          {
+            "filename": "mesh_E2_e000_i005_candidate.vtu",
+            "stage": "pre_switch",
+            "H_step": 0,
+            "iteration": 5,
+            "cells": 24730,
+            "sha256": "5d02972e4166da8cc8aa34e439d4f533f6e447472588588ea96c2c9d494cbb64"
+          }
+        ]
+      },
+      "suppressed_identical_snapshots": [
+        {
+          "role": "reference",
+          "filename": "mesh_E2_e000_reference.vtu",
+          "same_as": "mesh_E2_e000_reference.vtu",
+          "reason": "identical within role"
+        },
+        {
+          "role": "candidate",
+          "filename": "mesh_E2_e000_i000_candidate.vtu",
+          "same_as": "mesh_E2_e000_reference.vtu",
+          "reason": "candidate geometry identical to reference"
+        }
+      ]
+    },
+    {
+      "epoch": 1,
+      "distinct_by_role": {
+        "coarse": [
+          {
+            "filename": "mesh_E2_e001_i007_coarse.vtu",
+            "stage": "epoch_start",
+            "H_step": 1,
+            "iteration": 7,
+            "cells": 1060,
+            "sha256": "da6323d25059ffc0cf3494b9d37fede2b8dfdff5e15c5116f592ee47a9729421"
+          },
+          {
+            "filename": "mesh_E2_e001_i012_coarse.vtu",
+            "stage": "pre_switch",
+            "H_step": 1,
+            "iteration": 12,
+            "cells": 1104,
+            "sha256": "70078b49a4c8b2f1fe73f8da913ff5b5d3e3c52fb1a21eda9651ee6606664238"
+          }
+        ],
+        "reference": [
+          {
+            "filename": "mesh_E2_e001_reference.vtu",
+            "stage": "epoch_start",
+            "H_step": 1,
+            "iteration": 7,
+            "cells": 24730,
+            "sha256": "5d02972e4166da8cc8aa34e439d4f533f6e447472588588ea96c2c9d494cbb64"
+          }
+        ],
+        "candidate": [
+          {
+            "filename": "mesh_E2_e001_i012_candidate.vtu",
+            "stage": "pre_switch",
+            "H_step": 1,
+            "iteration": 12,
+            "cells": 24964,
+            "sha256": "bd1cfaaf0d88c473a915535b7408c28f4b21df8465ef8b31ac381dbe8c7c9705"
+          }
+        ]
+      },
+      "suppressed_identical_snapshots": [
+        {
+          "role": "reference",
+          "filename": "mesh_E2_e001_reference.vtu",
+          "same_as": "mesh_E2_e001_reference.vtu",
+          "reason": "identical within role"
+        },
+        {
+          "role": "candidate",
+          "filename": "mesh_E2_e001_i007_candidate.vtu",
+          "same_as": "mesh_E2_e001_reference.vtu",
+          "reason": "candidate geometry identical to reference"
+        }
+      ]
+    },
+    {
+      "epoch": 2,
+      "distinct_by_role": {
+        "coarse": [
+          {
+            "filename": "mesh_E2_e002_i014_coarse.vtu",
+            "stage": "epoch_start",
+            "H_step": 2,
+            "iteration": 14,
+            "cells": 1104,
+            "sha256": "70078b49a4c8b2f1fe73f8da913ff5b5d3e3c52fb1a21eda9651ee6606664238"
+          },
+          {
+            "filename": "mesh_E2_e002_i019_coarse.vtu",
+            "stage": "pre_switch",
+            "H_step": 2,
+            "iteration": 19,
+            "cells": 1156,
+            "sha256": "c09de4a4f18a316a674fd8b6e4b784c6de83b89bdd409b7056afe003df6d9251"
+          }
+        ],
+        "reference": [
+          {
+            "filename": "mesh_E2_e002_reference.vtu",
+            "stage": "epoch_start",
+            "H_step": 2,
+            "iteration": 14,
+            "cells": 24964,
+            "sha256": "bd1cfaaf0d88c473a915535b7408c28f4b21df8465ef8b31ac381dbe8c7c9705"
+          }
+        ],
+        "candidate": [
+          {
+            "filename": "mesh_E2_e002_i019_candidate.vtu",
+            "stage": "pre_switch",
+            "H_step": 2,
+            "iteration": 19,
+            "cells": 25238,
+            "sha256": "df755ce78657e70f1ef227b226ee4c5557b1e4e9dc5816af9d57712ad1cd2ee5"
+          }
+        ]
+      },
+      "suppressed_identical_snapshots": [
+        {
+          "role": "reference",
+          "filename": "mesh_E2_e002_reference.vtu",
+          "same_as": "mesh_E2_e002_reference.vtu",
+          "reason": "identical within role"
+        },
+        {
+          "role": "candidate",
+          "filename": "mesh_E2_e002_i014_candidate.vtu",
+          "same_as": "mesh_E2_e002_reference.vtu",
+          "reason": "candidate geometry identical to reference"
+        }
+      ]
+    }
+  ]
+}

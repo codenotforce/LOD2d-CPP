@@ -1,0 +1,62 @@
+{
+  "schema_version": 4,
+  "case": "R1",
+  "method": "AFEM",
+  "wavenumber": 16,
+  "initial_coarse_level": 6,
+  "reference_level": 18,
+  "reference_mesh": "uniform-nvb",
+  "ambient_mesh": "reference-shadow",
+  "reference_epoch": 0,
+  "ell0": 0,
+  "ell_max": 0,
+  "theta_H": 0.1,
+  "theta_loc": 1.961323606684523,
+  "C0_usr": 1.6358263950741063,
+  "C1_usr": 1e-12,
+  "c_H": 100,
+  "rho_star": 0.25,
+  "boundary_beta": 1,
+  "petrov_mode": "two_sided",
+  "kernel_riesz_solver": "saddle_point",
+  "patch_solver_kind": "direct_saddle",
+  "maximum_patch_threads": 16,
+  "trajectory_policy": "fixed_work_horizon",
+  "practical_stop_tolerance": 0.005,
+  "relative_energy_targets": [0.1, 0.05, 0.02, 0.01],
+  "plateau_diagnostic": {
+    "window_steps": 3,
+    "minimum_geometric_mean_ratio": 0.9,
+    "maximum_relative_oscillation": 0.15
+  },
+  "reference_adequacy": {
+    "enabled": false,
+    "refinement_levels": 1,
+    "maximum_terminal_error_fraction": 0.25
+  },
+  "quadrature": {
+    "base_triangle_order": 12,
+    "gaussian_triangle_order": 16,
+    "max_recursive_subdivisions": 8,
+    "singular_triangle_order": 24
+  },
+  "tolerances": {
+    "linear_relative_residual": 1e-10,
+    "eigen_relative_residual": 1e-10,
+    "interpolation_right_inverse": 1e-9,
+    "prolongation_composition": 1e-10
+  },
+  "work_limits": {
+    "maximum_H_steps": 120,
+    "maximum_iterations": 400,
+    "maximum_unknowns": 5000000,
+    "maximum_coarse_elements": 6000000,
+    "maximum_ambient_elements": 6000000,
+    "maximum_wall_seconds": 14400
+  },
+  "timing_repeats": 1,
+  "repeat_index": 0,
+  "git_commit": "WORKTREE",
+  "build_hash": "E1-H6-thetaH01-AFEM-level18-step120-20260825",
+  "manuscript_sha256": "38cc97e4c4997b42f133903febc32eb20e5b475eca9b3d54fec441c0d3736f15"
+}

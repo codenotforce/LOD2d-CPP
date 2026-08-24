@@ -171,11 +171,34 @@ must not be attributed to the solver alone.
 Final local figures:
 
 - `figures/paper/E2-unified-H6-global-mark-6528b81-20260825.{png,pdf,json}`;
-- `figures/paper/E2-unified-H6-global-mark-6528b81-epochs0-1-meshes-20260825/`.
+- `figures/paper/E2-unified-H6-global-mark-6528b81-epochs0-1-meshes-20260825/`;
+- `figures/paper/E2-unified-H6-global-mark-6528b81-epochs0-2-unique-meshes-20260825/`;
+- `figures/paper/E2-unified-H6-global-mark-6528b81-last-epoch23-unique-meshes-20260825/`;
+- `figures/paper/E2-unified-H6-global-mark-6528b81-AFEM-final-mesh-20260825.{png,pdf}`.
 
 The two-epoch mesh audit confirms that each reference mesh is bitwise unchanged
 inside its epoch and that the epoch-0 candidate SHA-256 equals the epoch-1
 reference SHA-256 after promotion.
+
+The AFEM run already contains `final_mesh.vtu`; no recomputation was needed to
+render its H-step-60 mesh (3788 cells).  Moving-PALOD epoch 23 has no mesh
+change after initialization: its candidate and final snapshots are bitwise
+identical to the 138494-cell reference, so the deduplicated last-epoch figure
+draws that geometry once together with the 4242-cell coarse mesh.
+
+The three-epoch `unique-meshes` audit was regenerated from the complete server
+VTU payload.  It writes one page for each of epochs 0, 1, and 2 and renders the
+coarse, reference, and candidate groups.  Repeated reference checkpoints and
+an epoch-start candidate that is bitwise identical to the reference are listed
+in the JSON audit but are not drawn twice.  Reproduce it with:
+
+```bash
+python3 tools/visualization/plot_reference_epoch_meshes.py \
+  --run-dir "$RUN_DIR" \
+  --output-dir figures/paper/E2-unified-H6-global-mark-6528b81-epochs0-2-unique-meshes-20260825 \
+  --epochs 0,1,2 --all-checkpoints --deduplicate-identical \
+  --experiment-label E2
+```
 
 ## WSL SCP MTU fix
 

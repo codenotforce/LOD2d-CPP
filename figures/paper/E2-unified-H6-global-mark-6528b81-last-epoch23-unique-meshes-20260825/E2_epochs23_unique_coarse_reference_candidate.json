@@ -1,0 +1,39 @@
+{
+  "experiment": "E2",
+  "epochs": [
+    {
+      "epoch": 23,
+      "distinct_by_role": {
+        "coarse": [
+          {
+            "filename": "mesh_E2_e023_i161_coarse.vtu",
+            "stage": "epoch_start",
+            "H_step": 23,
+            "iteration": 161,
+            "cells": 4242,
+            "sha256": "a197275e5fb1794fa52d2717a5082031b0c17e975f13ddc9a98402e8898a0c3e"
+          }
+        ],
+        "reference": [
+          {
+            "filename": "mesh_E2_e023_reference.vtu",
+            "stage": "epoch_start",
+            "H_step": 23,
+            "iteration": 161,
+            "cells": 138494,
+            "sha256": "3d2819a57ce3bf559e64866c5af484bb7863c8c7e4b55e32ba88a8ce89d98a28"
+          }
+        ],
+        "candidate": []
+      },
+      "suppressed_identical_snapshots": [
+        {
+          "role": "candidate",
+          "filename": "mesh_E2_e023_i161_candidate.vtu",
+          "same_as": "mesh_E2_e023_reference.vtu",
+          "reason": "candidate geometry identical to reference"
+        }
+      ]
+    }
+  ]
+}

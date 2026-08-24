@@ -572,6 +572,25 @@ mesh/commit 瓶颈消除后，它仍是下一项独立优化，candidate dual �
 仅约 0.38 GB，已在 swap/OOM 前主动中止；runner 仅在结束时写正式结果，因此该中止不形成
 论文数据。完整修正轨迹必须在 366 GB 服务器上运行。
 
+#### E1 统一 H6/小 reserve 重测（2026-08-25）
+
+最新版论文对 Algorithm 1 和 R1 制造解没有新的数学改动，因此本轮不改变 estimator、
+certificate、epoch 语义或误差口径，只重新冻结更经济且更长的数值轨迹。五种比较方法统一
+从 H6 开始；新增 SLOD 作为 standard uniform LOD 补充对照。自适应方法取
+`theta_H=0.1`，PALOD 取 H6/h12、`theta_c=0.3`、trigger/target gap 2/6、DirectSchur、
+最多 36 个 H-step；SLOD 取 H6/h10、固定 gap 4、`ell=3`、十次同步加细至 H16/h20。
+
+本地 PALOD trigger/target 2/6 门禁为 22.57 s、峰值 4,144,700 KiB、零 swap，形成
+5 点和 4 点两个可拟合 epoch，exact-error/DoF 指数分别为 3.38 和 1.51；相比旧 H4/
+target-gap9 主实验的 1:56:00 和 315,573,716 KiB，确认 reference reserve 是原有主要
+资源放大因素。SLOD 五步 ell=3/4 对照的最大相对误差差为 0.137%，尾部指数为
+0.754/0.755，而 ell=3 将墙钟从 24.38 s 降到 12.68 s、峰值从 1,250,572 KiB 降到
+766,296 KiB，因此生产采用 ell=3。AFEM/UFEM H6 本地门禁尾部指数为 0.532/0.518。
+
+服务器模式为 `e1-revised-h6-pilot` 和 `e1-revised-h6-main`；main 按 AFEM、UFEM、
+SLOD、fixed LOD、PALOD 从短到长串行计时，避免并行污染论文 wall/RSS。完整命令、
+门禁和绘图见 `E1_UNIFIED_H6_GAP6_SERVER_2026-08-25.md`。
+
 ### E2：L-shaped low-regularity 主实验，\(\kappa=16\)
 
 比较：
