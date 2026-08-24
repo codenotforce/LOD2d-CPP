@@ -1,0 +1,25 @@
+{
+  "experiment": "E1",
+  "epoch": 0,
+  "H_steps": [
+    0,
+    1,
+    2,
+    3,
+    3
+  ],
+  "checkpoint_stages": [
+    "epoch_start",
+    "committed",
+    "committed",
+    "committed",
+    "pre_switch"
+  ],
+  "reference_mesh_versions": [
+    0
+  ],
+  "reference_sha256": [
+    "ddafef65df59ef2440d3bf766e4601e2b0c4ecc869773f374d7d28efab5e3cf5"
+  ],
+  "reference_unchanged_within_epoch": true
+}
