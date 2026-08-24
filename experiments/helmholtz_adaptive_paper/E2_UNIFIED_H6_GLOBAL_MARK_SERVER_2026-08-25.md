@@ -107,10 +107,9 @@ The frozen main run is
 `SHA256SUMS` passed.  A 53 MiB transport archive was also frozen on the server
 with SHA-256
 `c4d2a66bcd09874fb05a304328046e873bf64ea7fb87fdd03fc7c56c33016e58`.
-SCP/SFTP from the workstation stalled before transferring file contents, so the
-full 232 MiB directory remains the authoritative copy on the server.  The
-Moving-PALOD meshes and the compact HLOD/standard error exports used for the
-local plot are retained in the Windows workspace.
+The complete 232 MiB directory is retained on the server, in the WSL mirror,
+and in the Windows workspace.  Both local copies pass the server-generated
+`SHA256SUMS`; each contains 174 VTU mesh files.
 
 All four jobs exited zero without swap:
 
@@ -177,3 +176,40 @@ Final local figures:
 The two-epoch mesh audit confirms that each reference mesh is bitwise unchanged
 inside its epoch and that the epoch-0 candidate SHA-256 equals the epoch-1
 reference SHA-256 after promotion.
+
+## WSL SCP MTU fix
+
+If SSH commands and approximately 1 KiB files work but larger SCP/SFTP/rsync
+transfers create a zero-byte destination and stall, inspect the actual route and
+interface MTU:
+
+```bash
+ip route get 47.97.230.226
+ip -d link show <route-interface>
+ping -c 2 -M do -s 1472 47.97.230.226
+```
+
+On 2026-08-25, mirrored WSL networking routed the server through `eth4`, which
+inherited MTU 9000 from the Windows `Meta` virtual adapter.  The public path
+supported only MTU 1500.  SSH control traffic and a 1 KiB file passed, while an
+8 KiB random file stalled immediately after the SCP file header.  This is a
+PMTUD black hole, not a VTU, filesystem-permission, or server-storage problem.
+
+The immediate WSL fix, run from Windows PowerShell, is:
+
+```powershell
+wsl -d Ubuntu-22.04 -u root -- ip link set dev eth4 mtu 1500
+```
+
+Re-run `ip route get` after a WSL/network restart because the route interface
+name can change.  The persistent host-side fix requires an elevated PowerShell
+or Command Prompt and should target the adapter reported by
+`Get-NetIPInterface`:
+
+```powershell
+netsh interface ipv4 set subinterface "Meta" mtu=1500 store=persistent
+```
+
+Validate the repair with a non-compressible file before downloading a large
+result directory.  A successful transfer must match the server hash; file size
+alone is insufficient.
