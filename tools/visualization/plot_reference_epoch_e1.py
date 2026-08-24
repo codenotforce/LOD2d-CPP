@@ -142,6 +142,9 @@ def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
         r"Standard LOD ($\ell=4$, gap 4)": dict(
             color="#9467bd", marker="v", linestyle=(0, (4, 1.5)), linewidth=1.25
         ),
+        r"Standard LOD ($\ell=2$, gap 4)": dict(
+            color="#ff7f0e", marker="s", linestyle=(0, (4, 1.5)), linewidth=1.25
+        ),
         "Moving-reference singularity-aware PALOD": dict(
             color="#1f77b4", marker="o", linestyle="-", linewidth=1.45
         ),
@@ -404,6 +407,14 @@ def main() -> None:
                 load_extracted_run(
                     arguments.fixed_lod_extracted,
                     r"Fixed LOD ($\ell=3$)",
+                ),
+            )
+        if arguments.slod is not None:
+            runs.insert(
+                2,
+                load_run(
+                    arguments.slod,
+                    r"Standard LOD ($\ell=2$, gap 4)",
                 ),
             )
     apply_paper_style()

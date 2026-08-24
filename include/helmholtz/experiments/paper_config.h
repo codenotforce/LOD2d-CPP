@@ -218,6 +218,10 @@ struct PracticalPaperConfig {
     // Case S only: coefficient B of an additive boundary-compatible smooth
     // wave psi(x,y) exp(i k x).  Zero preserves the historical case.
     double smooth_wave_amplitude = 0.0;
+    // Case S only.  "radial-cutoff" preserves historical data, while
+    // "boundary-weight-gaussian" selects the revised manuscript benchmark
+    // without an artificial radial transition annulus.
+    std::string singular_solution_profile = "radial-cutoff";
     std::string reference_mesh = "uniform-nvb";
     int reference_level = 6;
     std::string ambient_mesh = "reference-shadow";
@@ -303,12 +307,13 @@ struct ReferenceEpochPaperConfig {
     PaperCase case_id = PaperCase::R1;
     std::string method = "PALOD-reference-epoch";
     double wavenumber = 16.0;
-    // Case S manufactured solution:
-    // u=chi_s r^(2/3)sin(2 theta/3) + B chi_osc exp(ikx).
+    // Case S manufactured solution.  The legacy radial-cutoff profile is
+    // retained for old runs; the revised paper uses boundary-weight-gaussian.
     double singular_oscillatory_fraction = 1.0;
     double singular_cutoff_outer_radius = 0.5;
     bool singular_quintic_cutoff = false;
     double smooth_wave_amplitude = 0.0;
+    std::string singular_solution_profile = "radial-cutoff";
     int initial_coarse_level = 3;
     int initial_reference_level = 5;
     bool singularity_hybrid = false;

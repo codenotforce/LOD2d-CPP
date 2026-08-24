@@ -163,19 +163,26 @@ void verify_localized_smooth_case() {
 void verify_singular_case() {
     constexpr double kappa = 8.0;
     const PaperCaseData data = make_paper_case(PaperCase::S, kappa);
-    const PaperCaseData singular_only =
+    const PaperCaseData legacy_singular_only =
         make_paper_case(PaperCase::S, kappa, 0.0, 0.5, false, 0.0);
+    const PaperCaseData revised_singular_only =
+        make_paper_case(
+            PaperCase::S, kappa, 0.0, 0.5, false, 0.0,
+            "boundary-weight-gaussian");
     const PaperCaseData corner_dominant =
         make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true);
     const PaperCaseData additive_wave =
         make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true, 0.1);
-    require(data.singular_oscillatory_fraction == 0.0
+    require(data.singular_solution_profile == "boundary-weight-gaussian"
+                && legacy_singular_only.singular_solution_profile
+                    == "radial-cutoff"
+                && data.singular_oscillatory_fraction == 0.0
                 && corner_dominant.singular_oscillatory_fraction == 0.0
                 && data.singular_cutoff_outer_radius == 0.5
                 && corner_dominant.singular_cutoff_outer_radius == 1.0
                 && !data.singular_quintic_cutoff
                 && corner_dominant.singular_quintic_cutoff
-                && data.smooth_wave_amplitude == 0.05
+                && data.smooth_wave_amplitude == 0.25
                 && additive_wave.smooth_wave_amplitude == 0.1,
             "S oscillatory fraction provenance is missing");
     require(std::abs(boundary_measure(data.initial_mesh, BoundaryTag::Dirichlet) - 2.0) < 1e-14,
@@ -209,12 +216,21 @@ void verify_singular_case() {
     require(std::abs(std::imag(corner_dominant.exact(Point2(-0.18, 0.11))))
                 < 1e-14,
             "corner-dominant S exact solution is unexpectedly oscillatory");
-    require(std::abs(data.exact(Point2(-0.45, 0.42))
-                     - singular_only.exact(Point2(-0.45, 0.42))) > 1e-5,
-            "revised S benchmark lost its interior oscillatory bump");
-    require(std::abs(data.exact(Point2(-0.2, 0.5))
-                     - singular_only.exact(Point2(-0.2, 0.5))) < 1e-14,
-            "S oscillatory envelope is not compactly supported in the interior");
+    const Point2 oscillation_center(-0.5, 0.5);
+    require(std::abs(data.exact(oscillation_center)
+                     - revised_singular_only.exact(oscillation_center)
+                     - Complex(0.25, 0.0)) < 1e-13,
+            "revised S Gaussian wave lost its normalized center amplitude");
+    require(std::abs(data.exact(Point2(-0.5, 0.5))
+                     - revised_singular_only.exact(Point2(-0.5, 0.5)))
+                > 50.0
+                    * std::abs(data.exact(Point2(-0.9, 0.5))
+                               - revised_singular_only.exact(Point2(-0.9, 0.5))),
+            "revised S oscillatory wave is not localized near (-1/2,1/2)");
+    const Point2 uncut_sample(-0.8, 0.2);
+    require(std::abs(revised_singular_only.exact(uncut_sample)) > 1e-3
+                && std::abs(legacy_singular_only.exact(uncut_sample)) < 1e-14,
+            "revised S singularity still contains the legacy radial cut-off");
     require(std::abs(std::imag(additive_wave.exact(Point2(-0.45, 0.42))))
                 > 1e-5,
             "additive S exact solution lost its smooth oscillatory component");
@@ -249,6 +265,16 @@ void verify_singular_case() {
     }
     require(invalid_wave_amplitude_rejected,
             "S accepted an invalid smooth wave amplitude");
+    bool invalid_profile_rejected = false;
+    try {
+        (void)make_paper_case(
+            PaperCase::S, kappa, 0.0, 0.5, false, 0.25,
+            "unknown-profile");
+    } catch (const std::invalid_argument &) {
+        invalid_profile_rejected = true;
+    }
+    require(invalid_profile_rejected,
+            "S accepted an unknown manufactured-solution profile");
     bool non_s_parameters_rejected = false;
     try {
         (void)make_paper_case(PaperCase::R1, kappa, 0.0, 1.0, true, 0.1);

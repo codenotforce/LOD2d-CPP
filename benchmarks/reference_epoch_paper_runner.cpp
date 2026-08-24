@@ -2493,20 +2493,33 @@ void write_auxiliary_outputs(
                    "\"localization_alpha\":80,"
                    "\"oscillatory_phase\":\"exp(i*kappa*x)\"}";
         } else if (config.case_id == PaperCase::S) {
-            out << "{\"revision\":\"l-shape-additive-revised-v1\","
-                   "\"boundary_partition\":\"D-reentrant-rays,N-empty,R-remainder\","
-                   "\"singular_cutoff\":\"C-infinity-flat-step\","
-                   "\"singular_cutoff_inner_radius\":0.25,"
-                   "\"singular_cutoff_outer_radius\":"
-                << number(config.singular_cutoff_outer_radius)
-                << ",\"oscillatory_bump\":\"tensor-C-infinity\","
-                   "\"oscillatory_support\":[-0.75,-0.25,0.25,0.75],"
-                   "\"oscillatory_amplitude\":"
-                << number(config.smooth_wave_amplitude)
-                << ",\"singular_oscillatory_fraction\":"
-                << number(config.singular_oscillatory_fraction)
-                << ",\"oscillatory_phase\":\"exp(i*kappa*x)\","
-                   "\"hybrid_physical_ball_geometric_tolerance\":1e-12}";
+            if (config.singular_solution_profile
+                == "boundary-weight-gaussian") {
+                out << "{\"revision\":\"l-shape-boundary-weight-gaussian-v2\","
+                       "\"boundary_partition\":\"D-reentrant-rays,N-empty,R-remainder\","
+                       "\"singular_weight\":\"(1-x^2)^2(1-y^2)^2\","
+                       "\"oscillatory_center\":[-0.5,0.5],"
+                       "\"oscillatory_alpha\":25,"
+                       "\"oscillatory_amplitude\":"
+                    << number(config.smooth_wave_amplitude)
+                    << ",\"oscillatory_phase\":\"exp(i*kappa*(x+0.5))\","
+                       "\"hybrid_physical_ball_geometric_tolerance\":1e-12}";
+            } else {
+                out << "{\"revision\":\"l-shape-additive-revised-v1\","
+                       "\"boundary_partition\":\"D-reentrant-rays,N-empty,R-remainder\","
+                       "\"singular_cutoff\":\"C-infinity-flat-step\","
+                       "\"singular_cutoff_inner_radius\":0.25,"
+                       "\"singular_cutoff_outer_radius\":"
+                    << number(config.singular_cutoff_outer_radius)
+                    << ",\"oscillatory_bump\":\"tensor-C-infinity\","
+                       "\"oscillatory_support\":[-0.75,-0.25,0.25,0.75],"
+                       "\"oscillatory_amplitude\":"
+                    << number(config.smooth_wave_amplitude)
+                    << ",\"singular_oscillatory_fraction\":"
+                    << number(config.singular_oscillatory_fraction)
+                    << ",\"oscillatory_phase\":\"exp(i*kappa*x)\","
+                       "\"hybrid_physical_ball_geometric_tolerance\":1e-12}";
+            }
         } else {
             out << "{\"revision\":\"unchanged-paper-case\"}";
         }
@@ -2543,7 +2556,8 @@ int run_reference_epoch_paper(
         config.singular_oscillatory_fraction,
         config.singular_cutoff_outer_radius,
         config.singular_quintic_cutoff,
-        config.smooth_wave_amplitude);
+        config.smooth_wave_amplitude,
+        config.singular_solution_profile);
     NumericalReferenceEpochBackend backend(config, std::move(data));
     ReferenceEpochPracticalDriver driver(
         backend, make_reference_epoch_driver_config(config));

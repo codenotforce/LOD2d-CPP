@@ -1487,7 +1487,8 @@ int main(const int argc, char **argv) {
             config.singular_oscillatory_fraction,
             config.singular_cutoff_outer_radius,
             config.singular_quintic_cutoff,
-            config.smooth_wave_amplitude);
+            config.smooth_wave_amplitude,
+            config.singular_solution_profile);
         if (arguments.validate_only) {
             std::cout << "config=valid\n"
                       << "run_id=" << make_run_id(config) << '\n';

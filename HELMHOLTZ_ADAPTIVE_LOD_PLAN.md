@@ -600,14 +600,58 @@ SLOD、fixed LOD、PALOD 从短到长串行计时，避免并行污染论文 wal
 3. adaptive \(P_1\) FEM；
 4. fixed-oversampling LOD 仅在成本可承受时补做。
 
-主图：corner 附近最终网格、error-vs-DOF、error-vs-time、matching region 中省掉的
-corrector work。必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 Robin surrogate
-不能写成正式 L-shaped 结果。
+主图：corner 附近最终网格和 error-vs-DOF；不再绘制 cumulative wall-time 图。
+matching region 中省掉的 corrector work 与分阶段时间只保留在 JSON/CSV 审计中。
+必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 Robin surrogate 不能写成正式
+L-shaped 结果。
 
-#### E2 新版论文重基线（2026-08-24）
+#### E2 无径向 cut-off 最终重基线（2026-08-25）
 
-> 暂停状态：用户将继续修订论文 Algorithm 2。在新的论文 SHA256 与算法口径冻结前，
-> 不启动 E2 factor/pilot/main；本节现有实现和历史 pilot 仅保留，不作为待运行主实验。
+最新版论文将制造解冻结为
+
+\[
+u=b_\partial r^{2/3}\sin(2\theta/3)
++0.25\,C_{\rm osc}xyb_\partial
+e^{-25((x+1/2)^2+(y-1/2)^2)}e^{i\kappa(x+1/2)},
+\qquad
+b_\partial=(1-x^2)^2(1-y^2)^2.
+\]
+
+不再使用 radial cut-off；解析 forcing 按论文的 singular/oscillatory split 计算。配置新增
+`singular_solution_profile=boundary-weight-gaussian` 并纳入 canonical identity；旧
+`radial-cutoff` profile 仅为历史结果兼容保留。单元测试已覆盖 mixed homogeneous boundary、
+有限差分梯度、远离角点的 PDE residual、角点低正则性和“无正半径 transition annulus”。
+
+本地网格门禁表明，AFEM 与 moving PALOD 的加细同时集中于凹角 `(0,0)` 和 Gaussian
+中心 `(-0.5,0.5)`，未再出现旧 cut-off 环带。论文冻结 `R_*=0.125`；H6/h10、8-step
+moving pilot 用时 19.1 s、峰值 1.30 GiB、零 swap，误差由约 0.160 降至 0.0665，
+因此没有采用较小半径的必要。
+
+四种正式比较统一从 H6 开始并取 `theta_H=0.2`：
+
+1. AFEM：局部 level 上限 24，本地得到 38 个解点，尾部 12 点指数约 0.520；
+2. moving PALOD：H6/h10、`R_*=0.125`、`ell0=2`、`theta_c=0.2`，最多 36 步；
+3. standard uniform LOD (SLOD)：固定 gap 4、`ell=2`，由 ambient/coarse 资源门禁
+   限制，`maximum_H_steps=10` 只是上限；
+4. standard reference-epoch PALOD：H6/h12、trigger/target gap 2/6、DirectSchur、
+   `ell0=2` 且跨 epoch 继承、`theta_c=0.2`，最多 24 步。
+
+性能冻结依据：积分阶从 16/20/32 降至 12/16/24、递归深度从 8 降至 6，使 SLOD
+wall time 下降约 30%，最大相对 exact-error 改变仅 `5.1e-6`；SLOD `ell=3->2`
+使 wall time 再降约 25%、峰值内存降约 37%，短段尾部指数仍为 0.652；fixed-LOD
+六步 probe 约加速 2 倍。`theta_c=0.3->0.2` 也降低两类 PALOD candidate work，短段
+没有观测到掉阶。standard PALOD 的主要剩余瓶颈为 RT2 candidate flux，生产已经使用
+patch OpenMP、summary audit、DirectSchur、较低积分阶和 `ell=2`；它在服务器序列中最后运行。
+
+服务器模式为 `e2-cutofffree-revised-pilot` 与 `e2-cutofffree-revised-main`，顺序均为
+AFEM、moving PALOD、SLOD、standard PALOD。为保持论文 wall/RSS 可解释，方法间串行，
+方法内部保留 16-thread patch 并行。完整命令、门禁和绘图见
+`experiments/helmholtz_adaptive_paper/E2_CUTOFF_FREE_SERVER_2026-08-25.md`。
+
+#### E2 新版论文重基线（2026-08-24，已被 2026-08-25 无 cut-off 版本取代）
+
+> 本节 radial-cutoff/tensor-bump 制造解与暂停状态均已失效，只作为历史审计保留，
+> 不得与 2026-08-25 正式 E2 数据混用。
 
 新版制造解为 C-infinity radial cutoff 的
 `r^(2/3) sin(2 theta/3)` 奇异项，加上振幅 `B=0.05`、支撑位于

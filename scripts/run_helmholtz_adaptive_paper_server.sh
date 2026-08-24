@@ -230,6 +230,34 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=200
     MODE_TIMEOUT_SECONDS=87300
     ;;
+  e2-cutofffree-revised-pilot)
+    # The latest manufactured solution has no radial cut-off.  Exercise the
+    # inexpensive methods first and leave standard PALOD, whose RT2 candidate
+    # reconstruction dominates its wall time, until last.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-afem-cutofffree-k16-H6-level24-thetaH02-step120-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-radius0125-thetaH02-thetaC02-step8-pilot-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-slod-cutofffree-k16-H6-h10-gap4-ell2-step5-probe-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-cutofffree-k16-H6-h12-trigger2-target6-schur-thetaH02-thetaC02-step8-pilot-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=32
+    MODE_MIN_FREE_DISK_GIB=50
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
+  e2-cutofffree-revised-main)
+    # Keep the measurements serial even though AFEM and moving PALOD fit in
+    # memory together: isolated runs give meaningful wall-time/RSS records and
+    # avoid CPU contention.  The long standard-PALOD trajectory is last.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-afem-cutofffree-k16-H6-level24-thetaH02-step120-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-radius0125-thetaH02-thetaC02-step36-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-slod-cutofffree-k16-H6-h10-gap4-ell2-step10-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-cutofffree-k16-H6-h12-trigger2-target6-schur-thetaH02-thetaC02-step24-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=300
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;

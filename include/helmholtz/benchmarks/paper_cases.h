@@ -5,6 +5,8 @@
 #include "mesh/types.h"
 
 #include <optional>
+#include <string>
+#include <string_view>
 
 namespace lod2d::helmholtz::benchmarks {
 
@@ -23,6 +25,7 @@ struct PaperCaseData {
     std::optional<double> singular_cutoff_outer_radius;
     bool singular_quintic_cutoff = false;
     std::optional<double> smooth_wave_amplitude;
+    std::optional<std::string> singular_solution_profile;
 };
 
 PaperCaseData make_paper_case(
@@ -35,14 +38,14 @@ PaperCaseData make_paper_case(
     double singular_oscillatory_fraction,
     double singular_cutoff_outer_radius = 0.5,
     bool singular_quintic_cutoff = false,
-    double smooth_wave_amplitude = 0.0);
+    double smooth_wave_amplitude = 0.0,
+    std::string_view singular_solution_profile = "radial-cutoff");
 
 // Case S keeps the legacy parameter hooks for controlled comparisons.  The
-// two-argument factory selects the revised paper benchmark for S:
-// oscillatory_fraction=0, cutoff_outer_radius=0.5, quintic_cutoff=false and
-// smooth_wave_amplitude=0.05. Its smooth wave uses a compactly supported
-// interior C-infinity envelope. The explicit overload retains all legacy
-// parameter hooks for controlled comparisons.
+// two-argument factory selects the revised paper benchmark for S: the corner
+// singularity is multiplied by a smooth outer-boundary weight and a Gaussian
+// oscillatory component of amplitude 0.25 is centered at (-1/2,1/2).  The
+// explicit overload retains the historical radial-cutoff profile.
 
 double normalized_gaussian_constant(
     double sigma,

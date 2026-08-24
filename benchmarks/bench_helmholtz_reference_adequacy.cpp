@@ -283,7 +283,8 @@ int main(const int argc, char **argv) {
             config.singular_oscillatory_fraction,
             config.singular_cutoff_outer_radius,
             config.singular_quintic_cutoff,
-            config.smooth_wave_amplitude);
+            config.smooth_wave_amplitude,
+            config.singular_solution_profile);
         ReferenceEpochHierarchy hierarchy(
             data.initial_mesh, config.initial_coarse_level,
             config.reference_level, config.reference_epoch);

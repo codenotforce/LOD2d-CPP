@@ -1265,6 +1265,22 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
             "smooth_wave_amplitude must lie in [0,1] and may be nonzero "
             "only for case S");
     }
+    if (config.singular_solution_profile != "radial-cutoff"
+        && config.singular_solution_profile != "boundary-weight-gaussian") {
+        throw std::invalid_argument("unknown singular_solution_profile");
+    }
+    if (config.case_id != PaperCase::S
+        && config.singular_solution_profile != "radial-cutoff") {
+        throw std::invalid_argument(
+            "singular_solution_profile may differ from radial-cutoff only for case S");
+    }
+    if (config.singular_solution_profile == "boundary-weight-gaussian"
+        && (config.singular_oscillatory_fraction != 0.0
+            || config.singular_cutoff_outer_radius != 0.5
+            || config.singular_quintic_cutoff)) {
+        throw std::invalid_argument(
+            "boundary-weight-gaussian requires a nonoscillatory corner and default legacy cutoff fields");
+    }
     if (config.reference_mesh != "uniform-nvb" ||
         config.ambient_mesh != "reference-shadow") {
         throw std::invalid_argument(
@@ -1588,6 +1604,10 @@ std::string canonical_json(const PracticalPaperConfig &config) {
         out << ",\"smooth_wave_amplitude\":"
             << number(config.smooth_wave_amplitude);
     }
+    if (config.singular_solution_profile != "radial-cutoff") {
+        out << ",\"singular_solution_profile\":"
+            << json_string(config.singular_solution_profile);
+    }
     if (config.slod_direct_schur_min_reference_dofs > 0) {
         out << ",\"slod_direct_schur_min_reference_dofs\":"
             << config.slod_direct_schur_min_reference_dofs;
@@ -1651,6 +1671,8 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         root.contains("singular_quintic_cutoff");
     const bool has_smooth_wave_amplitude =
         root.contains("smooth_wave_amplitude");
+    const bool has_singular_solution_profile =
+        root.contains("singular_solution_profile");
     JsonObject contract_root = root;
     contract_root.erase("minimum_reference_level_gap");
     contract_root.erase("reference_refresh_level_gap");
@@ -1664,6 +1686,7 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
     contract_root.erase("singular_cutoff_outer_radius");
     contract_root.erase("singular_quintic_cutoff");
     contract_root.erase("smooth_wave_amplitude");
+    contract_root.erase("singular_solution_profile");
     const bool has_refresh_schedule =
         root.contains("reference_refresh_H_steps");
     if (has_refresh_schedule) {
@@ -1713,6 +1736,11 @@ PracticalPaperConfig parse_practical_paper_config(const std::string_view json) {
         config.smooth_wave_amplitude = as_number(
             get(root, "smooth_wave_amplitude"),
             "smooth_wave_amplitude");
+    }
+    if (has_singular_solution_profile) {
+        config.singular_solution_profile = as_string(
+            get(root, "singular_solution_profile"),
+            "singular_solution_profile");
     }
     config.reference_mesh = as_string(get(root, "reference_mesh"), "reference_mesh");
     config.reference_level = as_integer(get(root, "reference_level"), "reference_level");
@@ -1913,6 +1941,7 @@ bool operator==(const PracticalPaperConfig &lhs,
             rhs.singular_cutoff_outer_radius &&
         lhs.singular_quintic_cutoff == rhs.singular_quintic_cutoff &&
         lhs.smooth_wave_amplitude == rhs.smooth_wave_amplitude &&
+        lhs.singular_solution_profile == rhs.singular_solution_profile &&
         lhs.reference_mesh == rhs.reference_mesh &&
         lhs.reference_level == rhs.reference_level &&
         lhs.ambient_mesh == rhs.ambient_mesh &&
@@ -2098,13 +2127,24 @@ void validate_reference_epoch_paper_config(
         || config.quadrature.max_recursive_subdivisions < 0
         || config.repeat_index < 0)
         throw std::invalid_argument("reference-epoch numerical inputs are invalid");
+    if (config.singular_solution_profile != "radial-cutoff"
+        && config.singular_solution_profile != "boundary-weight-gaussian")
+        throw std::invalid_argument("unknown singular_solution_profile");
     if (config.case_id != PaperCase::S
         && (config.singular_oscillatory_fraction != 1.0
             || config.singular_cutoff_outer_radius != 0.5
             || config.singular_quintic_cutoff
-            || config.smooth_wave_amplitude != 0.0))
+            || config.smooth_wave_amplitude != 0.0
+            || config.singular_solution_profile != "radial-cutoff"))
         throw std::invalid_argument(
             "S manufactured-solution parameters require case S");
+    if (config.singular_solution_profile == "boundary-weight-gaussian"
+        && (config.case_id != PaperCase::S
+            || config.singular_oscillatory_fraction != 0.0
+            || config.singular_cutoff_outer_radius != 0.5
+            || config.singular_quintic_cutoff))
+        throw std::invalid_argument(
+            "boundary-weight-gaussian requires case S, a nonoscillatory corner, and default legacy cutoff fields");
     if (config.singularity_hybrid !=
             (config.method == "PALOD-hybrid-reference-epoch"))
         throw std::invalid_argument("hybrid method and singularity_hybrid disagree");
@@ -2212,6 +2252,8 @@ std::string canonical_json(const ReferenceEpochPaperConfig &config) {
         << number(config.singular_oscillatory_fraction)
         << ",\"singular_quintic_cutoff\":"
         << (config.singular_quintic_cutoff ? "true" : "false")
+        << ",\"singular_solution_profile\":"
+        << json_string(config.singular_solution_profile)
         << ",\"singularity_hybrid\":"
         << (config.singularity_hybrid ? "true" : "false")
         << ",\"smooth_wave_amplitude\":"
@@ -2241,8 +2283,12 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     const JsonValue parsed = JsonParser(json).parse();
     const JsonObject &root = as_object(parsed, "root");
     const bool has_patch_solver = root.contains("patch_solver_kind");
+    const bool has_singular_solution_profile =
+        root.contains("singular_solution_profile");
+    JsonObject contract_root = root;
+    contract_root.erase("singular_solution_profile");
     if (has_patch_solver) {
-        require_keys(root,
+        require_keys(contract_root,
         {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
          "ell_max", "git_commit",
          "hybrid_maximum_corrector_patch_fine_elements",
@@ -2266,7 +2312,7 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
         // Read pre-solver-policy schema-v6 files with the exact historical
         // key set.  Canonicalization writes the explicit defaults, so every
         // newly frozen run records its numerical backend.
-        require_keys(root,
+        require_keys(contract_root,
         {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
          "ell_max", "git_commit",
          "hybrid_maximum_corrector_patch_fine_elements",
@@ -2305,6 +2351,11 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
         "singular_quintic_cutoff");
     config.smooth_wave_amplitude = as_number(
         get(root, "smooth_wave_amplitude"), "smooth_wave_amplitude");
+    if (has_singular_solution_profile) {
+        config.singular_solution_profile = as_string(
+            get(root, "singular_solution_profile"),
+            "singular_solution_profile");
+    }
     config.initial_coarse_level = as_integer(
         get(root, "initial_coarse_level"), "initial_coarse_level");
     config.initial_reference_level = as_integer(

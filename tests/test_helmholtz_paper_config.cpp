@@ -611,6 +611,14 @@ void verify_practical_v4_contract() {
                 && canonical_config_hash(changed)
                     != canonical_config_hash(original),
             "practical v4 identity ignores the S oscillatory fraction");
+    changed = original;
+    changed.singular_oscillatory_fraction = 0.0;
+    changed.smooth_wave_amplitude = 0.25;
+    changed.singular_solution_profile = "boundary-weight-gaussian";
+    require(parse_practical_paper_config(canonical_json(changed)) == changed
+                && canonical_config_hash(changed)
+                    != canonical_config_hash(original),
+            "practical v4 identity ignores the S manufactured-solution profile");
     changed.case_id = PaperCase::R1;
     require_invalid([&] { (void)canonical_json(changed); },
                     "a non-S practical case accepted an S exact-solution parameter");
@@ -786,7 +794,8 @@ void verify_reference_epoch_v6_S_contract() {
     config.singular_oscillatory_fraction = 0.0;
     config.singular_cutoff_outer_radius = 0.5;
     config.singular_quintic_cutoff = false;
-    config.smooth_wave_amplitude = 0.05;
+    config.smooth_wave_amplitude = 0.25;
+    config.singular_solution_profile = "boundary-weight-gaussian";
     config.initial_coarse_level = 2;
     config.initial_reference_level = 6;
     config.reference_refresh_level_gap = 0;
@@ -812,7 +821,9 @@ void verify_reference_epoch_v6_S_contract() {
                 && decoded.singular_oscillatory_fraction == 0.0
                 && decoded.singular_cutoff_outer_radius == 0.5
                 && !decoded.singular_quintic_cutoff
-                && decoded.smooth_wave_amplitude == 0.05,
+                && decoded.smooth_wave_amplitude == 0.25
+                && decoded.singular_solution_profile
+                    == "boundary-weight-gaussian",
             "reference-epoch v6 lost the case-S manufactured solution");
     require(canonical_json(decoded) == encoded,
             "reference-epoch v6 canonical JSON changed after round trip");
@@ -830,6 +841,10 @@ void verify_reference_epoch_v6_S_contract() {
     changed.hybrid_minimum_physical_radius = 0.2;
     require(canonical_config_hash(changed) != canonical_config_hash(config),
             "reference-epoch v6 identity ignores the hybrid physical radius");
+    changed = config;
+    changed.singular_solution_profile = "radial-cutoff";
+    require(canonical_config_hash(changed) != canonical_config_hash(config),
+            "reference-epoch v6 identity ignores the manufactured-solution profile");
     changed = config;
     changed.patch_solver_kind =
         lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;

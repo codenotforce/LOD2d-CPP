@@ -14,6 +14,9 @@ constexpr double kR1 = 0.5;
 constexpr double kAlpha = 2.0 / 3.0;
 constexpr double kR1Localization = 80.0;
 constexpr double kOscillatorySupportHalfWidth = 0.25;
+constexpr double kE2OscillationAlpha = 25.0;
+constexpr double kE2OscillationCenterX = -0.5;
+constexpr double kE2OscillationCenterY = 0.5;
 
 struct SmoothStepValue {
     double value = 0.0;
@@ -171,37 +174,107 @@ SmoothWaveEnvelope smooth_wave_envelope(const Point2 &point) {
     return result;
 }
 
+SmoothWaveEnvelope boundary_weight(const Point2 &point) {
+    const auto factor = [](const double coordinate) {
+        const double one_minus_square = 1.0 - coordinate * coordinate;
+        return SmoothStepValue{
+            one_minus_square * one_minus_square,
+            -4.0 * coordinate * one_minus_square,
+            -4.0 + 12.0 * coordinate * coordinate};
+    };
+    const SmoothStepValue x = factor(point.x());
+    const SmoothStepValue y = factor(point.y());
+    SmoothWaveEnvelope result;
+    result.value = x.value * y.value;
+    result.gradient = Eigen::Vector2d(
+        x.first * y.value, x.value * y.first);
+    result.laplacian = x.second * y.value + x.value * y.second;
+    return result;
+}
+
+SmoothWaveEnvelope boundary_gaussian_wave_envelope(const Point2 &point) {
+    const SmoothWaveEnvelope weight = boundary_weight(point);
+    const double x = point.x();
+    const double y = point.y();
+    const double polynomial = x * y;
+    const Eigen::Vector2d polynomial_gradient(y, x);
+    const double weighted_polynomial = polynomial * weight.value;
+    const Eigen::Vector2d weighted_polynomial_gradient =
+        polynomial_gradient * weight.value + polynomial * weight.gradient;
+    const double weighted_polynomial_laplacian =
+        polynomial * weight.laplacian
+        + 2.0 * polynomial_gradient.dot(weight.gradient);
+
+    const Eigen::Vector2d offset(
+        x - kE2OscillationCenterX, y - kE2OscillationCenterY);
+    const double gaussian = std::exp(
+        -kE2OscillationAlpha * offset.squaredNorm());
+    const Eigen::Vector2d gaussian_gradient =
+        -2.0 * kE2OscillationAlpha * gaussian * offset;
+    const double gaussian_laplacian =
+        (4.0 * kE2OscillationAlpha * kE2OscillationAlpha
+             * offset.squaredNorm()
+         - 4.0 * kE2OscillationAlpha) * gaussian;
+    const SmoothWaveEnvelope center_weight =
+        boundary_weight(Point2(kE2OscillationCenterX, kE2OscillationCenterY));
+    const double normalization = 1.0 /
+        (kE2OscillationCenterX * kE2OscillationCenterY
+         * center_weight.value);
+
+    SmoothWaveEnvelope result;
+    result.value = normalization * weighted_polynomial * gaussian;
+    result.gradient = normalization * (
+        gaussian * weighted_polynomial_gradient
+        + weighted_polynomial * gaussian_gradient);
+    result.laplacian = normalization * (
+        gaussian * weighted_polynomial_laplacian
+        + weighted_polynomial * gaussian_laplacian
+        + 2.0 * weighted_polynomial_gradient.dot(gaussian_gradient));
+    return result;
+}
+
+SingularAmplitude corner_singularity(const Point2 &point) {
+    const double radius = point.norm();
+    if (radius == 0.0) return {};
+    double angle = std::atan2(point.y(), point.x());
+    if (angle < 0.0) angle += 2.0 * std::acos(-1.0);
+    if (angle > 1.5 * std::acos(-1.0) + 1e-12)
+        throw std::invalid_argument(
+            "singular manufactured solution evaluated outside the L-shaped domain");
+    const double sine = std::sin(kAlpha * angle);
+    const double cosine = std::cos(kAlpha * angle);
+    const double radial_power = std::pow(radius, kAlpha);
+    const double radial_derivative =
+        kAlpha * std::pow(radius, kAlpha - 1.0);
+    const Eigen::Vector2d radial(point.x() / radius, point.y() / radius);
+    const Eigen::Vector2d angular(-radial.y(), radial.x());
+    SingularAmplitude result;
+    result.value = radial_power * sine;
+    result.gradient = radial_derivative * (
+        sine * radial + cosine * angular);
+    return result;
+}
+
 SingularAmplitude singular_amplitude(
     const Point2 &point,
     double cutoff_outer_radius = kR1,
     bool quintic_cutoff = false) {
     const double radius = point.norm();
     if (radius == 0.0) return {};
-    double angle = std::atan2(point.y(), point.x());
-    if (angle < 0.0) angle += 2.0 * std::acos(-1.0);
-    if (angle > 1.5 * std::acos(-1.0) + 1e-12)
-        throw std::invalid_argument("singular manufactured solution evaluated outside the L-shaped domain");
+    const SingularAmplitude base = corner_singularity(point);
 
     const SmoothStepValue cutoff = cutoff_jet(
         radius, cutoff_outer_radius, quintic_cutoff);
     if (cutoff.value == 0.0 && cutoff.first == 0.0) return {};
-    const double sine = std::sin(kAlpha * angle);
-    const double cosine = std::cos(kAlpha * angle);
-    const double radial_power = std::pow(radius, kAlpha);
-    const double base = radial_power * sine;
-    const double base_radial = kAlpha * std::pow(radius, kAlpha - 1.0) * sine;
-    const double base_angular_over_radius =
-        kAlpha * std::pow(radius, kAlpha - 1.0) * cosine;
     const Eigen::Vector2d radial(point.x() / radius, point.y() / radius);
-    const Eigen::Vector2d angular(-radial.y(), radial.x());
+    const double base_radial = base.gradient.dot(radial);
 
     SingularAmplitude result;
-    result.value = cutoff.value * base;
+    result.value = cutoff.value * base.value;
     result.gradient =
-        (cutoff.first * base + cutoff.value * base_radial) * radial
-        + cutoff.value * base_angular_over_radius * angular;
+        cutoff.first * base.value * radial + cutoff.value * base.gradient;
     result.laplacian = 2.0 * cutoff.first * base_radial
-        + (cutoff.second + cutoff.first / radius) * base;
+        + (cutoff.second + cutoff.first / radius) * base.value;
     return result;
 }
 
@@ -274,7 +347,8 @@ PaperCaseData make_s(
     double oscillatory_fraction,
     double cutoff_outer_radius,
     bool quintic_cutoff,
-    double smooth_wave_amplitude) {
+    double smooth_wave_amplitude,
+    std::string_view singular_solution_profile) {
     if (!std::isfinite(oscillatory_fraction)
         || oscillatory_fraction < 0.0 || oscillatory_fraction > 1.0) {
         throw std::invalid_argument(
@@ -291,6 +365,16 @@ PaperCaseData make_s(
         throw std::invalid_argument(
             "S smooth wave amplitude must lie in [0,1]");
     }
+    if (singular_solution_profile != "radial-cutoff"
+        && singular_solution_profile != "boundary-weight-gaussian") {
+        throw std::invalid_argument("unknown S manufactured-solution profile");
+    }
+    if (singular_solution_profile == "boundary-weight-gaussian"
+        && (oscillatory_fraction != 0.0 || cutoff_outer_radius != kR1
+            || quintic_cutoff)) {
+        throw std::invalid_argument(
+            "boundary-weight-gaussian requires the nonoscillatory corner and default legacy cutoff fields");
+    }
     PaperCaseData result;
     result.id = experiments::PaperCase::S;
     result.wavenumber = wavenumber;
@@ -302,6 +386,68 @@ PaperCaseData make_s(
     result.singular_cutoff_outer_radius = cutoff_outer_radius;
     result.singular_quintic_cutoff = quintic_cutoff;
     result.smooth_wave_amplitude = smooth_wave_amplitude;
+    result.singular_solution_profile = std::string(singular_solution_profile);
+    if (singular_solution_profile == "boundary-weight-gaussian") {
+        result.exact = [=](const Point2 &point) {
+            const SingularAmplitude corner = corner_singularity(point);
+            const SmoothWaveEnvelope weight = boundary_weight(point);
+            const SmoothWaveEnvelope wave =
+                boundary_gaussian_wave_envelope(point);
+            const Complex phase = std::exp(Complex(
+                0.0, wavenumber * (point.x() - kE2OscillationCenterX)));
+            return weight.value * corner.value
+                + smooth_wave_amplitude * wave.value * phase;
+        };
+        result.exact_gradient = [=](const Point2 &point) {
+            const SingularAmplitude corner = corner_singularity(point);
+            const SmoothWaveEnvelope weight = boundary_weight(point);
+            const SmoothWaveEnvelope wave =
+                boundary_gaussian_wave_envelope(point);
+            const Complex phase = std::exp(Complex(
+                0.0, wavenumber * (point.x() - kE2OscillationCenterX)));
+            Eigen::Vector2cd gradient =
+                (weight.value * corner.gradient
+                 + corner.value * weight.gradient).cast<Complex>();
+            gradient += smooth_wave_amplitude * phase
+                * wave.gradient.cast<Complex>();
+            gradient.x() += smooth_wave_amplitude * phase
+                * Complex(0.0, wavenumber * wave.value);
+            return gradient;
+        };
+        result.exact_laplacian = [=](const Point2 &point) {
+            const SingularAmplitude corner = corner_singularity(point);
+            const SmoothWaveEnvelope weight = boundary_weight(point);
+            const SmoothWaveEnvelope wave =
+                boundary_gaussian_wave_envelope(point);
+            const Complex phase = std::exp(Complex(
+                0.0, wavenumber * (point.x() - kE2OscillationCenterX)));
+            const double singular_laplacian =
+                corner.value * weight.laplacian
+                + 2.0 * weight.gradient.dot(corner.gradient);
+            return singular_laplacian
+                + smooth_wave_amplitude * phase
+                    * (wave.laplacian
+                       + Complex(0.0, 2.0 * wavenumber * wave.gradient.x())
+                       - wavenumber * wavenumber * wave.value);
+        };
+        result.source = [=](const Point2 &point) {
+            const SingularAmplitude corner = corner_singularity(point);
+            const SmoothWaveEnvelope weight = boundary_weight(point);
+            const SmoothWaveEnvelope wave =
+                boundary_gaussian_wave_envelope(point);
+            const Complex phase = std::exp(Complex(
+                0.0, wavenumber * (point.x() - kE2OscillationCenterX)));
+            const double singular_laplacian =
+                corner.value * weight.laplacian
+                + 2.0 * weight.gradient.dot(corner.gradient);
+            return -singular_laplacian
+                - wavenumber * wavenumber * weight.value * corner.value
+                - smooth_wave_amplitude * phase
+                    * (wave.laplacian
+                       + Complex(0.0, 2.0 * wavenumber * wave.gradient.x()));
+        };
+        return result;
+    }
     result.exact = [=](const Point2 &point) {
         const SingularAmplitude amplitude = singular_amplitude(
             point, cutoff_outer_radius, quintic_cutoff);
@@ -393,7 +539,8 @@ PaperCaseData make_paper_case(
     double wavenumber) {
     if (id == experiments::PaperCase::S) {
         return make_paper_case(
-            id, wavenumber, 0.0, kR1, false, 0.05);
+            id, wavenumber, 0.0, kR1, false, 0.25,
+            "boundary-weight-gaussian");
     }
     return make_paper_case(
         id, wavenumber, 1.0, kR1, false, 0.0);
@@ -405,14 +552,16 @@ PaperCaseData make_paper_case(
     double singular_oscillatory_fraction,
     double singular_cutoff_outer_radius,
     bool singular_quintic_cutoff,
-    double smooth_wave_amplitude) {
+    double smooth_wave_amplitude,
+    std::string_view singular_solution_profile) {
     if (!(wavenumber > 0.0))
         throw std::invalid_argument("paper case wavenumber must be positive");
     if (id != experiments::PaperCase::S
         && (singular_oscillatory_fraction != 1.0
             || singular_cutoff_outer_radius != kR1
             || singular_quintic_cutoff
-            || smooth_wave_amplitude != 0.0)) {
+            || smooth_wave_amplitude != 0.0
+            || singular_solution_profile != "radial-cutoff")) {
         throw std::invalid_argument(
             "S manufactured-solution parameters were supplied to a non-S case");
     }
@@ -424,7 +573,7 @@ PaperCaseData make_paper_case(
         return make_s(
             wavenumber, singular_oscillatory_fraction,
             singular_cutoff_outer_radius, singular_quintic_cutoff,
-            smooth_wave_amplitude);
+            smooth_wave_amplitude, singular_solution_profile);
     }
     throw std::invalid_argument("unknown paper case");
 }
