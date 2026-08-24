@@ -214,6 +214,7 @@ def save_triplet_pages(
         "experiment": experiment,
         "epoch": epoch,
         "H_steps": [triplet[0].h_step for triplet in triplets],
+        "checkpoint_stages": [triplet[0].stage for triplet in triplets],
         "reference_mesh_versions": sorted(reference_versions),
         "reference_sha256": sorted(reference_hashes),
         "reference_unchanged_within_epoch": True,
@@ -234,9 +235,10 @@ def save_triplet_pages(
             )
             for column, triplet in enumerate(chunk):
                 for row, entry in enumerate(triplet):
+                    stage_label = entry.stage.replace("_", "-")
                     title = (
                         rf"$H$-step {entry.h_step}, $i={entry.iteration}$"
-                        + "\n" + f"{entry.cells} cells"
+                        + "\n" + f"{stage_label}; {entry.cells} cells"
                         if row == 0 else f"{entry.cells} cells"
                     )
                     draw_mesh(
