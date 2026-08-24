@@ -167,6 +167,41 @@ case "$MODE" in
     # guard.  Leave 15 minutes for their structured shutdown/artifact write.
     MODE_TIMEOUT_SECONDS=87300
     ;;
+  e2-unified-solver-probe)
+    # Compare the standard-PALOD patch solvers on an identical H6/h12
+    # trajectory, then exercise the moving-reference promotion once.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-k16-H6-h12-gap6-saddle-thetaH01-thetaC03-step3-factor-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-k16-H6-h12-gap6-schur-thetaH01-thetaC03-step3-factor-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-k16-H6-h12-radius00625-thetaH01-thetaC03-step2-factor-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=96
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
+  e2-unified-pilot)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-k16-H6-h12-radius00625-thetaH01-thetaC03-step8-pilot-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-k16-H6-h12-gap6-schur-thetaH01-thetaC03-step8-pilot-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=192
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=44100
+    ;;
+  e2-unified-main)
+    # Uniform H6 starting level.  Run from inexpensive to expensive so every
+    # completed comparator remains usable if the standard-PALOD tail hits a
+    # resource guard.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-afem-k16-H6-level20-thetaH01-step60-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-k16-H6-h12-radius00625-thetaH01-thetaC03-step24-main-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H6-h16-ell3-thetaH01-step24-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-k16-H6-h12-gap6-schur-thetaH01-thetaC03-step24-main-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=320
+    MODE_MIN_FREE_DISK_GIB=200
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
@@ -487,10 +522,11 @@ if schema == 6:
             if variant.get("name") != "moving-reference-singularity-aware-v1" \
                     or variant.get("reserve_trigger_scope") != "not-applicable" \
                     or variant.get("reserve_selection") != \
-                        "not-applicable-immediate-promotion":
+                        "not-applicable-immediate-promotion" \
+                    or variant.get("candidate_marking") != "global-Doerfler":
                 raise SystemExit("moving-reference update policy is undeclared")
             radius = float(config["hybrid_minimum_physical_radius"])
-            if abs(radius - 0.125) > 1e-14:
+            if not radius > 0.0:
                 raise SystemExit(f"unexpected E2 physical radius {radius}")
             theta_h = float(config["theta_H"])
             theta_c = float(config["theta_c"])
@@ -510,14 +546,17 @@ if schema == 6:
                             < theta_h * regular \
                             or not truth(row.get("hybrid_full_regular_doerfler")):
                         raise SystemExit("hybrid coarse full-regular Doerfler gate failed")
-                for suffix in ("F", "R"):
-                    mass = number(row.get(f"indicator_mass_c_{suffix}"))
-                    marked = number(row.get(f"marked_mass_c_{suffix}"))
-                    if mass is not None and mass > 0.0 \
-                            and (marked is None
-                                 or marked + 1e-12 * mass < theta_c * mass):
+                mass_f = number(row.get("indicator_mass_c_F"))
+                mass_r = number(row.get("indicator_mass_c_R"))
+                marked_f = number(row.get("marked_mass_c_F"))
+                marked_r = number(row.get("marked_mass_c_R"))
+                if mass_f is not None and mass_r is not None:
+                    total = mass_f + mass_r
+                    marked = (marked_f or 0.0) + (marked_r or 0.0)
+                    if total > 0.0 and marked + 1e-12 * total \
+                            < theta_c * total:
                         raise SystemExit(
-                            f"candidate {suffix} regional Doerfler gate failed")
+                            "candidate global Doerfler gate failed")
 
             with (manifests[0].parent / "hybrid_reserve.csv").open(
                     newline="", encoding="utf-8") as stream:

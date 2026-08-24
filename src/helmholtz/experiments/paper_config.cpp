@@ -2073,6 +2073,8 @@ void validate_reference_epoch_paper_config(
         || !(config.C_rel_usr > 0.0)
         || !(config.theta_H > 0.0 && config.theta_H <= 1.0)
         || !(config.theta_c > 0.0 && config.theta_c <= 1.0)
+        || config.patch_symbolic_cache_slots <= 0
+        || config.maximum_patch_threads < 0
         || !(config.q_dual > 0.0 && config.q_dual < 1.0)
         || config.m_dual == 0 || !(config.tau_ep > 0.0)
         || config.reference_refresh_level_gap < 0
@@ -2181,6 +2183,14 @@ std::string canonical_json(const ReferenceEpochPaperConfig &config) {
         << ",\"manuscript_sha256\":" << json_string(config.manuscript_sha256)
         << ",\"method\":" << json_string(config.method)
         << ",\"overlap_constant\":" << number(config.overlap_constant)
+        << ",\"maximum_patch_threads\":"
+        << config.maximum_patch_threads
+        << ",\"patch_reuse_identical_factorization\":"
+        << (config.patch_reuse_identical_factorization ? "true" : "false")
+        << ",\"patch_solver_kind\":"
+        << json_string(patch_solver_kind_name(config.patch_solver_kind))
+        << ",\"patch_symbolic_cache_slots\":"
+        << config.patch_symbolic_cache_slots
         << ",\"quadrature\":{\"base_triangle_order\":"
         << config.quadrature.base_triangle_order
         << ",\"gaussian_triangle_order\":"
@@ -2230,7 +2240,9 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     const std::string_view json) {
     const JsonValue parsed = JsonParser(json).parse();
     const JsonObject &root = as_object(parsed, "root");
-    require_keys(root,
+    const bool has_patch_solver = root.contains("patch_solver_kind");
+    if (has_patch_solver) {
+        require_keys(root,
         {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
          "ell_max", "git_commit",
          "hybrid_maximum_corrector_patch_fine_elements",
@@ -2240,7 +2252,9 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
            "localization_eigen_relative_tolerance", "m_dual", "manuscript_sha256", "method",
          "minimum_H_steps_per_epoch",
          "minimum_solved_points_per_new_epoch",
-         "overlap_constant", "quadrature", "q_dual", "reference_refresh_level_gap",
+         "maximum_patch_threads", "overlap_constant",
+         "patch_reuse_identical_factorization", "patch_solver_kind",
+         "patch_symbolic_cache_slots", "quadrature", "q_dual", "reference_refresh_level_gap",
          "reference_refresh_target_gap",
          "repeat_index", "schema_version",
          "singular_cutoff_outer_radius", "singular_oscillatory_fraction",
@@ -2248,6 +2262,26 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
          "smooth_wave_amplitude", "tau_ep", "theta_H", "theta_c",
          "theta_loc_usr", "tolerance_reference", "wavenumber", "work_limits"},
         "root");
+    } else {
+        // Read pre-solver-policy schema-v6 files with the exact historical
+        // key set.  Canonicalization writes the explicit defaults, so every
+        // newly frozen run records its numerical backend.
+        require_keys(root,
+        {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
+         "ell_max", "git_commit",
+         "hybrid_maximum_corrector_patch_fine_elements",
+         "hybrid_minimum_physical_radius", "initial_coarse_level",
+         "initial_reference_level", "localization_eigen_maximum_iterations",
+         "localization_eigen_relative_tolerance", "m_dual", "manuscript_sha256",
+         "method", "minimum_H_steps_per_epoch",
+         "minimum_solved_points_per_new_epoch", "overlap_constant", "quadrature",
+         "q_dual", "reference_refresh_level_gap", "reference_refresh_target_gap",
+         "repeat_index", "schema_version", "singular_cutoff_outer_radius",
+         "singular_oscillatory_fraction", "singular_quintic_cutoff",
+         "singularity_hybrid", "smooth_wave_amplitude", "tau_ep", "theta_H",
+         "theta_c", "theta_loc_usr", "tolerance_reference", "wavenumber",
+         "work_limits"}, "root");
+    }
     ReferenceEpochPaperConfig config;
     config.schema_version = as_integer(get(root, "schema_version"), "schema_version");
     config.case_id = parse_paper_case(as_string(get(root, "case"), "case"));
@@ -2289,6 +2323,18 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     config.C_rel_usr = as_number(get(root, "C_rel_usr"), "C_rel_usr");
     config.theta_H = as_number(get(root, "theta_H"), "theta_H");
     config.theta_c = as_number(get(root, "theta_c"), "theta_c");
+    if (has_patch_solver) {
+        config.patch_solver_kind = parse_patch_solver_kind(
+            as_string(get(root, "patch_solver_kind"), "patch_solver_kind"));
+        config.patch_symbolic_cache_slots = as_integer(
+            get(root, "patch_symbolic_cache_slots"),
+            "patch_symbolic_cache_slots");
+        config.patch_reuse_identical_factorization = as_bool(
+            get(root, "patch_reuse_identical_factorization"),
+            "patch_reuse_identical_factorization");
+        config.maximum_patch_threads = as_integer(
+            get(root, "maximum_patch_threads"), "maximum_patch_threads");
+    }
     config.q_dual = as_number(get(root, "q_dual"), "q_dual");
     config.reference_refresh_level_gap = as_integer(
         get(root, "reference_refresh_level_gap"),

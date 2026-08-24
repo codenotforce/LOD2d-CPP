@@ -659,6 +659,13 @@ public:
         model_config.quadrature = config_.quadrature;
         model_config.quadrature_context = data_.quadrature_context;
         model_config.progress = config_.singularity_hybrid;
+        model_config.patch_solver.kind = config_.patch_solver_kind;
+        model_config.patch_solver.symbolic_cache_slots =
+            config_.patch_symbolic_cache_slots;
+        model_config.patch_solver.reuse_identical_factorization =
+            config_.patch_reuse_identical_factorization;
+        model_config.patch_solver.maximum_parallel_solves =
+            config_.maximum_patch_threads;
         if (config_.singularity_hybrid) {
             model_ = std::make_unique<HelmholtzLodModel>(
                 HelmholtzLodModel::build_adaptive_hybrid(
@@ -1046,27 +1053,62 @@ public:
                 if (in_omega_f[element]) ++result.candidate_cells_f;
                 else ++result.candidate_cells_r;
             }
-            const SplitRegionalDoerflerMarking regional =
-                mark_split_regional_doerfler(
-                    flux.element_eta_squared, in_omega_f, config_.theta_c);
-            marked_candidate = regional.marked_elements;
-            result.eta_eq_c_f = std::sqrt(regional.omega_f_mass);
-            result.eta_eq_c_r = std::sqrt(regional.regular_mass);
-            result.indicator_mass_c_f = regional.omega_f_mass;
-            result.indicator_mass_c_r = regional.regular_mass;
-            result.marked_mass_c_f = regional.marked_omega_f_mass;
-            result.marked_mass_c_r = regional.marked_regular_mass;
-            result.marked_c_f =
-                regional.marked_omega_f_elements.size();
-            result.marked_c_r =
-                regional.marked_regular_elements.size();
-            const double total_mass = regional.omega_f_mass
-                + regional.regular_mass;
+            // The revised experiment uses one global Dörfler selection.  The
+            // F/R fields remain a diagnostic partition of the global mass and
+            // of the globally marked set; neither region has a separate bulk
+            // constraint.
+            result.indicator_mass_c_f = 0.0;
+            result.indicator_mass_c_r = 0.0;
+            result.marked_mass_c_f = 0.0;
+            result.marked_mass_c_r = 0.0;
+            std::vector<char> is_marked(parents.size(), false);
+            for (const int element : marked_candidate) {
+                if (element < 0
+                    || element >= static_cast<int>(parents.size())) {
+                    throw std::logic_error(
+                        "global candidate marking returned an invalid element");
+                }
+                is_marked[element] = true;
+            }
+            for (int element = 0;
+                 element < static_cast<int>(parents.size()); ++element) {
+                const double mass = flux.element_eta_squared[element];
+                if (in_omega_f[element]) {
+                    result.indicator_mass_c_f += mass;
+                    if (is_marked[element]) {
+                        result.marked_mass_c_f += mass;
+                        ++result.marked_c_f;
+                    }
+                } else {
+                    result.indicator_mass_c_r += mass;
+                    if (is_marked[element]) {
+                        result.marked_mass_c_r += mass;
+                        ++result.marked_c_r;
+                    }
+                }
+            }
+            result.eta_eq_c_f = std::sqrt(result.indicator_mass_c_f);
+            result.eta_eq_c_r = std::sqrt(result.indicator_mass_c_r);
+            const double total_mass = result.indicator_mass_c_f
+                + result.indicator_mass_c_r;
             const double flux_mass = flux.eta_eq * flux.eta_eq;
             if (std::abs(total_mass - flux_mass)
                 > 1e-9 * std::max(1.0, flux_mass)) {
                 throw std::runtime_error(
                     "hybrid regional candidate masses do not recover eta_eq_c");
+            }
+            const double globally_marked_mass = result.marked_mass_c_f
+                + result.marked_mass_c_r;
+            if (total_mass > 0.0
+                && globally_marked_mass + 1e-12 * total_mass
+                    < config_.theta_c * total_mass) {
+                throw std::runtime_error(
+                    "global candidate Doerfler marking misses its target");
+            }
+            if (result.marked_c_f + result.marked_c_r
+                != marked_candidate.size()) {
+                throw std::runtime_error(
+                    "global candidate regional accounting misses marked elements");
             }
         }
         result.marked_c = marked_candidate;
@@ -2410,6 +2452,8 @@ void write_auxiliary_outputs(
                    config.singularity_hybrid
                    ? "full-regular-Doerfler"
                    : "full-Doerfler")
+            << ",\"candidate_marking\":"
+            << json_string("global-Doerfler")
             << ",\"reserve_selection\":"
             << json_string(
                    config.singularity_hybrid

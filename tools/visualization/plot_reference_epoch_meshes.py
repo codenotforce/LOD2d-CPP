@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render real E1 epoch-0 coarse/reference/candidate VTU checkpoints."""
+"""Render real coarse/reference/candidate VTU checkpoints by epoch."""
 
 from __future__ import annotations
 
@@ -257,6 +257,119 @@ def save_triplet_pages(
             plt.close(figure)
 
 
+def save_multi_epoch_triplet_pages(
+    run_dir: Path,
+    output_dir: Path,
+    epoch_triplets: list[tuple[int, list[tuple[MeshEntry, MeshEntry, MeshEntry]]]],
+    experiment: str,
+    page_columns: int,
+) -> None:
+    """Render matched three-mesh checkpoints from several epochs in one figure."""
+    if page_columns < 1:
+        raise ValueError("--page-columns must be positive")
+    if not epoch_triplets:
+        raise ValueError("no epoch checkpoints selected")
+
+    audit_epochs = []
+    flattened: list[tuple[MeshEntry, MeshEntry, MeshEntry]] = []
+    final_candidates: dict[int, MeshEntry] = {}
+    initial_references: dict[int, MeshEntry] = {}
+    for epoch, triplets in epoch_triplets:
+        if not triplets:
+            raise ValueError(f"epoch {epoch} has no matched checkpoints")
+        reference_entries = [triplet[1] for triplet in triplets]
+        reference_versions = {
+            entry.reference_mesh_version for entry in reference_entries
+            if entry.reference_mesh_version is not None
+        }
+        reference_hashes = {
+            file_sha256(run_dir / entry.filename) for entry in reference_entries
+        }
+        if len(reference_versions) > 1 or len(reference_hashes) != 1:
+            raise ValueError(
+                f"reference mesh changed inside epoch {epoch}: "
+                f"versions={sorted(reference_versions)}, "
+                f"hashes={sorted(reference_hashes)}"
+            )
+        initial_references[epoch] = triplets[0][1]
+        final_candidates[epoch] = triplets[-1][2]
+        audit_epochs.append({
+            "epoch": epoch,
+            "H_steps": [triplet[0].h_step for triplet in triplets],
+            "iterations": [triplet[0].iteration for triplet in triplets],
+            "checkpoint_stages": [triplet[0].stage for triplet in triplets],
+            "reference_mesh_versions": sorted(reference_versions),
+            "reference_sha256": sorted(reference_hashes),
+            "reference_unchanged_within_epoch": True,
+        })
+        flattened.extend(triplets)
+
+    epochs = [epoch for epoch, _ in epoch_triplets]
+    promotions = []
+    for previous, current in zip(epochs, epochs[1:]):
+        candidate_hash = file_sha256(run_dir / final_candidates[previous].filename)
+        reference_hash = file_sha256(run_dir / initial_references[current].filename)
+        promotions.append({
+            "from_epoch": previous,
+            "to_epoch": current,
+            "candidate_sha256": candidate_hash,
+            "next_reference_sha256": reference_hash,
+            "candidate_promoted_to_next_reference": candidate_hash == reference_hash,
+        })
+
+    epoch_token = "-".join(str(epoch) for epoch in epochs)
+    stem = (
+        f"{experiment}_epochs{epoch_token}_"
+        "coarse_reference_candidate_by_H_step"
+    )
+    audit = {
+        "experiment": experiment,
+        "epochs": audit_epochs,
+        "epoch_boundary_promotions": promotions,
+    }
+    (output_dir / f"{stem}.json").write_text(
+        json.dumps(audit, indent=2) + "\n", encoding="utf-8"
+    )
+
+    roles = ("Coarse $\\mathcal{T}_H$", "Reference $\\mathcal{T}_h$",
+             "Candidate $\\mathcal{T}_c$")
+    widths = (0.42, 0.10, 0.10)
+    with PdfPages(output_dir / f"{stem}.pdf") as pdf:
+        for page, start in enumerate(range(0, len(flattened), page_columns), 1):
+            chunk = flattened[start:start + page_columns]
+            figure, axes = plt.subplots(
+                3, len(chunk), figsize=(3.0 * len(chunk), 8.4),
+                constrained_layout=True, squeeze=False,
+            )
+            for column, triplet in enumerate(chunk):
+                for row, entry in enumerate(triplet):
+                    stage_label = entry.stage.replace("_", "-")
+                    title = (
+                        rf"Epoch {entry.epoch}, $H$-step {entry.h_step}, "
+                        rf"$i={entry.iteration}$"
+                        + "\n" + f"{stage_label}; {entry.cells} cells"
+                        if row == 0 else f"{entry.cells} cells"
+                    )
+                    draw_mesh(
+                        axes[row, column], run_dir / entry.filename,
+                        title, widths[row],
+                    )
+                    if column == 0:
+                        axes[row, column].set_ylabel(roles[row], fontsize=8.5)
+            epoch_range = (
+                str(epochs[0]) if len(epochs) == 1
+                else f"{epochs[0]}--{epochs[-1]}"
+            )
+            figure.suptitle(
+                f"{experiment} epochs {epoch_range}: matched mesh snapshots "
+                f"(page {page})",
+                fontsize=10,
+            )
+            pdf.savefig(figure)
+            figure.savefig(output_dir / f"{stem}_p{page:02d}.png", dpi=240)
+            plt.close(figure)
+
+
 def hybrid_physical_radius(run_dir: Path) -> float | None:
     run_json = run_dir / "run.json"
     if not run_json.exists():
@@ -330,41 +443,67 @@ def main() -> None:
         help="render every saved H-step rather than an evenly spaced subset",
     )
     parser.add_argument("--page-columns", type=int, default=4)
-    parser.add_argument("--epoch", type=int, default=0)
+    epoch_group = parser.add_mutually_exclusive_group()
+    epoch_group.add_argument("--epoch", type=int, default=None)
+    epoch_group.add_argument(
+        "--epochs",
+        help="comma-separated epochs rendered together, for example 0,1",
+    )
     parser.add_argument("--experiment-label", default="E1")
     arguments = parser.parse_args()
     if not arguments.all_checkpoints and arguments.checkpoints < 2:
         raise ValueError("--checkpoints must be at least two")
     manifest = arguments.run_dir / "mesh_manifest.csv"
-    entries = read_manifest(manifest, arguments.epoch)
+    if arguments.epochs:
+        epochs = [int(value.strip()) for value in arguments.epochs.split(",")]
+        if not epochs or len(set(epochs)) != len(epochs):
+            raise ValueError("--epochs must contain distinct epoch numbers")
+    else:
+        epochs = [0 if arguments.epoch is None else arguments.epoch]
+
+    epoch_triplets = []
+    for epoch in epochs:
+        epoch_entries = read_manifest(manifest, epoch)
+        epoch_triplets.append((
+            epoch,
+            select_checkpoints(
+                epoch_entries, arguments.checkpoints, arguments.all_checkpoints
+            ),
+        ))
+
+    entries = read_manifest(manifest, epochs[0])
     references = [entry for entry in entries if entry.role == "reference"]
     if not references:
-        raise ValueError("epoch-0 reference mesh is missing")
-    triplets = select_checkpoints(
-        entries, arguments.checkpoints, arguments.all_checkpoints
-    )
+        raise ValueError(f"epoch {epochs[0]} reference mesh is missing")
+    triplets = epoch_triplets[0][1]
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     apply_paper_style()
-    save_reference(
-        arguments.run_dir, arguments.output_dir, references[0],
-        arguments.experiment_label,
-    )
-    save_evolution(
-        arguments.run_dir, arguments.output_dir, triplets, 0,
-        arguments.experiment_label,
-    )
-    save_evolution(
-        arguments.run_dir, arguments.output_dir, triplets, 1,
-        arguments.experiment_label,
-    )
-    save_evolution(
-        arguments.run_dir, arguments.output_dir, triplets, 2,
-        arguments.experiment_label,
-    )
-    save_triplet_pages(
-        arguments.run_dir, arguments.output_dir, triplets,
-        arguments.experiment_label, arguments.page_columns,
-    )
+    if len(epoch_triplets) == 1:
+        save_reference(
+            arguments.run_dir, arguments.output_dir, references[0],
+            arguments.experiment_label,
+        )
+        save_evolution(
+            arguments.run_dir, arguments.output_dir, triplets, 0,
+            arguments.experiment_label,
+        )
+        save_evolution(
+            arguments.run_dir, arguments.output_dir, triplets, 1,
+            arguments.experiment_label,
+        )
+        save_evolution(
+            arguments.run_dir, arguments.output_dir, triplets, 2,
+            arguments.experiment_label,
+        )
+        save_triplet_pages(
+            arguments.run_dir, arguments.output_dir, triplets,
+            arguments.experiment_label, arguments.page_columns,
+        )
+    else:
+        save_multi_epoch_triplet_pages(
+            arguments.run_dir, arguments.output_dir, epoch_triplets,
+            arguments.experiment_label, arguments.page_columns,
+        )
     if arguments.experiment_label == "E2":
         hybrid = [entry for entry in read_manifest(manifest) if entry.role == "hybrid_regions"]
         if hybrid:

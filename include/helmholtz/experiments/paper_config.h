@@ -329,6 +329,15 @@ struct ReferenceEpochPaperConfig {
     double C_rel_usr = 1.0;
     double theta_H = 0.5;
     double theta_c = 0.5;
+    // Corrector patch solver policy is part of the reference-epoch run
+    // identity.  DirectSchur with identical-support reuse is intended for
+    // standard PALOD once reference patches become large; moving PALOD keeps
+    // the direct saddle default unless a pilot demonstrates a benefit.
+    HelmholtzPatchSolverKind patch_solver_kind =
+        HelmholtzPatchSolverKind::DirectSaddle;
+    int patch_symbolic_cache_slots = 1;
+    bool patch_reuse_identical_factorization = false;
+    int maximum_patch_threads = 0;
     double q_dual = 0.5;
     std::size_t m_dual = 3;
     double tau_ep = 0.5;

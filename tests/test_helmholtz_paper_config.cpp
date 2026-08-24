@@ -831,6 +831,17 @@ void verify_reference_epoch_v6_S_contract() {
     require(canonical_config_hash(changed) != canonical_config_hash(config),
             "reference-epoch v6 identity ignores the hybrid physical radius");
     changed = config;
+    changed.patch_solver_kind =
+        lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur;
+    changed.patch_reuse_identical_factorization = true;
+    changed.patch_symbolic_cache_slots = 4;
+    changed.maximum_patch_threads = 8;
+    require(canonical_config_hash(changed) != canonical_config_hash(config)
+                && parse_reference_epoch_paper_config(canonical_json(changed))
+                    .patch_solver_kind
+                    == lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur,
+            "reference-epoch v6 identity ignores the patch solver policy");
+    changed = config;
     changed.minimum_H_steps_per_epoch = 1;
     require_invalid([&] { (void)canonical_json(changed); },
                     "reference-epoch v6 accepted an epoch cooldown");
