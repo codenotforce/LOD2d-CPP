@@ -1,0 +1,11 @@
+{
+  "schema_version": 6,
+  "scope": "E0-localized-smooth-R1-k16",
+  "claim": "implementation-study",
+  "status": "passed",
+  "theta_loc_usr": 2.6311141730106273,
+  "C_rel_usr": 1.4706194473212615,
+  "safety_factor": 1.25,
+  "observed_relative_reference_energy": 1.2050880354094691,
+  "notes": ["Frozen once for later experiments; not a rigorous theorem constant."]
+}

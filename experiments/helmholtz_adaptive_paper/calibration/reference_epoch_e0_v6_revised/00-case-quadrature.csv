@@ -1,0 +1,2 @@
+schema_version,case,kappa,low_gaussian_order,high_gaussian_order,relative_load_change,relative_exact_energy_change,status
+6,R1,16,16,24,4.6248675945975786e-15,6.3295901960239933e-16,passed

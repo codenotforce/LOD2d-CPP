@@ -1,0 +1,2 @@
+schema_version,eta_H,local_square_sum_relative_error,nodal_to_element_allocation_relative_error,max_constraint_residual,max_riesz_residual,max_energy_identity_error,skipped_zero_kernel_patches,status
+6,0.071029556535520372,0,8.6736173798840355e-19,2.2876660131505176e-18,2.9766101279956654e-17,2.1684043449710089e-19,0,passed

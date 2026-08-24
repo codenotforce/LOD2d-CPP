@@ -1,0 +1,12 @@
+{
+  "schema_version": 6,
+  "claim": "implementation-study",
+  "generator": "bench_helmholtz_reference_epoch_e0",
+  "code_commit": "042cdef892ba89027aa1043acedb21d4d203c6e9",
+  "build_sha256": "sha256:9cae113b7172bf52e145ddccd5c01180897062432c28fadcae9a27a255278ea9",
+  "manuscript_sha256": "sha256:71f59581ea3a5e4cd65659055915715b9c86c582793db7154a5f0b3b31843ca8",
+  "generated_at": "2026-08-24T15:07:20+08:00",
+  "compiler": "11.4.0",
+  "hardware_threads": 16,
+  "openmp_max_threads": 8
+}
