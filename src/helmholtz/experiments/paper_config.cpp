@@ -1368,7 +1368,7 @@ void validate_practical_paper_config(const PracticalPaperConfig &config) {
         config.plateau_diagnostic.minimum_geometric_mean_ratio};
     if (std::any_of(positive.begin(), positive.end(), [](const double value) {
             return !std::isfinite(value) || !(value > 0.0);
-        }) || config.theta_H != 0.5 || config.rho_star > 1.0
+        }) || config.theta_H > 1.0 || config.rho_star > 1.0
         || config.plateau_diagnostic.minimum_geometric_mean_ratio > 1.0
         || !std::isfinite(
             config.plateau_diagnostic.maximum_relative_oscillation)

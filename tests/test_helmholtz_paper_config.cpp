@@ -547,6 +547,17 @@ void verify_practical_v4_contract() {
     require_invalid(
         [&] { validate_practical_paper_config(unsupported); },
         "practical v4 accepted a wave number outside the frozen experiment set");
+    PracticalPaperConfig lower_marking = original;
+    lower_marking.theta_H = 0.3;
+    validate_practical_paper_config(lower_marking);
+    require(canonical_config_hash(lower_marking)
+                != canonical_config_hash(original),
+            "practical v4 identity ignores a changed Dörfler parameter");
+    PracticalPaperConfig invalid_marking = original;
+    invalid_marking.theta_H = 1.01;
+    require_invalid(
+        [&] { validate_practical_paper_config(invalid_marking); },
+        "practical v4 accepted theta_H above one");
 
     const auto driver = make_practical_driver_config(original);
     require(driver.initial_coarse_level == original.initial_coarse_level &&
