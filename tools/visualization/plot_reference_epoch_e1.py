@@ -346,21 +346,23 @@ def main() -> None:
         if arguments.fixed_lod is not None:
             runs.insert(2, load_run(arguments.fixed_lod, r"Fixed LOD ($\ell=3$)"))
     apply_paper_style()
-    figure, axes = plt.subplots(2, 2, figsize=(8.2, 6.4), constrained_layout=True)
+    panel_count = 2 if arguments.experiment == "E1" else 3
+    figure, axes = plt.subplots(
+        1, panel_count,
+        figsize=((8.2, 3.35) if panel_count == 2 else (11.2, 3.35)),
+        constrained_layout=True,
+    )
     panels = [
-        (axes[0, 0], "dofs", "exact", "DoF", "Relative exact energy error"),
-        (axes[0, 1], "seconds", "exact", "Cumulative wall time [s]", "Relative exact energy error"),
-        (axes[1, 0], "dofs", "reference", "DoF", "Relative reference energy error"),
-        (axes[1, 1], "seconds", "reference", "Cumulative wall time [s]", "Relative reference energy error"),
+        (axes[0], "dofs", "exact", "DoF", "Relative exact energy error"),
+        (axes[1], "dofs", "reference", "DoF", "Relative reference energy error"),
     ]
     for ax, x_field, y_field, xlabel, ylabel in panels:
         _plot_panel(ax, runs, x_field, y_field)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
     if arguments.experiment == "E2":
-        axes[1, 1].clear()
-        plot_hybrid_saved_work(axes[1, 1], runs)
-    axes[0, 0].legend(loc="best", fontsize=7.0, framealpha=0.82, handlelength=2.2)
+        plot_hybrid_saved_work(axes[2], runs)
+    axes[0].legend(loc="best", fontsize=6.4, framealpha=0.78, handlelength=2.0)
     figure.suptitle(
         r"E1 (R1, $\kappa=16$; PALOD starts at $H$ level 4)"
         if arguments.experiment == "E1"

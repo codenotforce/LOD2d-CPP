@@ -330,6 +330,8 @@ LocalizationSpectrum largest_generalized_eigenvalue_dense(
         0.0, std::real(result.dominant_vector.dot(
             denominator * result.dominant_vector))));
     if (energy_norm > 0.0) result.dominant_vector /= energy_norm;
+    result.dominant_subspace.resize(dimension, 1);
+    result.dominant_subspace.col(0) = result.dominant_vector;
 
     if (!result.used_dense_fallback
         && dimension <= config.dense_cross_check_max_dimension) {

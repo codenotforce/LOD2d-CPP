@@ -98,6 +98,36 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=200
     MODE_TIMEOUT_SECONDS=36900
     ;;
+  e1-revised-unified-factor)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-theta03-step6-factor-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=96
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=11700
+    ;;
+  e1-revised-unified-pilot)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-theta03-step12-pilot-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=192
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=29700
+    ;;
+  e1-revised-unified-main)
+    # Shortest comparisons run first. PALOD is deliberately last so the
+    # long high-memory trajectory begins only after all inexpensive methods
+    # have produced valid artifacts.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H4-level18-theta03-step60-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H4-level18-step14-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H4-h18-ell3-theta03-step18-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-theta03-step20-main-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=320
+    MODE_MIN_FREE_DISK_GIB=200
+    MODE_TIMEOUT_SECONDS=58500
+    ;;
   e2-revised-factor)
     DEFAULT_CONFIGS=(
       experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-thetaH01-step5-refresh-factor-v6.json

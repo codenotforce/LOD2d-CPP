@@ -185,6 +185,16 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.active_correctors = observation.active_correctors;
                 record.rebuilt_correctors = observation.rebuilt_correctors;
                 record.reused_correctors = observation.reused_correctors;
+                record.corrector_cache_oversized_misses =
+                    observation.corrector_cache_oversized_misses;
+                record.corrector_cache_budget_rejections =
+                    observation.corrector_cache_budget_rejections;
+                record.corrector_cache_entries =
+                    observation.corrector_cache_entries;
+                record.corrector_cache_current_bytes =
+                    observation.corrector_cache_current_bytes;
+                record.corrector_cache_peak_bytes =
+                    observation.corrector_cache_peak_bytes;
                 record.skipped_correctors = observation.skipped_correctors;
                 record.skipped_corrector_work_units =
                     observation.skipped_corrector_work_units;
@@ -243,6 +253,8 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     observation.gram_factor_cache_hits;
                 record.gram_factor_cache_misses =
                     observation.gram_factor_cache_misses;
+                record.gram_structure_parallel_threads =
+                    observation.gram_structure_parallel_threads;
                 record.gram_parallel_threads = observation.gram_parallel_threads;
                 record.localization_iterations =
                     observation.localization_iterations;

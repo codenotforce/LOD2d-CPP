@@ -113,6 +113,25 @@ int main() {
                                      - certificate.theta_loc)
                             <= 1e-7 * std::max(1.0, certificate.theta_loc),
                         "matrix-free block eigensolve disagrees with dense spectrum");
+                require(block_certificate.spectrum.dominant_subspace.rows()
+                                == static_cast<int>(basis_nodes.size())
+                            && block_certificate.spectrum.dominant_subspace.cols()
+                                == std::min<int>(4, basis_nodes.size()),
+                        "matrix-free block eigensolve did not retain its Ritz subspace");
+                LocalizationEigenConfig restarted_eigen = block_eigen;
+                restarted_eigen.warm_start_block =
+                    block_certificate.spectrum.dominant_subspace;
+                const ReferenceCorrectorCertificate restarted_certificate =
+                    build_reference_corrector_certificate(
+                        hierarchy, localized.operators(),
+                        localized.corrected_test_basis(), basis_nodes,
+                        KernelRieszSolver::SaddlePoint, restarted_eigen);
+                require(restarted_certificate.spectrum.used_warm_start
+                            && std::abs(restarted_certificate.theta_loc
+                                           - block_certificate.theta_loc)
+                                <= 1e-7 * std::max(
+                                    1.0, block_certificate.theta_loc),
+                        "Ritz-subspace warm start changed the localization spectrum");
             }
             if (ell == 1) {
                 ComplexVector probe(basis_nodes.size());
@@ -128,9 +147,14 @@ int main() {
                 require(parallel.diagnostics().parallel_threads >= 1
                             && parallel.diagnostics().parallel_threads <= 4,
                         "prepared Gram diagnostics report an invalid OpenMP team");
+                require(parallel.diagnostics().structure_parallel_threads >= 1
+                            && parallel.diagnostics().structure_parallel_threads <= 4,
+                        "Gram structure diagnostics report an invalid OpenMP team");
 #else
                 require(parallel.diagnostics().parallel_threads == 1,
                         "prepared Gram diagnostics report threads without OpenMP");
+                require(parallel.diagnostics().structure_parallel_threads == 1,
+                        "Gram structure diagnostics report threads without OpenMP");
 #endif
                 ReferenceDefectGramFactorCache factor_cache(1024);
                 ReferenceDefectGramOperator cached_first(

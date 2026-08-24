@@ -153,6 +153,40 @@ void verify_key_changes_fail_closed() {
         changed_kappa, build_model(hierarchy, model_config(2, 5.0), nullptr));
 }
 
+void verify_oversized_guard_is_observable() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 2, 5);
+    HelmholtzCorrectorPatchCache cache(8, 1);
+    const HelmholtzLodModel model = build_model(
+        hierarchy, model_config(1), &cache);
+    const int patches = static_cast<int>(hierarchy.coarse_mesh().elems.size());
+    require(model.correctors().diagnostics.patch_cache_oversized_misses
+                == patches
+            && model.correctors().diagnostics.patch_cache_misses == patches,
+            "oversized corrector cache misses were not reported separately");
+    const auto stats = cache.statistics();
+    require(stats.oversized_misses == static_cast<std::size_t>(patches)
+                && stats.entries == 0,
+            "oversized corrector cache guard stored an ineligible patch");
+}
+
+void verify_memory_budget_is_observable() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 2, 5);
+    HelmholtzCorrectorPatchCache cache(8, 4096, 1);
+    const HelmholtzLodModel model = build_model(
+        hierarchy, model_config(1), &cache);
+    const int patches = static_cast<int>(hierarchy.coarse_mesh().elems.size());
+    require(model.correctors().diagnostics.patch_cache_budget_rejections
+                == patches
+            && model.correctors().diagnostics.patch_cache_oversized_misses == 0,
+            "corrector cache byte-budget rejections were not distinguished");
+    const auto stats = cache.statistics();
+    require(stats.budget_rejections == static_cast<std::size_t>(patches)
+                && stats.current_bytes == 0 && stats.entries == 0,
+            "corrector cache exceeded a one-byte memory budget");
+}
+
 } // namespace
 
 int main() {
@@ -160,6 +194,8 @@ int main() {
         verify_exact_hits_and_full_rebuild_equivalence();
         verify_local_refinement_matches_full_rebuild();
         verify_key_changes_fail_closed();
+        verify_oversized_guard_is_observable();
+        verify_memory_budget_is_observable();
         std::cout << "Helmholtz corrector patch cache tests passed\n";
         return 0;
     } catch (const std::exception &error) {

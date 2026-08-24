@@ -31,6 +31,8 @@ struct PatchResult {
     HelmholtzPatchSolveDiagnostics diagnostics;
     bool touches_physical_boundary = false;
     bool cache_hit = false;
+    bool cache_oversized = false;
+    bool cache_budget_rejected = false;
     double assembly_seconds = 0.0;
     double solve_seconds = 0.0;
     double pack_seconds = 0.0;
@@ -88,6 +90,10 @@ void accumulate_diagnostics(
         ++diagnostics.patch_cache_hits;
     } else {
         ++diagnostics.patch_cache_misses;
+        if (patch.cache_oversized)
+            ++diagnostics.patch_cache_oversized_misses;
+        if (patch.cache_budget_rejected)
+            ++diagnostics.patch_cache_budget_rejections;
         diagnostics.gmres_right_hand_sides += local.gmres_right_hand_sides;
         diagnostics.gmres_iterations += local.gmres_total_iterations;
         diagnostics.gmres_max_iterations = std::max(
@@ -292,16 +298,55 @@ struct HelmholtzCorrectorPatchCache::Impl {
         HelmholtzPatchSystem system;
         HelmholtzPatchSolverConfig solver_config;
         HelmholtzPatchSolveResult solved;
+        std::size_t bytes = 0;
     };
 
     using EntryList = std::list<Entry>;
     using EntryIterator = EntryList::iterator;
 
-    Impl(const std::size_t maximum, const std::size_t maximum_dofs)
-        : maximum_entries(maximum), maximum_patch_dofs(maximum_dofs) {
-        if (maximum_entries == 0 || maximum_patch_dofs == 0)
+    Impl(
+        const std::size_t maximum,
+        const std::size_t maximum_dofs,
+        const std::size_t maximum_memory)
+        : maximum_entries(maximum), maximum_patch_dofs(maximum_dofs),
+          maximum_bytes(maximum_memory) {
+        if (maximum_entries == 0 || maximum_patch_dofs == 0
+            || maximum_bytes == 0)
             throw std::invalid_argument(
                 "Helmholtz corrector patch cache bounds must be positive");
+    }
+
+    template <class Scalar, int Options, class Index>
+    static std::size_t sparse_bytes(
+        const Eigen::SparseMatrix<Scalar, Options, Index> &matrix) {
+        return sizeof(Scalar) * static_cast<std::size_t>(matrix.nonZeros())
+            + sizeof(Index) * static_cast<std::size_t>(matrix.nonZeros())
+            + sizeof(Index) * static_cast<std::size_t>(matrix.outerSize() + 1);
+    }
+
+    template <class Matrix>
+    static std::size_t dense_bytes(const Matrix &matrix) {
+        return sizeof(typename Matrix::Scalar)
+            * static_cast<std::size_t>(matrix.size());
+    }
+
+    static std::size_t entry_bytes(
+        const HelmholtzPatchSystem &system,
+        const HelmholtzPatchSolveResult &solved) {
+        std::size_t bytes = sizeof(Entry)
+            + sizeof(int) * (system.local_vertices.capacity()
+                             + system.patch_elements.capacity())
+            + sparse_bytes(system.stiffness)
+            + sparse_bytes(system.mass)
+            + sparse_bytes(system.robin)
+            + sparse_bytes(system.helmholtz)
+            + dense_bytes(system.constraints)
+            + dense_bytes(system.rhs)
+            + dense_bytes(solved.corrector)
+            + dense_bytes(solved.multipliers);
+        for (const auto &prolongation : system.geometric_prolongations)
+            bytes += sparse_bytes(prolongation);
+        return bytes;
     }
 
     bool lookup(
@@ -312,6 +357,7 @@ struct HelmholtzCorrectorPatchCache::Impl {
             > maximum_patch_dofs) {
             std::lock_guard<std::mutex> lock(mutex);
             ++stats.misses;
+            ++stats.oversized_misses;
             return false;
         }
         const std::uint64_t hash = patch_cache_hash(system, config);
@@ -331,16 +377,23 @@ struct HelmholtzCorrectorPatchCache::Impl {
         return false;
     }
 
-    void store(
+    bool store(
         HelmholtzPatchSystem system,
         const HelmholtzPatchSolverConfig &config,
         HelmholtzPatchSolveResult solved) {
         if (static_cast<std::size_t>(system.helmholtz.rows())
             > maximum_patch_dofs)
-            return;
+            return false;
+        const std::size_t bytes = entry_bytes(system, solved);
         const std::uint64_t hash = patch_cache_hash(system, config);
         std::lock_guard<std::mutex> lock(mutex);
-        if (entries.size() >= maximum_entries) {
+        if (bytes > maximum_bytes) {
+            ++stats.budget_rejections;
+            return false;
+        }
+        while (!entries.empty()
+               && (entries.size() >= maximum_entries
+                   || bytes > maximum_bytes - stats.current_bytes)) {
             const EntryIterator oldest = entries.begin();
             const auto range = index.equal_range(oldest->hash);
             for (auto it = range.first; it != range.second; ++it) {
@@ -349,17 +402,26 @@ struct HelmholtzCorrectorPatchCache::Impl {
                     break;
                 }
             }
+            stats.current_bytes -= oldest->bytes;
             entries.erase(oldest);
             ++stats.evictions;
         }
+        if (bytes > maximum_bytes - stats.current_bytes) {
+            ++stats.budget_rejections;
+            return false;
+        }
         entries.push_back(Entry{
-            hash, std::move(system), config, std::move(solved)});
+            hash, std::move(system), config, std::move(solved), bytes});
         index.emplace(hash, std::prev(entries.end()));
         ++stats.stores;
+        stats.current_bytes += bytes;
+        stats.peak_bytes = std::max(stats.peak_bytes, stats.current_bytes);
+        return true;
     }
 
     const std::size_t maximum_entries;
     const std::size_t maximum_patch_dofs;
+    const std::size_t maximum_bytes;
     mutable std::mutex mutex;
     EntryList entries;
     std::unordered_multimap<std::uint64_t, EntryIterator> index;
@@ -368,8 +430,10 @@ struct HelmholtzCorrectorPatchCache::Impl {
 
 HelmholtzCorrectorPatchCache::HelmholtzCorrectorPatchCache(
     const std::size_t maximum_entries,
-    const std::size_t maximum_patch_dofs)
-    : impl_(std::make_unique<Impl>(maximum_entries, maximum_patch_dofs)) {}
+    const std::size_t maximum_patch_dofs,
+    const std::size_t maximum_bytes)
+    : impl_(std::make_unique<Impl>(
+          maximum_entries, maximum_patch_dofs, maximum_bytes)) {}
 
 HelmholtzCorrectorPatchCache::~HelmholtzCorrectorPatchCache() = default;
 HelmholtzCorrectorPatchCache::HelmholtzCorrectorPatchCache(
@@ -382,6 +446,7 @@ void HelmholtzCorrectorPatchCache::clear() {
     impl_->entries.clear();
     impl_->index.clear();
     impl_->stats.entries = 0;
+    impl_->stats.current_bytes = 0;
 }
 
 HelmholtzCorrectorPatchCache::Statistics
@@ -466,22 +531,28 @@ HelmholtzCorrectorResult build_helmholtz_correctors(
             }
             const bool cache_hit = cache != nullptr
                 && cache->impl_->lookup(system, effective_solver, solved);
+            const bool cache_oversized = cache != nullptr
+                && static_cast<std::size_t>(system.helmholtz.rows())
+                    > cache->impl_->maximum_patch_dofs;
             if (!cache_hit) {
                 solved = solve_helmholtz_patch(system, effective_solver);
-                if (cache != nullptr)
-                    cache->impl_->store(system, effective_solver, solved);
             }
             const double solve_seconds = std::chrono::duration<double>(
                 std::chrono::steady_clock::now() - solve_begin).count();
             const auto pack_begin = std::chrono::steady_clock::now();
             PatchResult packed = pack_patch_solution(system, solved, cache_hit);
-            packed.pack_seconds = std::chrono::duration<double>(
-                std::chrono::steady_clock::now() - pack_begin).count();
+            packed.cache_oversized = cache_oversized;
             packed.assembly_seconds = assembly_seconds;
             packed.solve_seconds = solve_seconds;
             packed.patch_dofs = system.helmholtz.rows();
             packed.patch_constraints = system.constraints.rows();
             packed.patch_rhs = system.rhs.cols();
+            if (!cache_hit && cache != nullptr && !cache_oversized) {
+                packed.cache_budget_rejected = !cache->impl_->store(
+                    std::move(system), effective_solver, std::move(solved));
+            }
+            packed.pack_seconds = std::chrono::duration<double>(
+                std::chrono::steady_clock::now() - pack_begin).count();
             patch_results[target] = std::move(packed);
         } catch (...) {
             failed.store(true, std::memory_order_relaxed);

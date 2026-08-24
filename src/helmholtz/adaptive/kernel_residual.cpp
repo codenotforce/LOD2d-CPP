@@ -1786,67 +1786,6 @@ ReferenceDefectGramOperator::ReferenceDefectGramOperator(
     data.solver = solver;
     data.defect_rhs = defect_rhs;
     data.defect_by_row = defect_rhs;
-
-    const auto structure_begin = std::chrono::steady_clock::now();
-    const KernelPatchPolicy policy = kernel_riesz_patch_policy(
-        hierarchy, KernelRieszSpace::ReferenceDefect);
-    const std::vector<KernelRieszPatch> kernel_patches = build_kernel_riesz_patches(
-        hierarchy, KernelRieszSpace::ReferenceDefect, policy);
-    const Eigen::SparseMatrix<double> global_energy =
-        energy_matrix(reference_operators);
-    data.patches.reserve(kernel_patches.size());
-    for (const KernelRieszPatch &patch : kernel_patches) {
-        Implementation::PreparedPatch prepared;
-        prepared.discrete_dofs = patch.discrete_dofs;
-        prepared.energy = restrict_sparse_matrix(global_energy, patch.discrete_dofs);
-        prepared.constraints = patch.constraints;
-        prepared.unknowns = prepared.energy.rows();
-        prepared.constraint_count = prepared.constraints.rows();
-        FingerprintBuilder fingerprint;
-        add_integral_vector_fingerprint(
-            fingerprint, prepared.discrete_dofs);
-        add_sparse_fingerprint(fingerprint, prepared.energy);
-        fingerprint.add_i64(prepared.constraints.rows());
-        fingerprint.add_i64(prepared.constraints.cols());
-        for (int row = 0; row < prepared.constraints.rows(); ++row)
-            for (int column = 0; column < prepared.constraints.cols(); ++column)
-                fingerprint.add_double(prepared.constraints(row, column));
-        prepared.factor_cache_key = fingerprint.finish();
-        for (int global_row : patch.discrete_dofs) {
-            for (Implementation::RowMajorComplexSparse::InnerIterator it(
-                     data.defect_by_row, global_row); it; ++it) {
-                prepared.active_columns.push_back(it.col());
-            }
-        }
-        std::sort(prepared.active_columns.begin(), prepared.active_columns.end());
-        prepared.active_columns.erase(
-            std::unique(prepared.active_columns.begin(), prepared.active_columns.end()),
-            prepared.active_columns.end());
-        std::vector<ComplexTriplet> restriction_triplets;
-        for (int local_row = 0;
-             local_row < static_cast<int>(patch.discrete_dofs.size()); ++local_row) {
-            const int global_row = patch.discrete_dofs[local_row];
-            for (Implementation::RowMajorComplexSparse::InnerIterator it(
-                     data.defect_by_row, global_row); it; ++it) {
-                const auto found = std::lower_bound(
-                    prepared.active_columns.begin(),
-                    prepared.active_columns.end(), it.col());
-                restriction_triplets.emplace_back(
-                    local_row,
-                    static_cast<int>(found - prepared.active_columns.begin()),
-                    it.value());
-            }
-        }
-        prepared.defect_restriction.resize(
-            patch.discrete_dofs.size(), prepared.active_columns.size());
-        prepared.defect_restriction.setFromTriplets(
-            restriction_triplets.begin(), restriction_triplets.end());
-        prepared.defect_restriction.makeCompressed();
-        data.patches.push_back(std::move(prepared));
-    }
-    data.diagnostics.prepare_structure_seconds = std::chrono::duration<double>(
-        std::chrono::steady_clock::now() - structure_begin).count();
-    data.diagnostics.patch_count = data.patches.size();
 #ifdef _OPENMP
     data.requested_parallel_threads = std::max(
         1, maximum_parallel_patch_solves > 0
@@ -1855,6 +1794,99 @@ ReferenceDefectGramOperator::ReferenceDefectGramOperator(
 #else
     (void)maximum_parallel_patch_solves;
 #endif
+
+    const auto structure_begin = std::chrono::steady_clock::now();
+    const KernelPatchPolicy policy = kernel_riesz_patch_policy(
+        hierarchy, KernelRieszSpace::ReferenceDefect);
+    const std::vector<KernelRieszPatch> kernel_patches = build_kernel_riesz_patches(
+        hierarchy, KernelRieszSpace::ReferenceDefect, policy);
+    const Eigen::SparseMatrix<double> global_energy =
+        energy_matrix(reference_operators);
+    data.patches.resize(kernel_patches.size());
+    std::vector<std::string> structure_errors(kernel_patches.size());
+#ifdef _OPENMP
+#pragma omp parallel num_threads(data.requested_parallel_threads)
+    {
+#pragma omp single
+        data.diagnostics.structure_parallel_threads = omp_get_num_threads();
+#pragma omp for schedule(dynamic, 4)
+#endif
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(kernel_patches.size()); ++patch_index) {
+        try {
+            const KernelRieszPatch &patch = kernel_patches[patch_index];
+            Implementation::PreparedPatch prepared;
+            prepared.discrete_dofs = patch.discrete_dofs;
+            prepared.energy = restrict_sparse_matrix(
+                global_energy, patch.discrete_dofs);
+            prepared.constraints = patch.constraints;
+            prepared.unknowns = prepared.energy.rows();
+            prepared.constraint_count = prepared.constraints.rows();
+            FingerprintBuilder fingerprint;
+            add_integral_vector_fingerprint(
+                fingerprint, prepared.discrete_dofs);
+            add_sparse_fingerprint(fingerprint, prepared.energy);
+            fingerprint.add_i64(prepared.constraints.rows());
+            fingerprint.add_i64(prepared.constraints.cols());
+            for (int row = 0; row < prepared.constraints.rows(); ++row)
+                for (int column = 0; column < prepared.constraints.cols(); ++column)
+                    fingerprint.add_double(prepared.constraints(row, column));
+            prepared.factor_cache_key = fingerprint.finish();
+            for (int global_row : patch.discrete_dofs) {
+                for (Implementation::RowMajorComplexSparse::InnerIterator it(
+                         data.defect_by_row, global_row); it; ++it) {
+                    prepared.active_columns.push_back(it.col());
+                }
+            }
+            std::sort(
+                prepared.active_columns.begin(), prepared.active_columns.end());
+            prepared.active_columns.erase(
+                std::unique(
+                    prepared.active_columns.begin(),
+                    prepared.active_columns.end()),
+                prepared.active_columns.end());
+            std::vector<ComplexTriplet> restriction_triplets;
+            for (int local_row = 0;
+                 local_row < static_cast<int>(patch.discrete_dofs.size());
+                 ++local_row) {
+                const int global_row = patch.discrete_dofs[local_row];
+                for (Implementation::RowMajorComplexSparse::InnerIterator it(
+                         data.defect_by_row, global_row); it; ++it) {
+                    const auto found = std::lower_bound(
+                        prepared.active_columns.begin(),
+                        prepared.active_columns.end(), it.col());
+                    restriction_triplets.emplace_back(
+                        local_row,
+                        static_cast<int>(
+                            found - prepared.active_columns.begin()),
+                        it.value());
+                }
+            }
+            prepared.defect_restriction.resize(
+                patch.discrete_dofs.size(), prepared.active_columns.size());
+            prepared.defect_restriction.setFromTriplets(
+                restriction_triplets.begin(), restriction_triplets.end());
+            prepared.defect_restriction.makeCompressed();
+            data.patches[patch_index] = std::move(prepared);
+        } catch (const std::exception &error) {
+            structure_errors[patch_index] = error.what();
+        }
+    }
+#ifdef _OPENMP
+    }
+#endif
+    for (std::size_t patch_index = 0;
+         patch_index < structure_errors.size(); ++patch_index) {
+        if (!structure_errors[patch_index].empty()) {
+            throw std::runtime_error(
+                "reference defect Gram structure "
+                + std::to_string(patch_index) + " failed: "
+                + structure_errors[patch_index]);
+        }
+    }
+    data.diagnostics.prepare_structure_seconds = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - structure_begin).count();
+    data.diagnostics.patch_count = data.patches.size();
     data.diagnostics.parallel_threads = 1;
 
     if (solver != KernelRieszSolver::SaddlePoint) return;

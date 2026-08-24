@@ -64,6 +64,11 @@ struct ReferenceEpochCorrectorObservation {
     std::size_t active_correctors = 0;
     std::size_t rebuilt_correctors = 0;
     std::size_t reused_correctors = 0;
+    std::size_t corrector_cache_oversized_misses = 0;
+    std::size_t corrector_cache_budget_rejections = 0;
+    std::size_t corrector_cache_entries = 0;
+    std::size_t corrector_cache_current_bytes = 0;
+    std::size_t corrector_cache_peak_bytes = 0;
     std::size_t skipped_correctors = 0;
     std::size_t skipped_corrector_work_units = 0;
     int corrector_parallel_threads = 1;
@@ -102,6 +107,7 @@ struct ReferenceEpochCorrectorObservation {
     std::size_t gram_patch_factorizations = 0;
     std::size_t gram_factor_cache_hits = 0;
     std::size_t gram_factor_cache_misses = 0;
+    int gram_structure_parallel_threads = 1;
     int gram_parallel_threads = 1;
     int localization_iterations = 0;
     double localization_relative_residual = 0.0;
@@ -309,6 +315,11 @@ struct ReferenceEpochDriverRecord {
     std::size_t active_correctors = 0;
     std::size_t rebuilt_correctors = 0;
     std::size_t reused_correctors = 0;
+    std::size_t corrector_cache_oversized_misses = 0;
+    std::size_t corrector_cache_budget_rejections = 0;
+    std::size_t corrector_cache_entries = 0;
+    std::size_t corrector_cache_current_bytes = 0;
+    std::size_t corrector_cache_peak_bytes = 0;
     std::size_t skipped_correctors = 0;
     std::size_t skipped_corrector_work_units = 0;
     int corrector_parallel_threads = 1;
@@ -346,6 +357,7 @@ struct ReferenceEpochDriverRecord {
     std::size_t gram_patch_factorizations = 0;
     std::size_t gram_factor_cache_hits = 0;
     std::size_t gram_factor_cache_misses = 0;
+    int gram_structure_parallel_threads = 1;
     int gram_parallel_threads = 1;
     int localization_iterations = 0;
     double localization_relative_residual = 0.0;

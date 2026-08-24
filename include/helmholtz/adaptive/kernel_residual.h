@@ -34,11 +34,16 @@ struct LocalizationEigenConfig {
     int dense_fallback_max_dimension = 1024;
     int sparse_generalized_min_dimension = 1025;
     ComplexVector warm_start;
+    // Energy-orthonormal Ritz vectors from the preceding H-step.  Supplying
+    // the full block is substantially more robust than retaining only the
+    // dominant vector when the leading eigenvalues are clustered.
+    ComplexMatrix warm_start_block;
 };
 
 struct LocalizationSpectrum {
     double lambda_max = 0.0;
     ComplexVector dominant_vector;
+    ComplexMatrix dominant_subspace;
     int iterations = 0;
     double relative_residual = 0.0;
     bool converged = false;
@@ -300,6 +305,7 @@ struct ReferenceDefectGramOperatorDiagnostics {
     std::size_t factor_cache_misses = 0;
     std::size_t action_calls = 0;
     int parallel_threads = 1;
+    int structure_parallel_threads = 1;
     double prepare_structure_seconds = 0.0;
     double prepare_factorization_seconds = 0.0;
     double action_rhs_seconds = 0.0;

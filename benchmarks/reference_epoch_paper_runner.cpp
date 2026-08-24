@@ -693,12 +693,15 @@ public:
         // dense path separately on its fixed small hierarchy.
         eigen.dense_fallback_max_dimension = 0;
         eigen.warm_start = localization_warm_start_;
+        eigen.warm_start_block = localization_warm_start_block_;
         const ReferenceCorrectorCertificate certificate =
             build_reference_corrector_certificate(
                 hierarchy_, model_->operators(), model_->corrected_test_basis(),
                 free_nodes(hierarchy_.coarse_mesh()),
                 KernelRieszSolver::SaddlePoint, eigen, &gram_factor_cache_);
         localization_warm_start_ = certificate.spectrum.dominant_vector;
+        localization_warm_start_block_ =
+            certificate.spectrum.dominant_subspace;
         ReferenceEpochCorrectorObservation result;
         result.theta_loc = certificate.theta_loc;
         // Compare the frozen implementation-study threshold against the
@@ -712,6 +715,15 @@ public:
             corrector_diagnostics.patch_cache_misses);
         result.reused_correctors = static_cast<std::size_t>(
             corrector_diagnostics.patch_cache_hits);
+        result.corrector_cache_oversized_misses = static_cast<std::size_t>(
+            corrector_diagnostics.patch_cache_oversized_misses);
+        result.corrector_cache_budget_rejections = static_cast<std::size_t>(
+            corrector_diagnostics.patch_cache_budget_rejections);
+        const HelmholtzCorrectorPatchCache::Statistics cache_statistics =
+            corrector_cache_.statistics();
+        result.corrector_cache_entries = cache_statistics.entries;
+        result.corrector_cache_current_bytes = cache_statistics.current_bytes;
+        result.corrector_cache_peak_bytes = cache_statistics.peak_bytes;
         if (result.active_correctors
             != result.rebuilt_correctors + result.reused_correctors) {
             throw std::runtime_error(
@@ -775,6 +787,8 @@ public:
             certificate.gram_operator.factor_cache_hits;
         result.gram_factor_cache_misses =
             certificate.gram_operator.factor_cache_misses;
+        result.gram_structure_parallel_threads =
+            certificate.gram_operator.structure_parallel_threads;
         result.gram_parallel_threads =
             certificate.gram_operator.parallel_threads;
         result.localization_iterations = certificate.spectrum.iterations;
@@ -1182,6 +1196,7 @@ public:
 
     void commit_coarse_refinement() override {
         ComplexVector prolonged_warm_start;
+        ComplexMatrix prolonged_warm_start_block;
         const std::vector<int> old_free = free_nodes(hierarchy_.coarse_mesh());
         const TriMesh proposed = hierarchy_.proposed_coarse_mesh();
         const std::vector<int> proposed_free = free_nodes(proposed);
@@ -1201,11 +1216,33 @@ public:
                 prolonged_warm_start(index) = proposed_nodal(proposed_free[index]);
             }
         }
+        if (localization_warm_start_block_.rows()
+                == static_cast<int>(old_free.size())
+            && localization_warm_start_block_.cols() > 0
+            && localization_warm_start_block_.allFinite()) {
+            const int columns = localization_warm_start_block_.cols();
+            ComplexMatrix old_nodal = ComplexMatrix::Zero(
+                hierarchy_.coarse_mesh().nodes.size(), columns);
+            for (int index = 0; index < static_cast<int>(old_free.size()); ++index)
+                old_nodal.row(old_free[index]) =
+                    localization_warm_start_block_.row(index);
+            const ComplexMatrix proposed_nodal =
+                hierarchy_.coarse_nodes_to_proposed_coarse().cast<Complex>()
+                * old_nodal;
+            prolonged_warm_start_block.resize(proposed_free.size(), columns);
+            for (int index = 0;
+                 index < static_cast<int>(proposed_free.size()); ++index) {
+                prolonged_warm_start_block.row(index) =
+                    proposed_nodal.row(proposed_free[index]);
+            }
+        }
         const ReferenceEpochRefinementResult committed =
             hierarchy_.commit_coarse_refinement();
         if (!committed.changed())
             throw std::runtime_error("coarse proposal was not committable");
         localization_warm_start_ = std::move(prolonged_warm_start);
+        localization_warm_start_block_ =
+            std::move(prolonged_warm_start_block);
         model_.reset();
         solution_.reset();
         regions_.reset();
@@ -1681,12 +1718,18 @@ private:
     ReferenceEpochPaperConfig config_;
     PaperCaseData data_;
     ReferenceEpochHierarchy hierarchy_;
-    HelmholtzCorrectorPatchCache corrector_cache_;
+    // E1 patches grow well beyond the library default 4096-DoF admission
+    // limit after the first refresh. Admit the observed patches, but bound
+    // retained assembled systems and solutions by an explicit two-GiB LRU
+    // budget; a count-only 64-entry pilot exhausted a 12-GiB WSL instance.
+    HelmholtzCorrectorPatchCache corrector_cache_{
+        256, 32768, std::size_t{2} * 1024 * 1024 * 1024};
     // Numeric constraints change on most patches after a coarse commit.
     // Keep only a small tail: a 512-entry pilot retained several GiB for
     // very few hits, while 32 bounds the optional cross-step memory cost.
     ReferenceDefectGramFactorCache gram_factor_cache_{32};
     ComplexVector localization_warm_start_;
+    ComplexMatrix localization_warm_start_block_;
     std::unique_ptr<HelmholtzLodModel> model_;
     std::optional<HelmholtzLodSolution> solution_;
     std::optional<ComplexVector> reference_solution_;
@@ -1738,6 +1781,9 @@ void write_iterations(
            "marked_c,"
            "marked_c_F,marked_c_R,candidate_cells_F,candidate_cells_R,"
            "active_correctors,rebuilt_correctors,reused_correctors,"
+           "corrector_cache_oversized_misses,corrector_cache_budget_rejections,"
+           "corrector_cache_entries,corrector_cache_current_bytes,"
+           "corrector_cache_peak_bytes,"
            "skipped_correctors,skipped_corrector_work_units,"
            "corrector_parallel_threads,corrector_patch_assembly_work,"
            "corrector_patch_solve_work,corrector_patch_pack_work,"
@@ -1752,7 +1798,8 @@ void write_iterations(
            "time_gram_prepare_structure,time_gram_prepare_factorization,"
            "time_gram_action_rhs,time_gram_action_patch_solve,time_gram_action_scatter,"
            "gram_action_calls,gram_patch_factorizations,gram_factor_cache_hits,"
-           "gram_factor_cache_misses,gram_parallel_threads,"
+           "gram_factor_cache_misses,gram_structure_parallel_threads,"
+           "gram_parallel_threads,"
            "localization_iterations,localization_relative_residual,"
            "localization_used_warm_start,time_lod_solve,"
            "time_reference_riesz,time_hybrid_coarse_marking,"
@@ -1834,6 +1881,11 @@ void write_iterations(
             << row.marked_c_r << ',' << row.candidate_cells_f << ','
             << row.candidate_cells_r << ',' << row.active_correctors << ','
             << row.rebuilt_correctors << ',' << row.reused_correctors << ','
+            << row.corrector_cache_oversized_misses << ','
+            << row.corrector_cache_budget_rejections << ','
+            << row.corrector_cache_entries << ','
+            << row.corrector_cache_current_bytes << ','
+            << row.corrector_cache_peak_bytes << ','
             << row.skipped_correctors << ','
             << row.skipped_corrector_work_units << ','
             << row.corrector_parallel_threads << ','
@@ -1866,6 +1918,7 @@ void write_iterations(
             << row.gram_action_calls << ',' << row.gram_patch_factorizations << ','
             << row.gram_factor_cache_hits << ','
             << row.gram_factor_cache_misses << ','
+            << row.gram_structure_parallel_threads << ','
             << row.gram_parallel_threads << ',' << row.localization_iterations << ','
             << number(row.localization_relative_residual) << ','
             << (row.localization_used_warm_start ? "true" : "false") << ','
@@ -1974,7 +2027,11 @@ void write_auxiliary_outputs(
                "delta_loc_hat,decision_detail,hybrid_ell_S,"
                "hybrid_minimum_physical_radius,hybrid_covered_physical_radius,"
                "hybrid_omega_S_elements,hybrid_omega_F_elements,"
-               "active,rebuilt,reused,skipped,skipped_work_units,"
+               "active,rebuilt,reused,corrector_cache_oversized_misses,"
+               "corrector_cache_budget_rejections,"
+               "corrector_cache_entries,corrector_cache_current_bytes,"
+               "corrector_cache_peak_bytes,"
+               "skipped,skipped_work_units,"
                "corrector_parallel_threads,corrector_patch_assembly_work,"
                "corrector_patch_solve_work,corrector_patch_pack_work,"
                "corrector_maximum_patch_dofs,corrector_maximum_patch_constraints,"
@@ -1989,7 +2046,7 @@ void write_auxiliary_outputs(
                "time_gram_action_patch_solve,time_gram_action_scatter,"
                "gram_action_calls,gram_patch_factorizations,"
                "gram_factor_cache_hits,gram_factor_cache_misses,"
-               "gram_parallel_threads,"
+               "gram_structure_parallel_threads,gram_parallel_threads,"
                "localization_iterations,localization_relative_residual,"
                "localization_used_warm_start\n";
         for (const auto &row : result.journal) {
@@ -2008,6 +2065,11 @@ void write_auxiliary_outputs(
                     << ',' << row.active_correctors
                     << ',' << row.rebuilt_correctors
                     << ',' << row.reused_correctors << ','
+                    << row.corrector_cache_oversized_misses << ','
+                    << row.corrector_cache_budget_rejections << ','
+                    << row.corrector_cache_entries << ','
+                    << row.corrector_cache_current_bytes << ','
+                    << row.corrector_cache_peak_bytes << ','
                     << row.skipped_correctors << ',' << row.skipped_corrector_work_units
                     << ',' << row.corrector_parallel_threads
                     << ',' << number(row.corrector_patch_assembly_work_seconds)
@@ -2035,6 +2097,7 @@ void write_auxiliary_outputs(
                     << row.gram_patch_factorizations << ','
                     << row.gram_factor_cache_hits << ','
                     << row.gram_factor_cache_misses << ','
+                    << row.gram_structure_parallel_threads << ','
                     << row.gram_parallel_threads << ','
                     << row.localization_iterations << ','
                     << number(row.localization_relative_residual) << ','

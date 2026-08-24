@@ -1165,9 +1165,14 @@ LocalizationSpectrum reference_defect_spectrum_matrix_free(
 
     LocalizationSpectrum result;
     result.used_sparse_generalized_solver = true;
-    result.used_warm_start = config.warm_start.size() == dimension
+    const bool valid_warm_block = config.warm_start_block.rows() == dimension
+        && config.warm_start_block.cols() > 0
+        && config.warm_start_block.allFinite()
+        && config.warm_start_block.norm() > 0.0;
+    const bool valid_warm_vector = config.warm_start.size() == dimension
         && config.warm_start.allFinite()
         && config.warm_start.norm() > 0.0;
+    result.used_warm_start = valid_warm_block || valid_warm_vector;
     const auto append_orthonormal = [&](std::vector<ComplexVector> &basis,
                                         ComplexVector candidate) {
         for (int pass = 0; pass < 2; ++pass) {
@@ -1206,7 +1211,15 @@ LocalizationSpectrum reference_defect_spectrum_matrix_free(
     const int block_size = std::min(4, dimension);
     std::vector<ComplexVector> initial;
     initial.reserve(block_size);
-    if (result.used_warm_start)
+    if (valid_warm_block) {
+        for (int column = 0;
+             column < config.warm_start_block.cols()
+             && static_cast<int>(initial.size()) < block_size; ++column) {
+            (void)append_orthonormal(
+                initial, config.warm_start_block.col(column));
+        }
+    }
+    if (valid_warm_vector && static_cast<int>(initial.size()) < block_size)
         (void)append_orthonormal(initial, config.warm_start);
     for (int seed = 0;
          static_cast<int>(initial.size()) < block_size
@@ -1252,6 +1265,7 @@ LocalizationSpectrum reference_defect_spectrum_matrix_free(
         if (result.relative_residual <= config.relative_tolerance) {
             result.converged = true;
             result.dominant_vector = iterate.col(block_size - 1);
+            result.dominant_subspace = iterate;
             break;
         }
 
@@ -1310,6 +1324,7 @@ LocalizationSpectrum reference_defect_spectrum_matrix_free(
         throw std::runtime_error(detail.str());
     }
     result.dominant_vector = iterate.col(block_size - 1);
+    result.dominant_subspace = iterate;
     gram_diagnostics = gram_operator.diagnostics();
     return result;
 }

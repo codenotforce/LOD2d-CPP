@@ -4,6 +4,7 @@
 #include "helmholtz/patch_solver.h"
 #include <Eigen/Sparse>
 #include <cstddef>
+#include <limits>
 #include <memory>
 #include <vector>
 
@@ -43,6 +44,11 @@ struct HelmholtzCorrectorDiagnostics {
     double min_schur_reciprocal_condition = 1.0;
     int patch_cache_hits = 0;
     int patch_cache_misses = 0;
+    // Misses caused solely by the configured cache-size guard. These are
+    // reported separately from mathematically dirty patches so E1 can decide
+    // whether a larger bounded cache is useful before spending memory on it.
+    int patch_cache_oversized_misses = 0;
+    int patch_cache_budget_rejections = 0;
     // Sums of per-patch worker time. They expose where parallel corrector
     // work is spent; correctors_ms in HelmholtzBuildTimings remains wall time.
     double patch_assembly_work_seconds = 0.0;
@@ -68,12 +74,17 @@ public:
         std::size_t misses = 0;
         std::size_t stores = 0;
         std::size_t evictions = 0;
+        std::size_t oversized_misses = 0;
+        std::size_t budget_rejections = 0;
         std::size_t entries = 0;
+        std::size_t current_bytes = 0;
+        std::size_t peak_bytes = 0;
     };
 
     explicit HelmholtzCorrectorPatchCache(
         std::size_t maximum_entries = 4096,
-        std::size_t maximum_patch_dofs = 4096);
+        std::size_t maximum_patch_dofs = 4096,
+        std::size_t maximum_bytes = std::numeric_limits<std::size_t>::max());
     ~HelmholtzCorrectorPatchCache();
     HelmholtzCorrectorPatchCache(HelmholtzCorrectorPatchCache &&) noexcept;
     HelmholtzCorrectorPatchCache &operator=(HelmholtzCorrectorPatchCache &&) noexcept;
