@@ -109,6 +109,28 @@ def load_run(directory: Path, label: str) -> Run:
     )
 
 
+def load_extracted_run(path: Path, label: str) -> Run:
+    """Load the compact text export used when binary SCP is unavailable."""
+    observations: list[Observation] = []
+    with path.open(encoding="utf-8", newline="") as stream:
+        for row in csv.DictReader(stream):
+            observations.append(
+                Observation(
+                    int(row["dofs"]),
+                    float(row["seconds"]),
+                    float(row["exact"]),
+                    _positive(row, "reference"),
+                    int(row["epoch"]),
+                    int(row["ell"]) if row.get("ell", "") else None,
+                    0,
+                    0,
+                )
+            )
+    if not observations:
+        raise ValueError(f"no compact error observations in {path}")
+    return Run(label, path, "verified remote text export", False, observations)
+
+
 def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
     styles = {
         "Reference-epoch PALOD": dict(
@@ -301,27 +323,15 @@ def common_error_efficiency(
     return report
 
 
-def plot_hybrid_saved_work(ax, runs: Iterable[Run]) -> None:
-    hybrid = next(run for run in runs if run.moving_reference)
-    ax.semilogx(
-        [point.dofs for point in hybrid.observations],
-        [point.skipped_work_units for point in hybrid.observations],
-        color="#1f77b4", marker="o", markersize=3.5,
-        markerfacecolor="white", linewidth=1.35,
-    )
-    ax.set_xlabel("DoF")
-    ax.set_ylabel("Skipped corrector work units")
-    ax.grid(True, which="major", linewidth=0.45, alpha=0.45)
-    ax.grid(True, which="minor", linewidth=0.25, alpha=0.2)
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--experiment", choices=("E1", "E2"), default="E1")
     parser.add_argument("--palod", type=Path)
     parser.add_argument("--hybrid", type=Path)
     parser.add_argument("--standard", type=Path)
+    parser.add_argument("--standard-extracted", type=Path)
     parser.add_argument("--fixed-lod", type=Path)
+    parser.add_argument("--fixed-lod-extracted", type=Path)
     parser.add_argument("--slod", type=Path)
     parser.add_argument("--ufem", type=Path)
     parser.add_argument("--afem", type=Path)
@@ -332,6 +342,7 @@ def main() -> None:
     )
     parser.add_argument("--expected-palod-exponent", type=float, default=0.5)
     parser.add_argument("--exponent-tolerance", type=float, default=0.1)
+    parser.add_argument("--initial-coarse-level", type=int)
     arguments = parser.parse_args()
     exact_targets = [
         float(value) for value in arguments.exact_targets.split(",") if value
@@ -357,23 +368,51 @@ def main() -> None:
                 ),
             )
     else:
-        if None in (arguments.hybrid, arguments.standard, arguments.afem):
-            parser.error("E2 requires --hybrid, --standard, and --afem")
+        if arguments.hybrid is None or arguments.afem is None:
+            parser.error("E2 requires --hybrid and --afem")
+        if (arguments.standard is None) == (arguments.standard_extracted is None):
+            parser.error(
+                "E2 requires exactly one of --standard or --standard-extracted"
+            )
         runs = [
             load_run(
                 arguments.hybrid,
                 "Moving-reference singularity-aware PALOD",
             ),
-            load_run(arguments.standard, "Standard reference-epoch PALOD"),
+            (
+                load_run(arguments.standard, "Standard reference-epoch PALOD")
+                if arguments.standard is not None
+                else load_extracted_run(
+                    arguments.standard_extracted,
+                    "Standard reference-epoch PALOD",
+                )
+            ),
             load_run(arguments.afem, "AFEM"),
         ]
+        if (
+            arguments.fixed_lod is not None
+            and arguments.fixed_lod_extracted is not None
+        ):
+            parser.error(
+                "use only one of --fixed-lod or --fixed-lod-extracted"
+            )
         if arguments.fixed_lod is not None:
             runs.insert(2, load_run(arguments.fixed_lod, r"Fixed LOD ($\ell=3$)"))
+        elif arguments.fixed_lod_extracted is not None:
+            runs.insert(
+                2,
+                load_extracted_run(
+                    arguments.fixed_lod_extracted,
+                    r"Fixed LOD ($\ell=3$)",
+                ),
+            )
     apply_paper_style()
-    panel_count = 2 if arguments.experiment == "E1" else 3
+    # The paper comparison is error-versus-DoF only.  Saved-work diagnostics
+    # remain in the JSON/CSV audit rather than occupying a mostly flat panel.
+    panel_count = 2
     figure, axes = plt.subplots(
         1, panel_count,
-        figsize=((8.2, 3.35) if panel_count == 2 else (11.2, 3.35)),
+        figsize=(8.2, 3.35),
         constrained_layout=True,
     )
     panels = [
@@ -384,13 +423,20 @@ def main() -> None:
         _plot_panel(ax, runs, x_field, y_field)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
-    if arguments.experiment == "E2":
-        plot_hybrid_saved_work(axes[2], runs)
     axes[0].legend(loc="best", fontsize=6.4, framealpha=0.78, handlelength=2.0)
+    initial_coarse_level = arguments.initial_coarse_level
+    if initial_coarse_level is None:
+        initial_coarse_level = 4 if arguments.experiment == "E1" else 3
     figure.suptitle(
-        r"E1 (R1, $\kappa=16$; PALOD starts at $H$ level 4)"
+        (
+            rf"E1 (R1, $\kappa=16$; PALOD starts at $H$ level "
+            rf"{initial_coarse_level})"
+        )
         if arguments.experiment == "E1"
-        else r"E2 (L-shaped mixed boundary, $\kappa=16$, initial $H$ level 3)"
+        else (
+            rf"E2 (L-shaped mixed boundary, $\kappa=16$, "
+            rf"initial $H$ level {initial_coarse_level})"
+        )
     )
     figure.text(
         0.5,
@@ -398,7 +444,8 @@ def main() -> None:
         (
             r"PALOD: $\star$ reference refresh; $\times$ oversampling change"
             if arguments.experiment == "E1"
-            else r"Moving PALOD: candidate promoted after each nonterminal step; "
+            else r"$\star$ standard-PALOD reference refresh; moving-PALOD "
+                 r"candidate promoted after each nonterminal step; "
                  r"$\times$ oversampling change"
         ),
         ha="center",
