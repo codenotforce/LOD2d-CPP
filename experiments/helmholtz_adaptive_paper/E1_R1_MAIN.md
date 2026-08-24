@@ -13,8 +13,10 @@ Production configurations:
   four epochs; the proactive refresh guard is a local level gap of four after
   at least three H commits, candidate is deepened to gap six before promotion,
   `ell` is inherited, and a new epoch requires four remaining solved points;
-- `E1-R1-hlod-fixed-k16-H2-h15-ell3-step15-v4.json`: fixed oversampling
-  `ell=3`, reference level 15;
+- `E1-R1-hlod-fixed-k16-H2-h16-ell3-step15-v4.json`: fixed oversampling; the
+  uniform `h16` reference contains all 15 requested adaptive coarse
+  refinements (the earlier `h15` configuration stopped one proposal early).
+  `ell=3`, reference level 16;
 - `E1-R1-ufem-k16-H2-level18-step16-v4.json`: uniform P1 FEM through level 18;
 - `E1-R1-afem-k16-H2-level18-step40-v4.json`: adaptive P1 FEM with a
   level-18 ceiling.

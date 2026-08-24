@@ -92,7 +92,7 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-gap9-step12-main-v6.json
       experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H2-level18-step40-v4.json
       experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H2-level18-step16-v4.json
-      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H2-h15-ell3-step15-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H2-h16-ell3-step15-v4.json
     )
     MODE_MIN_AVAILABLE_GIB=320
     MODE_MIN_FREE_DISK_GIB=200
