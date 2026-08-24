@@ -489,10 +489,10 @@ if schema == 6:
             for row in iterations:
                 covered = number(row.get("hybrid_covered_physical_radius"))
                 ell_s = integer(row.get("hybrid_ell_S"))
-                if row["action"] == "SolveAndEstimate" \
+                if row["action"] == "AcceptCorrector" \
                         and (covered is None or ell_s is None):
                     raise SystemExit(
-                        "hybrid solve row is missing physical-radius diagnostics")
+                        "hybrid corrector row is missing physical-radius diagnostics")
                 if covered is not None and covered + 1e-14 < radius:
                     raise SystemExit("hybrid singular core misses R_star")
                 regular = number(row.get("hybrid_regular_indicator_mass"))
