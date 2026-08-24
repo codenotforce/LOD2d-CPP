@@ -2098,6 +2098,15 @@ void validate_reference_epoch_paper_config(
         != (config.hybrid_maximum_corrector_patch_fine_elements > 0))
         throw std::invalid_argument(
             "hybrid_maximum_corrector_patch_fine_elements must be positive exactly for hybrid runs");
+    if (config.singularity_hybrid
+        && (config.reference_refresh_level_gap != 0
+            || config.reference_refresh_target_gap != 0
+            || config.minimum_solved_points_per_new_epoch != 0
+            || config.work_limits.maximum_epochs
+                < config.work_limits.maximum_H_steps)) {
+        throw std::invalid_argument(
+            "moving-reference hybrid runs require zero reserve guards and maximum_epochs >= maximum_H_steps");
+    }
     if (!valid_sha256_digest(config.manuscript_sha256))
         throw std::invalid_argument("manuscript_sha256 must be a sha256 digest");
 }
@@ -2106,6 +2115,7 @@ adaptive::ReferenceEpochDriverConfig make_reference_epoch_driver_config(
     const ReferenceEpochPaperConfig &config) {
     validate_reference_epoch_paper_config(config);
     adaptive::ReferenceEpochDriverConfig result;
+    result.moving_reference = config.singularity_hybrid;
     result.ell0 = config.ell0;
     result.ell_max = config.ell_max;
     result.tau_loc = config.theta_loc_usr;

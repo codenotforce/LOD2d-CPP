@@ -777,10 +777,12 @@ void verify_reference_epoch_v6_S_contract() {
     config.smooth_wave_amplitude = 0.05;
     config.initial_coarse_level = 2;
     config.initial_reference_level = 6;
-    config.reference_refresh_level_gap = 2;
-    config.reference_refresh_target_gap = 4;
+    config.reference_refresh_level_gap = 0;
+    config.reference_refresh_target_gap = 0;
     config.minimum_H_steps_per_epoch = 0;
-    config.minimum_solved_points_per_new_epoch = 2;
+    config.minimum_solved_points_per_new_epoch = 0;
+    config.work_limits.maximum_epochs =
+        config.work_limits.maximum_H_steps;
     config.git_commit = "WORKTREE@test";
     config.build_hash = "test-build";
     config.manuscript_sha256 =
@@ -802,6 +804,8 @@ void verify_reference_epoch_v6_S_contract() {
             "reference-epoch v6 lost the case-S manufactured solution");
     require(canonical_json(decoded) == encoded,
             "reference-epoch v6 canonical JSON changed after round trip");
+    require(make_reference_epoch_driver_config(decoded).moving_reference,
+            "case-S hybrid config did not select the moving-reference driver");
     ReferenceEpochPaperConfig changed = config;
     changed.smooth_wave_amplitude = 0.1;
     require(canonical_config_hash(changed) != canonical_config_hash(config),
@@ -818,6 +822,10 @@ void verify_reference_epoch_v6_S_contract() {
     changed.minimum_H_steps_per_epoch = 1;
     require_invalid([&] { (void)canonical_json(changed); },
                     "reference-epoch v6 accepted an epoch cooldown");
+    changed = config;
+    changed.reference_refresh_target_gap = 4;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "moving-reference hybrid accepted an epoch reserve");
     changed = config;
     changed.schema_version = 5;
     require_invalid([&] { (void)canonical_json(changed); },

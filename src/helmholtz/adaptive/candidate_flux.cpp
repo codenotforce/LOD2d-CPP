@@ -5,7 +5,6 @@
 
 #include <Eigen/Cholesky>
 #include <Eigen/LU>
-#include <Eigen/QR>
 
 #include <algorithm>
 #include <array>
@@ -802,16 +801,11 @@ std::array<Point2, 6> p2_interpolation_points(
 }
 
 Eigen::Vector3cd project_source_p1(
-    const TriMesh &mesh,
-    int element,
     const ComplexFunction &source,
-    const CandidateFluxConfig &config,
+    const std::vector<PhysicalTriangleQuadraturePoint> &quadrature,
     double area) {
     Eigen::Vector3cd rhs = Eigen::Vector3cd::Zero();
-    for (const PhysicalTriangleQuadraturePoint &point :
-         triangle_quadrature_points(
-             mesh, element, config.quadrature,
-             config.quadrature_context)) {
+    for (const PhysicalTriangleQuadraturePoint &point : quadrature) {
         for (int local = 0; local < 3; ++local)
             rhs(local) += point.weight * point.barycentric[local]
                 * source(point.point);
@@ -912,10 +906,10 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
         geometry[element] = element_geometry(mesh, element);
         gradients[element] = element_gradient(
             mesh, element, values, geometry[element]);
-        source_projection[element] = project_source_p1(
-            mesh, element, source, config, maps[element].area);
         quadrature[element] = triangle_quadrature_points(
             mesh, element, config.quadrature, config.quadrature_context);
+        source_projection[element] = project_source_p1(
+            source, quadrature[element], maps[element].area);
         rt2_mass[element].setZero();
         rt2_basis[element].reserve(quadrature[element].size());
         for (const PhysicalTriangleQuadraturePoint &point :
@@ -965,7 +959,6 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
         bool active = false;
     };
     std::vector<PatchContribution> patch_contributions(node_count);
-
 #if defined(_OPENMP)
 #pragma omp parallel
     {
@@ -1200,11 +1193,15 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
             constraints.row(row) = constraint_rows[row].transpose();
             rhs(row) = constraint_rhs[row];
         }
-        Eigen::CompleteOrthogonalDecomposition<Eigen::MatrixXd> cod(constraints);
-        cod.setThreshold(1e-11);
+        // One rank-revealing factorization supplies both a particular
+        // constrained field and the constraint kernel.  The previous path
+        // decomposed the same dense patch matrix twice (COD for solve,
+        // FullPivLU for kernel), which dominated large RT2 reconstructions.
+        Eigen::FullPivLU<Eigen::MatrixXd> constraint_lu(constraints);
+        constraint_lu.setThreshold(1e-11);
         ComplexVector particular(unknowns);
-        particular.real() = cod.solve(rhs.real());
-        particular.imag() = cod.solve(rhs.imag());
+        particular.real() = constraint_lu.solve(rhs.real());
+        particular.imag() = constraint_lu.solve(rhs.imag());
         const double compatibility_residual = (
             constraints.cast<Complex>() * particular - rhs).norm()
             / std::max(1.0, rhs.norm());
@@ -1212,8 +1209,6 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
             throw std::runtime_error(
                 "candidate RT2 patch constraints are incompatible");
 
-        Eigen::FullPivLU<Eigen::MatrixXd> constraint_lu(constraints);
-        constraint_lu.setThreshold(1e-11);
         const Eigen::MatrixXd kernel = constraint_lu.kernel();
         ComplexVector coefficients = particular;
         if (kernel.cols() > 0) {
@@ -1240,6 +1235,7 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
             const CandidateRT2Coefficients local_coefficients =
                 coefficients.segment<15>(15 * local);
             patch_output.flux.emplace_back(element, local_coefficients);
+            if (!config.compute_discrete_residual_audit) continue;
             for (const Point2 &point : p2_points[element]) {
                 const Complex actual = evaluate_candidate_rt2_divergence(
                     mesh, element, local_coefficients, point);
@@ -1307,6 +1303,7 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
 #endif
     for (int element = 0; element < element_count; ++element) {
         try {
+        if (config.compute_discrete_residual_audit) {
         for (const Point2 &point : p2_points[element]) {
             const Eigen::Vector3d bary = physical_barycentric(
                 maps[element], point);
@@ -1320,7 +1317,8 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                 element_divergence_residual[element],
                 std::abs(evaluate_candidate_rt2_divergence(
                     mesh, element, result.element_rt2_coefficients[element],
-                    point) - expected));
+                point) - expected));
+        }
         }
         double flux_error_squared = 0.0;
         double oscillation_squared = 0.0;
@@ -1357,7 +1355,8 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
             element_divergence_residual[element]);
     }
 
-    if (result.global_reconstruction) {
+    if (result.global_reconstruction
+        && config.compute_discrete_residual_audit) {
         for (const EdgeData &edge : topology.edges) {
             for (double t : kEdgePoints) {
                 const Point2 point = (1.0 - t) * mesh.nodes[edge.nodes[0]]

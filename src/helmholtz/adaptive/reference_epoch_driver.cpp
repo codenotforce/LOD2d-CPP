@@ -77,6 +77,15 @@ ReferenceEpochPracticalDriver::ReferenceEpochPracticalDriver(
         || !(config_.limits.maximum_wall_seconds > 0.0)) {
         throw std::invalid_argument("reference-epoch driver config is invalid");
     }
+    if (config_.moving_reference
+        && (config_.reference_refresh_level_gap != 0
+            || config_.reference_refresh_target_gap != 0
+            || config_.minimum_solved_points_per_new_epoch != 0
+            || config_.limits.maximum_epochs
+                < config_.limits.maximum_H_steps)) {
+        throw std::invalid_argument(
+            "moving-reference driver requires zero reserve guards and one step budget per solve");
+    }
 }
 
 ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
@@ -171,9 +180,13 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.minimum_reference_level_gap =
                     backend_.minimum_reference_level_gap();
                 record.detail =
-                    epoch == 0
-                    ? "candidate reset to the fixed reference mesh; initialized ell to ell0"
-                    : "candidate reset to the fixed reference mesh; inherited ell across epoch";
+                    config_.moving_reference
+                    ? (epoch == 0
+                        ? "candidate reset to the current reference mesh; initialized ell to ell0"
+                        : "candidate reset to the promoted reference mesh; inherited ell across moving-reference step")
+                    : (epoch == 0
+                        ? "candidate reset to the fixed reference mesh; initialized ell to ell0"
+                        : "candidate reset to the fixed reference mesh; inherited ell across epoch");
                 append(std::move(record));
                 continue;
 
@@ -326,7 +339,12 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 // its regional indicator mass vanishes.  The backend opens
                 // an identity proposal so candidate enrichment and the epoch
                 // decision are still executed transactionally.
-                state = ReferenceEpochDriverState::ProposeCoarse;
+                const bool moving_reference_termination =
+                    config_.moving_reference
+                    && U_practical <= config_.tolerance_reference;
+                state = moving_reference_termination
+                    ? ReferenceEpochDriverState::Converged
+                    : ReferenceEpochDriverState::ProposeCoarse;
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::SolveAndEstimate;
                 record.eta_H = observation.eta_H;
@@ -373,6 +391,11 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     observation.time_reference_validation
                     + observation.time_exact_validation;
                 append(std::move(record));
+                if (moving_reference_termination) {
+                    result.stop_reason =
+                        "reference tolerance reached on current moving reference";
+                    continue;
+                }
                 // maximum_H_steps is the number of solved coarse states,
                 // not the number of committed refinements.  The final
                 // solved point is already a valid trajectory datum; do not
@@ -402,7 +425,9 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 if (!(observation.eta_eq_c >= 0.0)
                     || !std::isfinite(observation.eta_eq_c))
                     throw std::runtime_error("candidate enrichment returned invalid eta_eq_c");
-                state = ReferenceEpochDriverState::LazyDualDecision;
+                state = config_.moving_reference
+                    ? ReferenceEpochDriverState::ReferenceRefresh
+                    : ReferenceEpochDriverState::LazyDualDecision;
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::EnrichCandidate;
                 record.eta_eq_c = observation.eta_eq_c;
@@ -447,6 +472,10 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     observation.time_candidate_quasi_interpolation;
                 record.time_candidate_embedding_validation =
                     observation.time_candidate_embedding_validation;
+                if (config_.moving_reference) {
+                    record.detail =
+                        "frozen candidate scheduled for immediate moving-reference promotion; candidate dual skipped";
+                }
                 append(std::move(record));
                 continue;
             }
@@ -601,7 +630,9 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 {
                     const auto mesh_start = std::chrono::steady_clock::now();
                     backend_.refresh_reference(
-                        config_.reference_refresh_target_gap);
+                        config_.moving_reference
+                            ? 0
+                            : config_.reference_refresh_target_gap);
                     record.time_mesh = std::chrono::duration<double>(
                         std::chrono::steady_clock::now() - mesh_start).count();
                 }
@@ -611,11 +642,13 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 state = ReferenceEpochDriverState::CommitCoarse;
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::RefreshReference;
-                record.detail = structural_trigger
-                    ? "structural hierarchy trigger took precedence"
-                    : level_gap_trigger
-                    ? "local reference/coarse level-gap guard requested reference refresh"
-                    : "candidate dual gap requested reference refresh";
+                record.detail = config_.moving_reference
+                    ? "frozen candidate promoted by the moving-reference algorithm"
+                    : structural_trigger
+                        ? "structural hierarchy trigger took precedence"
+                        : level_gap_trigger
+                            ? "local reference/coarse level-gap guard requested reference refresh"
+                            : "candidate dual gap requested reference refresh";
                 append(std::move(record));
                 continue;
 

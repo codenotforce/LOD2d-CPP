@@ -36,6 +36,7 @@ class Run:
     label: str
     directory: Path
     state: str
+    moving_reference: bool
     observations: list[Observation]
 
 
@@ -93,10 +94,17 @@ def load_run(directory: Path, label: str) -> Run:
             )
     if not observations:
         raise ValueError(f"no complete positive error observations in {directory}")
+    algorithm_variant = metadata.get("algorithm_variant", {})
+    moving_reference = (
+        isinstance(algorithm_variant, dict)
+        and algorithm_variant.get("name")
+        == "moving-reference-singularity-aware-v1"
+    )
     return Run(
         label,
         directory,
         str(metadata.get("driver_state", metadata.get("status", "unknown"))),
+        moving_reference,
         observations,
     )
 
@@ -109,7 +117,7 @@ def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
         r"Fixed LOD ($\ell=3$)": dict(
             color="#ff7f0e", marker="s", linestyle="--", linewidth=1.25
         ),
-        "Hybrid reference-epoch PALOD": dict(
+        "Moving-reference singularity-aware PALOD": dict(
             color="#1f77b4", marker="o", linestyle="-", linewidth=1.45
         ),
         "Standard reference-epoch PALOD": dict(
@@ -151,7 +159,7 @@ def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
             previous_epoch = points[0].epoch
             previous_ell = points[0].ell
             for point in points[1:]:
-                if point.epoch != previous_epoch:
+                if point.epoch != previous_epoch and not run.moving_reference:
                     ax.scatter(
                         [getattr(point, x_field)],
                         [getattr(point, y_field)],
@@ -187,7 +195,7 @@ def _plot_panel(ax, runs: Iterable[Run], x_field: str, y_field: str) -> None:
 
 def tail_dof_exponent(run: Run, field: str, count: int = 4) -> float | None:
     observations = run.observations
-    if "PALOD" in run.label:
+    if "PALOD" in run.label and not run.moving_reference:
         final_epoch = max(point.epoch for point in observations)
         observations = [point for point in observations if point.epoch == final_epoch]
     by_dof = {
@@ -213,7 +221,7 @@ def tail_dof_exponent(run: Run, field: str, count: int = 4) -> float | None:
 
 
 def palod_epoch_dof_exponents(run: Run, field: str) -> dict[str, float | None]:
-    if "PALOD" not in run.label:
+    if "PALOD" not in run.label or run.moving_reference:
         return {}
     result: dict[str, float | None] = {}
     for epoch in sorted({point.epoch for point in run.observations}):
@@ -290,7 +298,7 @@ def common_error_efficiency(
 
 
 def plot_hybrid_saved_work(ax, runs: Iterable[Run]) -> None:
-    hybrid = next(run for run in runs if run.label.startswith("Hybrid"))
+    hybrid = next(run for run in runs if run.moving_reference)
     ax.semilogx(
         [point.dofs for point in hybrid.observations],
         [point.skipped_work_units for point in hybrid.observations],
@@ -339,7 +347,10 @@ def main() -> None:
         if None in (arguments.hybrid, arguments.standard, arguments.afem):
             parser.error("E2 requires --hybrid, --standard, and --afem")
         runs = [
-            load_run(arguments.hybrid, "Hybrid reference-epoch PALOD"),
+            load_run(
+                arguments.hybrid,
+                "Moving-reference singularity-aware PALOD",
+            ),
             load_run(arguments.standard, "Standard reference-epoch PALOD"),
             load_run(arguments.afem, "AFEM"),
         ]
@@ -371,7 +382,12 @@ def main() -> None:
     figure.text(
         0.5,
         0.005,
-        r"PALOD: $\star$ reference refresh; $\times$ oversampling change",
+        (
+            r"PALOD: $\star$ reference refresh; $\times$ oversampling change"
+            if arguments.experiment == "E1"
+            else r"Moving PALOD: candidate promoted after each nonterminal step; "
+                 r"$\times$ oversampling change"
+        ),
         ha="center",
         fontsize=7.0,
     )
@@ -384,6 +400,7 @@ def main() -> None:
         run.label: {
             "directory": str(run.directory),
             "driver_state": run.state,
+            "moving_reference": run.moving_reference,
             "points": len(run.observations),
             "terminal_dofs": run.observations[-1].dofs,
             "terminal_seconds": run.observations[-1].seconds,

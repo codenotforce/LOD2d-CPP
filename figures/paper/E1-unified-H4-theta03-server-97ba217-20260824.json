@@ -1,0 +1,191 @@
+{
+  "Reference-epoch PALOD": {
+    "directory": "D:\\code\\femcode\\LOD2d_C++\\results\\_server_e1_meta_97ba217\\results\\E1-unified-H4-theta03-main-97ba217-20260824-171723\\runs\\E1-R1-palod-reference-epoch-k16-H4-h12-theta03-step20-main-v6\\R1_PALOD-reference-epoch_k16_r0_9d9603125342e0ed",
+    "driver_state": "Converged",
+    "moving_reference": false,
+    "points": 18,
+    "terminal_dofs": 1552,
+    "terminal_seconds": 6652.234670565,
+    "terminal_relative_exact_energy": 0.010514161150144457,
+    "terminal_relative_reference_energy": 0.009724871715616843,
+    "epochs": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "tail4_exact_dof_exponent": 0.5875102484775587,
+    "tail4_reference_dof_exponent": 0.6496268750082215,
+    "epoch_exact_dof_exponents": {
+      "0": 0.40650229629070983,
+      "1": 3.320285284069385,
+      "2": 0.821076079343388,
+      "3": 0.5875102484775587
+    },
+    "epoch_reference_dof_exponents": {
+      "0": 0.4085242637924332,
+      "1": 3.3807599460149462,
+      "2": 0.9115484227738262,
+      "3": 0.6496268750082215
+    }
+  },
+  "Fixed LOD ($\\ell=3$)": {
+    "directory": "D:\\code\\femcode\\LOD2d_C++\\results\\_server_e1_meta_97ba217\\results\\E1-unified-H4-theta03-main-97ba217-20260824-171723\\runs\\E1-R1-hlod-fixed-k16-H4-h18-ell3-theta03-step18-v4\\R1_HLOD-fixed_k16_r0_b246d5421882256e",
+    "driver_state": "TrajectoryComplete",
+    "moving_reference": false,
+    "points": 19,
+    "terminal_dofs": 1711,
+    "terminal_seconds": 1613.93398164,
+    "terminal_relative_exact_energy": 0.01480173858180872,
+    "terminal_relative_reference_energy": 0.008258296295938434,
+    "epochs": [
+      0
+    ],
+    "tail4_exact_dof_exponent": 0.30179053960144037,
+    "tail4_reference_dof_exponent": 0.6985432933533148,
+    "epoch_exact_dof_exponents": {},
+    "epoch_reference_dof_exponents": {}
+  },
+  "UFEM": {
+    "directory": "D:\\code\\femcode\\LOD2d_C++\\results\\_server_e1_meta_97ba217\\results\\E1-unified-H4-theta03-main-97ba217-20260824-171723\\runs\\E1-R1-ufem-k16-H4-level18-step14-v4\\R1_UFEM_k16_r0_6f019ff8fff64f9e",
+    "driver_state": "TrajectoryComplete",
+    "moving_reference": false,
+    "points": 15,
+    "terminal_dofs": 262143,
+    "terminal_seconds": 89.71202300799999,
+    "terminal_relative_exact_energy": 0.012283776396109143,
+    "terminal_relative_reference_energy": 0.01374757627648623,
+    "epochs": [
+      0
+    ],
+    "tail4_exact_dof_exponent": 0.5184512520997301,
+    "tail4_reference_dof_exponent": 0.610530124959106,
+    "epoch_exact_dof_exponents": {},
+    "epoch_reference_dof_exponents": {}
+  },
+  "AFEM": {
+    "directory": "D:\\code\\femcode\\LOD2d_C++\\results\\_server_e1_meta_97ba217\\results\\E1-unified-H4-theta03-main-97ba217-20260824-171723\\runs\\E1-R1-afem-k16-H4-level18-theta03-step60-v4\\R1_AFEM_k16_r0_2fdfa3237276b794",
+    "driver_state": "TrajectoryComplete",
+    "moving_reference": false,
+    "points": 35,
+    "terminal_dofs": 7889,
+    "terminal_seconds": 3.8039170949999996,
+    "terminal_relative_exact_energy": 0.025522602672964974,
+    "terminal_relative_reference_energy": null,
+    "epochs": [
+      0
+    ],
+    "tail4_exact_dof_exponent": 0.49638719644520546,
+    "tail4_reference_dof_exponent": null,
+    "epoch_exact_dof_exponents": {},
+    "epoch_reference_dof_exponents": {}
+  },
+  "_E1_claim_checks": {
+    "interpretation": "post-processing checks of the stated experimental expectation; false/null outcomes must be reported and must not be filtered",
+    "common_exact_error_targets": {
+      "0.5": {
+        "all_methods_reached": true,
+        "minimum_dofs_reaching_target": {
+          "Reference-epoch PALOD": 79,
+          "Fixed LOD ($\\ell=3$)": 78,
+          "UFEM": 255,
+          "AFEM": 49
+        },
+        "winner": "AFEM",
+        "palod_has_least_dofs": false,
+        "dof_ratio_to_palod": {
+          "Reference-epoch PALOD": 1.0,
+          "Fixed LOD ($\\ell=3$)": 0.9873417721518988,
+          "UFEM": 3.2278481012658227,
+          "AFEM": 0.620253164556962
+        }
+      },
+      "0.2": {
+        "all_methods_reached": true,
+        "minimum_dofs_reaching_target": {
+          "Reference-epoch PALOD": 79,
+          "Fixed LOD ($\\ell=3$)": 78,
+          "UFEM": 2047,
+          "AFEM": 178
+        },
+        "winner": "Fixed LOD ($\\ell=3$)",
+        "palod_has_least_dofs": false,
+        "dof_ratio_to_palod": {
+          "Reference-epoch PALOD": 1.0,
+          "Fixed LOD ($\\ell=3$)": 0.9873417721518988,
+          "UFEM": 25.911392405063292,
+          "AFEM": 2.2531645569620253
+        }
+      },
+      "0.1": {
+        "all_methods_reached": true,
+        "minimum_dofs_reaching_target": {
+          "Reference-epoch PALOD": 122,
+          "Fixed LOD ($\\ell=3$)": 119,
+          "UFEM": 8191,
+          "AFEM": 576
+        },
+        "winner": "Fixed LOD ($\\ell=3$)",
+        "palod_has_least_dofs": false,
+        "dof_ratio_to_palod": {
+          "Reference-epoch PALOD": 1.0,
+          "Fixed LOD ($\\ell=3$)": 0.9754098360655737,
+          "UFEM": 67.13934426229508,
+          "AFEM": 4.721311475409836
+        }
+      },
+      "0.05": {
+        "all_methods_reached": true,
+        "minimum_dofs_reaching_target": {
+          "Reference-epoch PALOD": 203,
+          "Fixed LOD ($\\ell=3$)": 252,
+          "UFEM": 16383,
+          "AFEM": 2172
+        },
+        "winner": "Reference-epoch PALOD",
+        "palod_has_least_dofs": true,
+        "dof_ratio_to_palod": {
+          "Reference-epoch PALOD": 1.0,
+          "Fixed LOD ($\\ell=3$)": 1.2413793103448276,
+          "UFEM": 80.70443349753694,
+          "AFEM": 10.699507389162562
+        }
+      },
+      "0.02": {
+        "all_methods_reached": false,
+        "minimum_dofs_reaching_target": {
+          "Reference-epoch PALOD": 714,
+          "Fixed LOD ($\\ell=3$)": 833,
+          "UFEM": 131071,
+          "AFEM": null
+        },
+        "winner": null,
+        "palod_has_least_dofs": null,
+        "dof_ratio_to_palod": {}
+      },
+      "0.01": {
+        "all_methods_reached": false,
+        "minimum_dofs_reaching_target": {
+          "Reference-epoch PALOD": null,
+          "Fixed LOD ($\\ell=3$)": null,
+          "UFEM": null,
+          "AFEM": null
+        },
+        "winner": null,
+        "palod_has_least_dofs": null,
+        "dof_ratio_to_palod": {}
+      }
+    },
+    "palod_least_dofs_at_every_comparable_target": false,
+    "expected_exact_dof_exponent": 0.5,
+    "allowed_absolute_shortfall": 0.1,
+    "palod_tail4_exact_dof_exponent": 0.5875102484775587,
+    "palod_tail_exponent_not_degraded": true,
+    "palod_epoch_exact_dof_exponents": {
+      "0": 0.40650229629070983,
+      "1": 3.320285284069385,
+      "2": 0.821076079343388,
+      "3": 0.5875102484775587
+    }
+  }
+}

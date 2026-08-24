@@ -1,40 +1,62 @@
-# 新版 Algorithm 1/2：E1/E2 服务器操作手册（2026-08-24）
+# 最新 Algorithm 1/2：E1/E2 服务器操作手册（2026-08-24）
 
-> 2026-08-24 后续决定：当前只执行 E1，采用
-> `E1_REVISED_MAIN_SERVER_2026-08-24.md`；E2 等论文 Algorithm 2 再次冻结后再恢复。
+本手册对应论文
+`helmholtz_lod_certified_amsart_revised.tex` 的 SHA256
+`38cc97e4c4997b42f133903febc32eb20e5b475eca9b3d54fec441c0d3736f15`，以及
+`schema_version=6`。实验按 factor、pilot、main 三道门串行执行；不要直接启动 main，
+也不要并行运行两条 PALOD/HLOD 轨迹。
 
-本手册对应 `schema_version=6`、新版制造解和新版 reference-epoch 状态机。所有结果均为
-`claim=implementation-study`。必须依次通过 factor、pilot、main 三道门；不得直接启动 main，
-也不得并行运行两条 PALOD/HLOD 轨迹。
+## 1. 本轮论文审查结论
 
-## 1. 算法口径与已知修正
+- E1 的 Algorithm 1 仍是 safeguarded fixed-reference epoch：epoch 内 reference 固定，
+  candidate 逐步富化，lazy dual 与结构刷新规则仍在，刷新后继承 `ell`。本轮主要是把
+  standard/moving-reference 的边界和术语写清楚，没有改变 E1 主实验的数据生成算法。
+  已完成且通过审计的 E1 主实验无需重跑；脚本同时接受该 E1 所用的上一版论文基线。
+- E2 的 Algorithm 2 已实质改为 moving-reference singularity-aware LOD。每个非终止
+  solve--estimate 步都冻结并富化 candidate，恢复 prospective coarse/candidate 精确匹配，
+  检查 candidate Galerkin 适定性，然后立即执行
+  `(T_H,T_h,T_c)<-(T_H^+,T_c^+,T_c^+)`。不存在多 H-step epoch、lazy candidate dual、
+  level-gap trigger 或 graded reserve。
+- 物理区域冻结为 `R_*=0.125`，`ell_S` 是覆盖该物理球的最小 coarse 邻域层数，
+  `Omega_F=N^ell(Omega_S)`。coarse 只对 regular 区做完整 Dörfler 标记；candidate 在
+  `Omega_F` 和 regular 区分别满足 `theta_c` Dörfler，再做共形及 hierarchy closure。
+  candidate 冻结后，matching 循环只能继续加细 proposed coarse，不得再改变 candidate。
+- 实验仍保留欠分辨的 pre-asymptotic 点，故 `run.json` 明确标记
+  `manuscript_conformance=implementation-study-variant`；不能把这些点说成已满足论文的
+  coarse resolution 假设。
 
-- E1 使用新版 Algorithm 1：在当前 candidate 上先计算指标、标记和加细，再添加 hierarchy
-  closure，整个 candidate 阶段先于分支；结构刷新跳过 dual；每个
-  epoch 首解初始化 lazy-dual baseline；收敛前强制 dual；刷新后继承 `ell`；reserve
-  trigger/target 为 `4/9`。
-- 按既定 implementation-study 口径，实验保留 `kappa H` 很大的预收敛点，不执行论文
-  coarse-admissibility 分辨率门；reference/candidate 适定性采用数值稀疏分解检查。因此
-  Algorithm 1 的 `manuscript_conformance` 为 `implementation-study-variant`，不是
-  `direct`。
-- E2 hybrid 使用新版 Algorithm 2：
-  `ell_S=min{j:B_R(S) subset N^j(S)}`、`Omega_S=N^ell_S(S)`、
-  `Omega_F=N^ell(Omega_S)`；只跳过 `Omega_S` 中的零 corrector；coarse 只在 regular
-  区标记；candidate 在 `Omega_F` 与 regular 区分别做 Dörfler 标记，并同样在标记/加细后
-  才添加 hierarchy closure。新版定义不再要求 `ell_S>=ell`：固定物理半径只决定
-  singular core，oversampling `ell` 独立决定 transition buffer。
-- 一般共形 NVB 网格上，“`Omega_F` 精确 H/h matching”与“全部相邻 regular 单元均有
-  正的统一 reserve”不总能同时实现。程序因此显式采用可审计的 implementation erratum：
-  自动选择最小的 spill-free conformity collar，目标剖面为
-  `min(g_tar,max(0,d_graph(T,Omega_F)-b))`。每次 trial/closure 写入
-  `hybrid_reserve.csv`，`run.json.algorithm_variant.manuscript_conformance` 明确为
-  `implementation-erratum`，不得把它隐去后声称逐字实现论文当前公式。
-- E2 coarse marking 优先从 closure-safe regular 子集选点，但所选集合仍必须满足原始完整
-  regular 指标质量的 Dörfler 不等式；若安全子集质量不足，回退到原始 full-regular
-  标记并按论文触发 structural refresh。h8 校准表明 `theta_H=0.1` 可形成 3 点完整
-  epoch；`0.3/0.5` 只有 1--2 点，故主配置冻结为 `0.1`。
+## 2. 已完成的实现与性能门
 
-## 2. 获取代码并检查服务器
+E2 runner 已实现上述 moving-reference 状态机，并自动检查：
+
+- 每个非终止 solve 恰有一次 `moving_reference_closure`；
+- `requested_target_gap=0`、`matching_spill=0`，promotion 后 reference=candidate；
+- moving-reference 路径 candidate dual 次数为 0；
+- coarse full-regular 和 candidate F/R 两侧 Dörfler 均成立；
+- `ell` 跨 moving step 继承；
+- promoted candidate 解预先计算并复用于下一步 reference stability，避免重复大系统求解。
+
+RT2 candidate flux 已将同一个 patch 约束矩阵原来的两次 rank-revealing 分解
+（COD 求 particular solution、FullPivLU 求 kernel）合并为一次 FullPivLU。相同 h12
+两步因子实验中：
+
+| 指标 | 优化前 | 优化后 | 变化 |
+|---|---:|---:|---:|
+| wall time | 35.92 s | 30.84 s | -14.1% |
+| candidate RT2 reconstruction | 12.77 s | 5.94 s | -53.5% |
+| RT2 patch solve | 7.35 s | 1.76 s | -76.0% |
+| peak RSS | 7,310,144 KiB | 7,297,036 KiB | 基本不变 |
+
+所有参考误差、精确误差、candidate 指标和标记数逐项不变，完整 RT2/P2 回归通过。
+曾测试整 patch 精确矩阵缓存，命中 `0/12545` 且显著变慢，已删除，不能重新启用。
+
+本地 h12 四步 moving-reference pilot 结果：4 个 solve、3 次 promotion、0 次 dual，
+精确相对能量误差
+`0.44522 -> 0.36812 -> 0.31518 -> 0.26601`，reference 相对误差
+`0.41271 -> 0.33460 -> 0.28368 -> 0.23456`；wall time 62.94 s，peak RSS
+7,584,824 KiB，swap 0。该结果是上服务器 pilot 的门禁，不是最终论文收敛阶。
+
+## 3. 获取代码并检查服务器
 
 ```bash
 ssh shuihan
@@ -48,159 +70,86 @@ free -h
 df -h "$PWD"
 ```
 
-`git status --short` 必须没有 tracked 修改；不要删除尚未回传的 `results/`。脚本默认使用
-16 个 build/patch threads，并按阶段设置可用内存、磁盘和外部 timeout 门。E1 fixed-LOD
-配置因单任务局部直接分解的内存压力保留 `maximum_patch_threads=4`，其余新版 PALOD
-配置使用 16 个 patch threads。
+`git status --short` 必须没有 tracked 修改；不要删除尚未回传的 `results/`。默认使用
+16 个 build/patch threads，并关闭局部线性代数的嵌套多线程，避免过度订阅。
 
-## 3. Factor：必须首先运行
-
-E1 factor 覆盖首次 refresh 后的 corrector/Gram 峰值；旧的单 H-step factor 不足以判断
-主实验内存。
-
-```bash
-tmux new -s e1-factor
-MODE=e1-revised-factor VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
-RESULT_DIR="$PWD/results/E1-revised-factor-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
-  scripts/run_helmholtz_adaptive_paper_server.sh
-```
-
-E1 通过后运行 E2 hybrid/standard factor：
+## 4. E2 factor
 
 ```bash
 tmux new -s e2-factor
+cd /home/sutai/code/LOD2d-CPP
 MODE=e2-revised-factor VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
 RESULT_DIR="$PWD/results/E2-revised-factor-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-建议在支持 user systemd 的服务器上直接用下列形式设置运行期内存上限（把 `MODE` 和
-`RESULT_DIR` 换成相应阶段）：
+factor 依次运行 moving-reference h12 两步和 standard reference-epoch refresh factor。
+必须满足：exit status 0、swap 0、无 `Failed`，moving run 为 2 solve/1 promotion/0 dual，
+所有 matching spill 为 0，F/R 与 full-regular Dörfler 门通过。
+
+## 5. E2 pilot
+
+factor 通过后再运行：
 
 ```bash
-systemd-run --user --scope -p MemoryMax=64G -p MemorySwapMax=0 \
-  env MODE=e1-revised-factor VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
-  RESULT_DIR="$PWD/results/E1-revised-factor-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
-  bash scripts/run_helmholtz_adaptive_paper_server.sh
-```
-
-如果 user systemd 不可用，保留脚本的 DoF、patch、available-memory 和 timeout 门，不要
-用 swap 兜底。
-
-Factor gate：
-
-- exit status 0，`run.json.status != Failed`；
-- stop reason 只能是固定 H-step 预算或“剩余预算不足以开启新 epoch”；
-- `Swaps: 0`；
-- E2 `hybrid_reserve.csv` 中每个 `closure` 行均为 `status=achieved`、
-  `matching_spill=0`、`profile_margin_after>=0`；
-- E2 每个 corrector 均满足 `hybrid_covered_physical_radius>=0.125` 且 patch 上限不超过
-  100000 个 fine elements。
-
-## 4. Pilot：factor 通过后运行
-
-```bash
-tmux new -s e1-pilot
-MODE=e1-revised-pilot VALIDATE=0 JOBS=16 PATCH_THREADS=16 \
-RESULT_DIR="$PWD/results/E1-revised-pilot-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
-  scripts/run_helmholtz_adaptive_paper_server.sh
-
 tmux new -s e2-pilot
-MODE=e2-revised-pilot VALIDATE=0 JOBS=16 PATCH_THREADS=16 \
+cd /home/sutai/code/LOD2d-CPP
+MODE=e2-revised-pilot VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
 RESULT_DIR="$PWD/results/E2-revised-pilot-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-两条 pilot 仍应串行；第一条结束后再启动第二条。推荐额外限制
-`MemoryMax=160G,MemorySwapMax=0`。
+moving pilot 为 8 个 moving steps；standard PALOD 为独立 fixed-reference 对照。E2 moving
+的收敛趋势按所有 `SolveAndEstimate` 点检查，因为每一步都会更新 reference；
+`relative_reference_energy` 是相对于该步 reference 的量，跨步比较时论文图必须以共同制造解
+的 `relative_exact_energy` 为主。不要再要求“同一 epoch 至少三点”，也不要跨 moving step
+拟合 stepwise reference error。
 
-Pilot gate：
-
-- E1 必须至少形成一个 refresh 后含 3 个解点的可拟合 epoch，`ell` 不得在 refresh 后
-  回退；保留预收敛点，不跨 epoch 拟合。
-- E2 hybrid 至少有一个完整 epoch 含 3 个 `SolveAndEstimate` 点；这些点的 exact error
-  应总体下降。h8 本地门禁的首个三点段斜率约为 `-0.47`，只作为“可以上服务器”的
-  证据，不是最终论文斜率。
-- `iterations.csv` 中 candidate F/R 两侧各自达到 `theta_c=0.5`；
-  `hybrid_full_regular_doerfler=true`。
-- 如果 factor/pilot 触发 resource cap，先分析 `corrector_work.csv`、Gram/RT2 分阶段计时和
-  `.time`；不得直接提高上限。
-
-## 5. Main：只在两组 pilot 通过后启动
-
-E1 四方法：
+pilot 若超时或触发资源门，先汇总：
 
 ```bash
-tmux new -s e1-main
-MODE=e1-revised-main VALIDATE=0 JOBS=16 PATCH_THREADS=16 \
-RESULT_DIR="$PWD/results/E1-revised-main-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
-  scripts/run_helmholtz_adaptive_paper_server.sh
+grep -H -E 'Elapsed|Percent of CPU|Maximum resident|Swaps|Exit status' "$RESULT_DIR"/logs/*.time
+grep -H -E 'state=|stop_reason=|output=' "$RESULT_DIR"/logs/*.stdout
 ```
 
-E2 四方法（fixed LOD 成本过高时可在前三条完成后单独停止/补跑）：
+然后分析 `iterations.csv` 的 `time_corrector`、`time_theta`、
+`time_candidate_flux_*`、`time_reference_riesz` 和 `time_mesh`；不要直接提高上限。
+
+## 6. E2 main
+
+只有 factor 与 pilot 全部通过后才启动：
 
 ```bash
 tmux new -s e2-main
-MODE=e2-revised-main VALIDATE=0 JOBS=16 PATCH_THREADS=16 \
+cd /home/sutai/code/LOD2d-CPP
+MODE=e2-revised-main VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
 RESULT_DIR="$PWD/results/E2-revised-main-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
   scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-E2 main 中 AFEM/fixed-LOD 配置各保留最多 24 小时内部 wall guard，脚本外部门为
-24 小时加 15 分钟，以便收到 `SIGINT` 后结构化写完 CSV/JSON；PALOD 通常应远早于此结束。
-
-推荐 main 使用 `MemoryMax=300G,MemorySwapMax=0`；脚本另要求启动时至少 320 GiB
-available memory 和 200 GiB free disk。可执行形式为：
+执行顺序为 AFEM、standard PALOD、fixed HLOD、moving-reference PALOD，最慢且最需观察的
+moving 方法最后运行。main 配置为 H3/h12、`R_*=0.125`、`theta_H=0.3`、
+`theta_c=0.5`、15 个 moving steps。服务器约 366 GiB 时建议：
 
 ```bash
 systemd-run --user --scope -p MemoryMax=300G -p MemorySwapMax=0 \
-  env MODE=e1-revised-main VALIDATE=0 JOBS=16 PATCH_THREADS=16 \
-  RESULT_DIR="$PWD/results/E1-revised-main-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
+  env MODE=e2-revised-main VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
+  RESULT_DIR="$PWD/results/E2-revised-main-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
   bash scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
-E1 PALOD 为 H4/h12、12 解点、epoch 安全上限 13；E2 hybrid 为 H3/h12、
-`R_*=0.125`、`theta_H=0.1`、15 解点、epoch 安全上限 16；E2 standard 为 H3/h12、
-12 解点、target gap 9、epoch 安全上限 13。epoch 上限只防失控，正常终止由 H-step、
-资源或 wall-time 门决定。
-
-## 6. 运行中监控
+## 7. 监控与验收
 
 ```bash
 ROOT=/path/to/current/result-dir
 watch -n 5 'free -h; pgrep -af bench_helmholtz_adaptive_paper'
 tail -F "$ROOT"/logs/*.stdout
 find "$ROOT/runs" -name '*.done' -print
-grep -H -E 'Elapsed|Percent of CPU|Maximum resident|Swaps|Exit status' \
-  "$ROOT"/logs/*.time
+grep -H -E 'Elapsed|Percent of CPU|Maximum resident|Swaps|Exit status' "$ROOT"/logs/*.time
 ```
 
-stdout 使用 line buffering，可实时看到：
-
-- `[helmholtz-model]`：operators/correctors/basis/factorization；
-- `[hybrid-coarse-marking]`：regular/safe/marked mass、collar、是否 closure-safe；
-- `[hybrid-refresh-collar-trial]`：spill/deficit/far gap；
-- `[hybrid-refresh-closure]`：最终 collar 和 candidate 尺寸；
-- `[reference-stability]`：每 epoch 一次的参考求解。
-
-正式 CSV/JSON 在 driver 结构化结束后写出。进程被外部杀死时保留 stdout、`.time` 和整个
-未完成目录，不要创建 `.done`，也不要覆盖重跑到同一 `RESULT_DIR`。
-脚本会在 `server-build-identity.txt` 冻结 commit、二进制 SHA256 和 patch thread 数；若
-同一目录已记录不同 identity，会在读取旧 `.done` 前拒绝运行，防止跨提交混合结果。
-
-新版模式只有在通用结构检查及上述 factor/pilot 科学门（零 swap、reserve/matching、
-Dörfler、物理半径、patch cap、`ell` 继承与三点 epoch）自动通过后才创建 `.done`；因此
-`.done` 表示该配置通过当前阶段门，而不只是进程退出。
-
-## 7. 完成验收与回传
-
-```bash
-sha256sum -c "$ROOT/SHA256SUMS"
-find "$ROOT/runs" -name run.json -print
-grep -H -E 'state=|stop_reason=|output=' "$ROOT"/logs/*.stdout
-```
-
-每个 schema-v6 run 必须包含：
+moving E2 stdout 重点查看 `[hybrid-moving-reference]`、`[hybrid-matching]`、
+`[helmholtz-model]` 和 `[hybrid-coarse-marking]`。每个 schema-v6 run 必须包含：
 
 ```text
 iterations.csv
@@ -212,15 +161,14 @@ corrector_work.csv
 hybrid_reserve.csv
 ```
 
-E2 hybrid 还应包含 `mesh_E2_final_hybrid_regions.vtu`。最终收敛率只按 epoch 内的
-`SolveAndEstimate` 点拟合；少于 3 点的 epoch 标为 `insufficient_data`，不得跨 refresh
-拼接。`time_method_cumulative` 已扣除 exact/reference validation 和网格快照复制，但
-wall-time 保护仍使用包含这些开销的原始 wall clock，二者不得混称。
+`hybrid_reserve.csv` 在 moving 路径中保存的是 `moving_reference_closure`，不是旧版 graded
+reserve。`.done` 只有在结构、Dörfler、物理半径、matching、promotion 数和误差净下降门
+全部通过后才会创建。
 
-回传完整目录（runtime config、CSV/JSON、VTU、stdout、time、硬件信息、SHA256），不要只
-回传图片：
+完成后回传完整结果目录而非只回传图片：
 
 ```bash
+sha256sum -c "$ROOT/SHA256SUMS"
 cd "$(dirname "$ROOT")"
 tar --zstd -cf "$(basename "$ROOT").tar.zst" "$(basename "$ROOT")"
 sha256sum "$(basename "$ROOT").tar.zst" > "$(basename "$ROOT").tar.zst.sha256"

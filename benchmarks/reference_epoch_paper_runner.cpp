@@ -575,8 +575,13 @@ public:
         if (epoch_started_) ++epoch_index_;
         epoch_started_ = true;
         hierarchy_.begin_reference_epoch();
-        reference_solution_.reset();
-        reference_load_.reset();
+        const bool reuse_promoted_reference_solution =
+            config_.singularity_hybrid && promoted_reference_solution_ready_;
+        if (!reuse_promoted_reference_solution) {
+            reference_solution_.reset();
+            reference_load_.reset();
+        }
+        promoted_reference_solution_ready_ = false;
         reference_discrete_norm_.reset();
         reference_exact_relative_energy_.reset();
         model_.reset();
@@ -837,45 +842,53 @@ public:
         result.U_practical = config_.C_rel_usr * estimate.eta;
         if (config_.singularity_hybrid) {
             const Clock::time_point marking_start = Clock::now();
-            ClosureAwareHybridMarking marking =
-                mark_hybrid_regular_region_closure_aware(
-                    hierarchy_, estimate.element_eta_squared, *regions_,
-                    config_.theta_H,
-                    proposed_refinement_resource_guard());
-            result.marked_H = marking.marked_elements;
-            result.hybrid_regular_indicator_mass = marking.regular_mass;
-            result.hybrid_admissible_indicator_mass = marking.admissible_mass;
-            result.hybrid_marked_H_indicator_mass = marking.marked_mass;
-            result.hybrid_coarse_conformity_collar =
-                marking.conformity_collar_layers;
-            result.hybrid_coarse_marking_closure_safe = marking.closure_safe;
+            // Algorithm 2 marks the complete regular region.  Prospective
+            // matching is deliberately postponed until after candidate
+            // enrichment, so neither reference-containment previews nor a
+            // closure-safe subset may alter the regional bulk criterion.
+            result.marked_H = mark_hybrid_regular_region(
+                estimate.element_eta_squared, *regions_, config_.theta_H);
+            result.hybrid_regular_indicator_mass = 0.0;
+            result.hybrid_marked_H_indicator_mass = 0.0;
+            for (int element = 0;
+                 element < static_cast<int>(estimate.element_eta_squared.size());
+                 ++element) {
+                if (regions_->in_regular[element]) {
+                    result.hybrid_regular_indicator_mass +=
+                        estimate.element_eta_squared[element];
+                }
+            }
+            for (const int element : result.marked_H) {
+                result.hybrid_marked_H_indicator_mass +=
+                    estimate.element_eta_squared[element];
+            }
+            result.hybrid_admissible_indicator_mass =
+                result.hybrid_regular_indicator_mass;
+            result.hybrid_coarse_conformity_collar = 0;
+            result.hybrid_coarse_marking_closure_safe = false;
             result.hybrid_full_regular_doerfler =
-                marking.full_regular_doerfler;
-            result.hybrid_coarse_preview_attempts = marking.preview_attempts;
-            result.hybrid_coarse_preview_cached =
-                marking.accepted_preview.has_value();
-            result.time_hybrid_coarse_preview = marking.time_preview;
-            result.time_hybrid_coarse_preview_nvb = marking.time_preview_nvb;
-            result.time_hybrid_coarse_preview_reference_embedding =
-                marking.time_preview_reference_embedding;
-            accepted_coarse_preview_ = std::move(marking.accepted_preview);
+                result.hybrid_regular_indicator_mass == 0.0
+                || result.hybrid_marked_H_indicator_mass
+                    + 1e-14 * result.hybrid_regular_indicator_mass
+                    >= config_.theta_H
+                        * result.hybrid_regular_indicator_mass;
+            result.hybrid_coarse_preview_attempts = 0;
+            result.hybrid_coarse_preview_cached = false;
+            accepted_coarse_preview_.reset();
             result.time_hybrid_coarse_marking = seconds_since(marking_start);
             std::cerr
                 << "[hybrid-coarse-marking] epoch=" << epoch_index_
                 << " H_step=" << committed_H_steps_
-                << " regular_mass=" << marking.regular_mass
-                << " admissible_mass=" << marking.admissible_mass
-                << " marked_mass=" << marking.marked_mass
-                << " collar=" << marking.conformity_collar_layers
-                << " closure_safe="
-                << (marking.closure_safe ? "true" : "false")
+                << " regular_mass=" << result.hybrid_regular_indicator_mass
+                << " admissible_mass=" << result.hybrid_admissible_indicator_mass
+                << " marked_mass=" << result.hybrid_marked_H_indicator_mass
+                << " collar=NA"
+                << " closure_safe=not_applicable"
                 << " full_doerfler="
-                << (marking.full_regular_doerfler ? "true" : "false")
-                << " preview_attempts=" << marking.preview_attempts
-                << " preview_cached="
-                << (result.hybrid_coarse_preview_cached ? "true" : "false")
+                << (result.hybrid_full_regular_doerfler ? "true" : "false")
+                << " preview_attempts=0 preview_cached=false"
                 << " time_marking=" << result.time_hybrid_coarse_marking
-                << " time_preview=" << result.time_hybrid_coarse_preview
+                << " time_preview=0"
                 << std::endl;
         } else {
             accepted_coarse_preview_.reset();
@@ -962,32 +975,18 @@ public:
         if (!config_.singularity_hybrid) return;
 
         const Clock::time_point matching_start = Clock::now();
-        ProposedHybridMatchingResult matching;
-        if (hierarchy_.reference_contains_proposed_coarse()) {
-            matching = restore_proposed_hybrid_matching(
-                hierarchy_, current_ell_,
-                config_.hybrid_minimum_physical_radius,
-                HybridMatchingTarget::Reference, 64, proposal_guard);
-        } else {
-            matching.regions =
-                classify_singular_regions_with_physical_radius(
-                    hierarchy_.proposed_coarse_mesh(),
-                    {Point2(0.0, 0.0)}, current_ell_,
-                    config_.hybrid_minimum_physical_radius);
-        }
-        proposed_regions_ = matching.regions;
+        // The moving-reference algorithm freezes the candidate before it
+        // restores prospective matching.  At this stage we only classify the
+        // proposed mesh; refining it against the old reference would change
+        // the prescribed ordering of Algorithm 2.
+        proposed_regions_ = classify_singular_regions_with_physical_radius(
+            hierarchy_.proposed_coarse_mesh(), {Point2(0.0, 0.0)},
+            current_ell_, config_.hybrid_minimum_physical_radius);
         std::cerr
-            << "[hybrid-prospective-matching] seconds="
+            << "[hybrid-prospective-classification] seconds="
             << seconds_since(matching_start)
-            << " ell_S=" << matching.regions.l_s
-            << " rounds=" << matching.refinement_rounds
-            << " added_elements=" << matching.added_elements
-            << " time_classification=" << matching.time_classification
-            << " time_nvb=" << matching.time_nvb
-            << " time_embedding_update=" << matching.time_embedding_update
-            << " contained_in_reference="
-            << (hierarchy_.reference_contains_proposed_coarse()
-                    ? "true" : "false")
+            << " ell_S=" << proposed_regions_->l_s
+            << " rounds=0 added_elements=0"
             << std::endl;
     }
 
@@ -1272,6 +1271,110 @@ public:
             proposed_refinement_resource_guard();
         const ReferenceEpochRefinementGuard candidate_guard =
             candidate_refinement_resource_guard();
+        if (config_.singularity_hybrid
+            && minimum_post_refresh_level_gap == 0) {
+            // Algorithm 2: the candidate has already been enriched and
+            // closed over the unmodified coarse proposal.  Freeze it now,
+            // restore matching by refining only the proposal, verify the
+            // candidate problem, and promote immediately.  No level reserve,
+            // graded deepening, or candidate dual problem belongs here.
+            const Clock::time_point matching_start = Clock::now();
+            const ProposedHybridMatchingResult matching =
+                restore_proposed_hybrid_matching(
+                    hierarchy_, current_ell_,
+                    config_.hybrid_minimum_physical_radius,
+                    HybridMatchingTarget::Candidate, 64, proposal_guard);
+            const double matching_seconds = seconds_since(matching_start);
+            proposed_regions_ = matching.regions;
+
+            const Clock::time_point wellposedness_start = Clock::now();
+            const HelmholtzOperators candidate_operators =
+                assemble_helmholtz_operators(
+                    hierarchy_.candidate_mesh(), config_.wavenumber);
+            reference_load_ = assemble_helmholtz_load(
+                hierarchy_.candidate_mesh(), data_.source,
+                config_.quadrature, data_.quadrature_context);
+            reference_solution_ = solve_helmholtz_fem(
+                candidate_operators, *reference_load_);
+            const double wellposedness_seconds =
+                seconds_since(wellposedness_start);
+
+            enforce_reference_promotion_work_limit();
+            const Clock::time_point artifact_start = Clock::now();
+            ReferenceEpochMeshSnapshot pending_snapshot;
+            pending_snapshot.epoch = epoch_index_;
+            pending_snapshot.H_step = committed_H_steps_;
+            pending_snapshot.reference_mesh_version =
+                hierarchy_.reference_mesh_version();
+            pending_snapshot.stage = "pre_switch";
+            pending_snapshot.anchor_action =
+                ReferenceEpochDriverAction::RefreshReference;
+            pending_snapshot.anchor_occurrence = refresh_occurrence_;
+            pending_snapshot.coarse = hierarchy_.proposed_coarse_mesh();
+            pending_snapshot.candidate = hierarchy_.candidate_mesh();
+            artifact_capture_seconds_ += seconds_since(artifact_start);
+
+            hierarchy_.refresh_reference_from_candidate();
+            promoted_reference_solution_ready_ = true;
+            std::size_t matching_spill = 0;
+            for (const int element : proposed_regions_->omega_f_elements) {
+                if (embedding_children(
+                        hierarchy_.proposed_coarse_elements_to_reference(),
+                        element) != 1) {
+                    ++matching_spill;
+                }
+            }
+            if (matching_spill != 0) {
+                throw std::runtime_error(
+                    "moving-reference promotion did not preserve exact matching");
+            }
+
+            HybridReserveDiagnostic diagnostic;
+            diagnostic.epoch = epoch_index_;
+            diagnostic.H_step = committed_H_steps_;
+            diagnostic.refresh_index = refresh_occurrence_;
+            diagnostic.row_type = "moving_reference_closure";
+            diagnostic.status = "achieved";
+            diagnostic.requested_target_gap = 0;
+            diagnostic.collar = 0;
+            diagnostic.ell = current_ell_;
+            diagnostic.ell_s = proposed_regions_->l_s;
+            diagnostic.physical_radius =
+                config_.hybrid_minimum_physical_radius;
+            diagnostic.omega_s_elements =
+                proposed_regions_->omega_s_elements.size();
+            diagnostic.omega_f_elements =
+                proposed_regions_->omega_f_elements.size();
+            diagnostic.target_satisfied = true;
+            diagnostic.matching_spill = matching_spill;
+            diagnostic.candidate_elements =
+                hierarchy_.candidate_mesh().elems.size();
+            diagnostic.candidate_nodes =
+                hierarchy_.candidate_mesh().nodes.size();
+            diagnostic.time_matching = matching_seconds;
+            diagnostic.time_probe = wellposedness_seconds;
+            diagnostic.time_total = seconds_since(refresh_start);
+            hybrid_reserve_diagnostics_.push_back(std::move(diagnostic));
+
+            snapshots_.push_back(std::move(pending_snapshot));
+            ++refresh_occurrence_;
+            reference_discrete_norm_.reset();
+            reference_exact_relative_energy_.reset();
+            // Both caches validate hits by exact local matrices,
+            // constraints, and solver data and are memory bounded.  Retain
+            // them across moving-reference promotions so untouched patches
+            // can be reused; changed patches remain exact cache misses.
+            std::cerr
+                << "[hybrid-moving-reference] matching_seconds="
+                << matching_seconds
+                << " wellposedness_seconds=" << wellposedness_seconds
+                << " matching_rounds=" << matching.refinement_rounds
+                << " candidate_elements="
+                << hierarchy_.candidate_mesh().elems.size()
+                << " corrector_cache_retained=true"
+                << " gram_cache_retained=true" << std::endl;
+            return;
+        }
         if (config_.singularity_hybrid) {
             // First close exact matching against the fixed candidate.  Freeze
             // that proposal and its Omega_F afterwards: alternating proposal
@@ -1743,6 +1846,7 @@ private:
         accepted_coarse_preview_;
     std::optional<TriMesh> latest_solved_coarse_;
     bool epoch_started_ = false;
+    bool promoted_reference_solution_ready_ = false;
     bool epoch_start_snapshot_pending_ = false;
     int current_ell_ = 0;
     int hybrid_conformity_collar_layers_ = 1;
@@ -2294,27 +2398,27 @@ void write_auxiliary_outputs(
             << "  \"algorithm_variant\": {\"name\":"
             << json_string(
                    config.singularity_hybrid
-                   ? "adaptive-conformity-collar-v1"
+                   ? "moving-reference-singularity-aware-v1"
                    : "safeguarded-reference-epoch-v1")
             << ",\"manuscript_conformance\":"
             << json_string(
                    config.singularity_hybrid
-                   ? "implementation-erratum"
+                   ? "implementation-study-variant"
                    : "implementation-study-variant")
             << ",\"coarse_marking\":"
             << json_string(
                    config.singularity_hybrid
-                   ? "full-regular-Doerfler-with-closure-safe-selection-when-feasible"
+                   ? "full-regular-Doerfler"
                    : "full-Doerfler")
             << ",\"reserve_selection\":"
             << json_string(
                    config.singularity_hybrid
-                   ? "smallest-spill-free-feasible-collar"
+                   ? "not-applicable-immediate-promotion"
                    : "uniform")
             << ",\"reserve_trigger_scope\":"
             << json_string(
                    config.singularity_hybrid
-                   ? "far-full-target-regular-cells"
+                   ? "not-applicable"
                    : "not-applicable")
             << ",\"candidate_hierarchy_closure_order\":"
             << json_string("post-estimator")
@@ -2324,13 +2428,13 @@ void write_auxiliary_outputs(
             << "},\n  \"algorithm_2_reserve_policy\": "
             << json_string(
                        config.singularity_hybrid
-                       ? "graded-interface-reserve:min(g_tar,max(0,graph_distance_to_Omega_F-adaptive_conformity_collar))"
+                       ? "none:frozen-candidate-promoted-after-every-nonterminal-step"
                        : "not-applicable")
             << ",\n  \"timing_semantics\": {"
                "\"time_total_cumulative\":\"raw driver wall time\","
                "\"time_method_cumulative\":\"raw wall time minus completed reference/exact validation and mesh artifact capture\","
-               "\"time_hybrid_coarse_marking\":\"full closure-aware selection including all previews\","
-               "\"time_hybrid_coarse_preview\":\"all marked NVB/reference-embedding previews; accepted preview is reused by proposal\","
+               "\"time_hybrid_coarse_marking\":\"full regular-region Doerfler selection; no closure preview in moving-reference mode\","
+               "\"time_hybrid_coarse_preview\":\"zero in moving-reference mode\","
                "\"wall_limit_clock\":\"raw driver wall including validation and artifact capture\","
                "\"validation_changes_estimators_or_marking\":false},\n"
             << "  \"manuscript_sha256\": "

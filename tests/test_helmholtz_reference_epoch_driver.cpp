@@ -515,6 +515,42 @@ void verify_unavailable_reserve_is_structured() {
             "unavailable reserve has the wrong structured journal action");
 }
 
+void verify_moving_reference_promotes_every_nonterminal_step() {
+    ScriptedBackend backend;
+    backend.corrector_bounds = {0.1, 0.1, 0.1};
+    backend.error_bounds = {0.2, 0.1, 0.005};
+    ReferenceEpochDriverConfig config = base_config();
+    config.moving_reference = true;
+    config.reference_refresh_level_gap = 0;
+    config.reference_refresh_target_gap = 0;
+    config.minimum_solved_points_per_new_epoch = 0;
+    config.limits.maximum_H_steps = 3;
+    config.limits.maximum_epochs = 3;
+    ReferenceEpochPracticalDriver driver(backend, config);
+    const ReferenceEpochDriverResult result = driver.run();
+    require(result.state == ReferenceEpochDriverState::Converged
+                && result.H_steps == 3,
+            "moving-reference trajectory did not terminate on its third solve");
+    require(result.dual_checks == 0
+                && action_count(
+                    result, ReferenceEpochDriverAction::ComputeCandidateDual)
+                    == 0,
+            "moving-reference trajectory executed a candidate dual check");
+    require(action_count(
+                result, ReferenceEpochDriverAction::RefreshReference) == 2
+                && action_count(
+                    result,
+                    ReferenceEpochDriverAction::CommitCoarseRefinement) == 2,
+            "moving reference was not promoted after every nonterminal solve");
+    require(std::count(
+                backend.calls.begin(), backend.calls.end(), "refresh:0") == 2,
+            "moving-reference promotion requested a forbidden level reserve");
+    require(backend.calls.size() >= 2
+                && std::find(backend.calls.begin(), backend.calls.end(), "dual")
+                    == backend.calls.end(),
+            "moving-reference backend call order includes dual work");
+}
+
 } // namespace
 
 int main() {
@@ -533,6 +569,7 @@ int main() {
         verify_resource_and_ell_limits_are_structured();
         verify_internal_refresh_limit_is_structured();
         verify_unavailable_reserve_is_structured();
+        verify_moving_reference_promotes_every_nonterminal_step();
         std::cout << "Reference-epoch practical state machine passed\n";
         return 0;
     } catch (const std::exception &error) {

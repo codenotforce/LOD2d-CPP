@@ -130,7 +130,7 @@ case "$MODE" in
     ;;
   e2-revised-factor)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-thetaH01-step5-refresh-factor-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-reference-k16-H3-h12-radius0125-theta03-step2-factor-v6.json
       experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step6-refresh-factor-v6.json
     )
     MODE_MIN_AVAILABLE_GIB=96
@@ -139,7 +139,7 @@ case "$MODE" in
     ;;
   e2-revised-pilot)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-thetaH01-step8-pilot-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-reference-k16-H3-h12-radius0125-theta03-step8-pilot-v6.json
       experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step8-pilot-v6.json
     )
     MODE_MIN_AVAILABLE_GIB=192
@@ -148,10 +148,10 @@ case "$MODE" in
     ;;
   e2-revised-main)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-step15-v6.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step12-main-v6.json
       experiments/helmholtz_adaptive_paper/configs/E2-S-afem-k16-H3-level20-step40-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step12-main-v6.json
       experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H3-h16-ell3-step12-v4.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-reference-k16-H3-h12-radius0125-theta03-step15-main-v6.json
     )
     MODE_MIN_AVAILABLE_GIB=320
     MODE_MIN_FREE_DISK_GIB=200
@@ -243,6 +243,7 @@ BINARY="$BUILD_DIR/benchmarks/bench_helmholtz_adaptive_paper"
 GIT_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD)
 BUILD_HASH="sha256:$(sha256sum "$BINARY" | awk '{print $1}')"
 BASELINE_V6="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256"
+BASELINE_V6_PRE_MOVING="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE_PRE_MOVING_REFERENCE.sha256"
 BASELINE_V4="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE_LEGACY_V4.sha256"
 
 IDENTITY_FILE="$RESULT_DIR/server-build-identity.txt"
@@ -308,9 +309,12 @@ PY
     'import json,sys; print(json.load(open(sys.argv[1]))["manuscript_sha256"].removeprefix("sha256:"))' \
     "$runtime_config")
   revised_manuscript=$(awk 'NF && $1 !~ /^#/ {print $1; exit}' "$BASELINE_V6")
+  pre_moving_manuscript=$(awk 'NF && $1 !~ /^#/ {print $1; exit}' "$BASELINE_V6_PRE_MOVING")
   legacy_manuscript=$(awk 'NF && $1 !~ /^#/ {print $1; exit}' "$BASELINE_V4")
   if [[ "$config_manuscript" == "$revised_manuscript" ]]; then
     baseline="$BASELINE_V6"
+  elif [[ "$config_manuscript" == "$pre_moving_manuscript" ]]; then
+    baseline="$BASELINE_V6_PRE_MOVING"
   elif [[ "$config_manuscript" == "$legacy_manuscript" ]]; then
     baseline="$BASELINE_V4"
   else
@@ -379,9 +383,7 @@ if schema == 6:
         method = config["method"]
         hybrid = bool(config.get("singularity_hybrid"))
         variant = manifest.get("algorithm_variant", {})
-        expected_conformance = (
-            "implementation-erratum" if hybrid
-            else "implementation-study-variant")
+        expected_conformance = "implementation-study-variant"
         if variant.get("manuscript_conformance") != expected_conformance:
             raise SystemExit(
                 "unexpected manuscript conformance: "
@@ -474,9 +476,11 @@ if schema == 6:
                 raise SystemExit(f"ell was not inherited into epoch {epoch}")
 
         if hybrid:
-            if variant.get("reserve_trigger_scope") != \
-                    "far-full-target-regular-cells":
-                raise SystemExit("hybrid reserve trigger scope is undeclared")
+            if variant.get("name") != "moving-reference-singularity-aware-v1" \
+                    or variant.get("reserve_trigger_scope") != "not-applicable" \
+                    or variant.get("reserve_selection") != \
+                        "not-applicable-immediate-promotion":
+                raise SystemExit("moving-reference update policy is undeclared")
             radius = float(config["hybrid_minimum_physical_radius"])
             if abs(radius - 0.125) > 1e-14:
                 raise SystemExit(f"unexpected E2 physical radius {radius}")
@@ -510,17 +514,22 @@ if schema == 6:
             with (manifests[0].parent / "hybrid_reserve.csv").open(
                     newline="", encoding="utf-8") as stream:
                 reserve_rows = list(csv.DictReader(stream))
-            closures = [row for row in reserve_rows if row["row_type"] == "closure"]
-            if not closures:
-                raise SystemExit("hybrid run produced no audited reserve closure")
+            closures = [row for row in reserve_rows
+                        if row["row_type"] == "moving_reference_closure"]
+            expected_closures = max(0, len(solved) - 1)
+            if len(closures) != expected_closures:
+                raise SystemExit(
+                    "moving-reference promotion count does not match nonterminal solves")
             for row in closures:
-                requested = int(row["requested_target_gap"])
                 if row["status"] != "achieved" \
                         or not truth(row["target_satisfied"]) \
                         or int(row["matching_spill"]) != 0 \
-                        or int(row["profile_margin_after"]) < 0 \
-                        or int(row["far_gap_after"]) < requested:
-                    raise SystemExit("hybrid reserve closure scientific gate failed")
+                        or int(row["requested_target_gap"]) != 0:
+                    raise SystemExit("moving-reference matching closure gate failed")
+
+            if any(row["action"] == "ComputeCandidateDual"
+                   for row in iterations):
+                raise SystemExit("moving-reference run performed candidate dual work")
 
             preflight = re.findall(
                 r"\[hybrid-preflight\].*?max_patch_fine_elements=(\d+).*?guard=(\d+)",
@@ -554,8 +563,7 @@ if schema == 6:
                 candidates = [rows for epoch, rows in by_epoch.items()
                               if epoch > 0 and len(rows) >= 3]
             elif hybrid:
-                candidates = [rows for epoch, rows in by_epoch.items()
-                              if epoch in refresh_epochs and len(rows) >= 3]
+                candidates = [solved] if len(solved) >= 3 else []
             else:
                 candidates = []
             if (config["case"] == "R1" or hybrid) and not candidates:

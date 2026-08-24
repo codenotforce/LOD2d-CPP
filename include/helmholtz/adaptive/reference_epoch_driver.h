@@ -236,6 +236,11 @@ struct ReferenceEpochDriverLimits {
 };
 
 struct ReferenceEpochDriverConfig {
+    // Algorithm 2 uses a moving reference: after every nonterminal
+    // candidate enrichment the frozen candidate is promoted immediately.
+    // This bypasses the lazy dual/level-reserve state machine used by the
+    // standard reference-epoch algorithm.
+    bool moving_reference = false;
     int ell0 = 2;
     int ell_max = 6;
     // Threshold for the computable localization bound delta_loc_hat.  The
