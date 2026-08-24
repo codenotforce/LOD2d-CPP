@@ -5,7 +5,8 @@
 
 namespace lod2d::helmholtz::experiments {
 
-// WP7 entry point used by the existing paper benchmark when schema_version=5.
+// Reference-epoch entry point used by the paper benchmark when
+// schema_version=reference_epoch_paper_schema_version.
 // Returns a process-style status code and writes the complete reference-epoch
 // output contract below output_directory/run_id.
 int run_reference_epoch_paper(

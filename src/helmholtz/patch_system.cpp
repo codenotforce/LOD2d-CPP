@@ -363,8 +363,10 @@ HelmholtzPatchSystem HelmholtzPatchAssembler::assemble(int target) const {
             const Edge physical_edge = canonical_edge(
                 triangle[edge[0]], triangle[edge[1]]);
             if (fine_edge_counts_.at(edge_key(
-                    physical_edge[0], physical_edge[1])) == 1
-                && boundary_tag(fine_, physical_edge) == BoundaryTag::Robin) {
+                    physical_edge[0], physical_edge[1])) != 1)
+                continue;
+            const BoundaryTag tag = boundary_tag(fine_, physical_edge);
+            if (tag == BoundaryTag::Robin || tag == BoundaryTag::Neumann) {
                 system.touches_physical_boundary = true;
                 break;
             }

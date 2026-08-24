@@ -6,8 +6,10 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 using namespace lod2d;
@@ -285,6 +287,50 @@ void verify_mixed_boundary_contract() {
     verify_embeddings(hierarchy);
 }
 
+void verify_accepted_coarse_preview_is_reused_exactly() {
+    const TriMesh initial = make_helmholtz_unit_square_mesh();
+    ReferenceEpochHierarchy cached(initial, 2, 6);
+    ReferenceEpochHierarchy direct(initial, 2, 6);
+    const std::vector<int> marked{0, 3};
+
+    ReferenceEpochCoarseRefinementPreview preview =
+        cached.preview_coarse_refinement(marked);
+    require(preview.reference_contained(),
+            "nested coarse preview was not contained in the reference");
+    require(preview.marked_elements == marked,
+            "coarse preview did not retain its marked set");
+    require(preview.time_nvb_refine >= 0.0
+                && preview.time_reference_embedding_update >= 0.0,
+            "coarse preview timings are invalid");
+
+    const ReferenceEpochRefinementResult adopted =
+        cached.propose_coarse_refinement(std::move(preview));
+    require(adopted.changed(),
+            "accepted coarse preview did not open a proposal");
+    require(adopted.time_nvb_refine == 0.0,
+            "adopting a coarse preview repeated the NVB refinement");
+    require(direct.propose_coarse_refinement(marked).changed(),
+            "direct comparison proposal was not created");
+    require(canonical_triangles(cached.proposed_coarse_mesh())
+                == canonical_triangles(direct.proposed_coarse_mesh()),
+            "adopted preview changed the proposed triangulation");
+    require((cached.proposed_coarse_elements_to_reference()
+                - direct.proposed_coarse_elements_to_reference()).norm()
+                < 1e-12,
+            "adopted preview changed the reference element embedding");
+    require((cached.proposed_coarse_elements_to_candidate()
+                - direct.proposed_coarse_elements_to_candidate()).norm()
+                < 1e-12,
+            "adopted preview changed the candidate element embedding");
+    require(cached.commit_coarse_refinement().changed()
+                && direct.commit_coarse_refinement().changed(),
+            "preview/direct proposals could not be committed");
+    require(canonical_triangles(cached.coarse_mesh())
+                == canonical_triangles(direct.coarse_mesh()),
+            "preview adoption changed the committed triangulation");
+    verify_embeddings(cached);
+}
+
 void verify_incremental_candidate_refinement_matches_full_rebuild() {
     ReferenceEpochHierarchy hierarchy(
         make_helmholtz_unit_square_mesh(), 2, 7);
@@ -345,6 +391,219 @@ void verify_incremental_candidate_refinement_matches_full_rebuild() {
     }
 }
 
+void verify_incremental_pending_proposal_refinement() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 1, 5);
+    hierarchy.begin_reference_epoch();
+    const std::vector<TriangleSignature> committed_before =
+        canonical_triangles(hierarchy.coarse_mesh());
+    const std::uint64_t committed_version = hierarchy.coarse_mesh_version();
+
+    const int coarse_count = static_cast<int>(hierarchy.coarse_mesh().elems.size());
+    require(hierarchy.propose_coarse_refinement(
+                {0, coarse_count / 3}).changed(),
+            "initial pending proposal was not created");
+    const int proposed_count = static_cast<int>(
+        hierarchy.proposed_coarse_mesh().elems.size());
+    const ReferenceEpochRefinementResult refined =
+        hierarchy.refine_proposed_coarse({0, proposed_count / 3});
+    require(refined.changed(),
+            "pending proposal refinement did not change the proposal");
+    require(refined.time_nvb_refine >= 0.0
+                && refined.time_embedding_composition >= 0.0
+                && refined.time_parent_map_update >= 0.0
+                && refined.time_proposed_embedding_update >= 0.0,
+            "pending proposal phase timings are invalid");
+    require(canonical_triangles(hierarchy.coarse_mesh()) == committed_before
+                && hierarchy.coarse_mesh_version() == committed_version,
+            "pending proposal refinement mutated the committed coarse mesh");
+    require(hierarchy.reference_contains_proposed_coarse()
+                && hierarchy.candidate_contains_proposed_coarse(),
+            "fine fixed meshes do not contain a nested pending proposal");
+
+    const RefineOutput rebuilt_coarse = build_nested_mesh_embedding(
+        hierarchy.coarse_mesh(), hierarchy.proposed_coarse_mesh());
+    const RefineOutput rebuilt_reference = build_nested_mesh_embedding(
+        hierarchy.proposed_coarse_mesh(), hierarchy.reference_mesh());
+    const RefineOutput rebuilt_candidate = build_nested_mesh_embedding(
+        hierarchy.proposed_coarse_mesh(), hierarchy.candidate_mesh());
+    require((hierarchy.coarse_elements_to_proposed_coarse()
+                - rebuilt_coarse.P_elem).norm() < 1e-12,
+            "composed coarse/proposal element map differs from rebuild");
+    require((hierarchy.proposed_coarse_elements_to_reference()
+                - rebuilt_reference.P_elem).norm() < 1e-12,
+            "incremental proposal/reference element map differs from rebuild");
+    require((hierarchy.proposed_coarse_elements_to_candidate()
+                - rebuilt_candidate.P_elem).norm() < 1e-12,
+            "incremental proposal/candidate element map differs from rebuild");
+    require(hierarchy.reference_parent_proposed_coarse_elements()
+                == fine_element_parents(
+                    rebuilt_reference.P_elem,
+                    static_cast<int>(hierarchy.reference_mesh().elems.size()),
+                    static_cast<int>(hierarchy.proposed_coarse_mesh().elems.size())),
+            "incremental reference/proposal parent map differs from rebuild");
+    require(hierarchy.candidate_parent_proposed_coarse_elements()
+                == fine_element_parents(
+                    rebuilt_candidate.P_elem,
+                    static_cast<int>(hierarchy.candidate_mesh().elems.size()),
+                    static_cast<int>(hierarchy.proposed_coarse_mesh().elems.size())),
+            "incremental candidate/proposal parent map differs from rebuild");
+    require(hierarchy.commit_coarse_refinement().changed(),
+            "incrementally refined proposal could not be committed");
+    verify_embeddings(hierarchy);
+}
+
+void verify_absent_pending_containment_stays_cached() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 0, 1);
+    const std::vector<TriangleSignature> committed_before =
+        canonical_triangles(hierarchy.coarse_mesh());
+    std::vector<int> marked(hierarchy.coarse_mesh().elems.size());
+    std::iota(marked.begin(), marked.end(), 0);
+    require(hierarchy.propose_coarse_refinement(marked).changed(),
+            "matching proposal was not created");
+
+    marked.resize(hierarchy.proposed_coarse_mesh().elems.size());
+    std::iota(marked.begin(), marked.end(), 0);
+    require(hierarchy.refine_proposed_coarse(marked).changed(),
+            "proposal was not refined beyond the fixed fine meshes");
+    require(!hierarchy.reference_contains_proposed_coarse()
+                && !hierarchy.candidate_contains_proposed_coarse(),
+            "over-refined proposal retained an impossible containment cache");
+    require(hierarchy.refine_proposed_coarse({0}).changed(),
+            "noncontained proposal could not be refined transactionally");
+    require(!hierarchy.reference_contains_proposed_coarse()
+                && !hierarchy.candidate_contains_proposed_coarse(),
+            "absent proposal containment unexpectedly triggered a full rebuild");
+    require(canonical_triangles(hierarchy.coarse_mesh()) == committed_before,
+            "noncontained proposal refinement mutated the committed mesh");
+}
+
+void verify_masked_candidate_deepening() {
+    ReferenceEpochHierarchy hierarchy(
+        make_helmholtz_unit_square_mesh(), 1, 4);
+    hierarchy.begin_reference_epoch();
+    require(hierarchy.propose_coarse_refinement({0}).changed(),
+            "masked-depth proposal was not created");
+    require(hierarchy.candidate_contains_proposed_coarse(),
+            "uniform candidate does not contain the local proposal");
+
+    std::vector<char> included(
+        hierarchy.proposed_coarse_mesh().elems.size(), false);
+    for (int element = 0;
+         element < static_cast<int>(hierarchy.proposed_coarse_mesh().elems.size());
+         ++element) {
+        const Triangle &triangle = hierarchy.proposed_coarse_mesh().elems[element];
+        const Point2 centroid = (
+            hierarchy.proposed_coarse_mesh().nodes[triangle[0]]
+            + hierarchy.proposed_coarse_mesh().nodes[triangle[1]]
+            + hierarchy.proposed_coarse_mesh().nodes[triangle[2]]) / 3.0;
+        included[element] = centroid.x() < 0.4;
+    }
+    require(std::any_of(included.begin(), included.end(), [](char value) {
+                return value != 0;
+            }),
+            "masked-depth test selected no proposal elements");
+    require(std::any_of(included.begin(), included.end(), [](char value) {
+                return value == 0;
+            }),
+            "masked-depth test selected every proposal element");
+
+    constexpr int target_gap = 4;
+    require(hierarchy.deepen_candidate_over_proposed_coarse(
+                target_gap, included).changed(),
+            "masked candidate deepening did not refine the selected region");
+    const std::vector<int> parents =
+        hierarchy.candidate_parent_proposed_coarse_elements();
+    int selected_gap = std::numeric_limits<int>::max();
+    int excluded_gap = std::numeric_limits<int>::max();
+    for (int child = 0; child < static_cast<int>(parents.size()); ++child) {
+        const int local_gap = hierarchy.candidate_element_levels()[child]
+            - hierarchy.proposed_coarse_levels()[parents[child]];
+        if (included[parents[child]]) {
+            selected_gap = std::min(selected_gap, local_gap);
+        } else {
+            excluded_gap = std::min(excluded_gap, local_gap);
+        }
+    }
+    require(selected_gap >= target_gap,
+            "masked candidate deepening missed the selected target gap");
+    require(hierarchy.minimum_proposed_candidate_level_gap(included)
+                >= target_gap,
+            "masked candidate gap query missed the selected target");
+    require(excluded_gap < target_gap,
+            "masked candidate deepening unnecessarily deepened every excluded cell");
+}
+
+void verify_refinement_resource_guards() {
+    {
+        ReferenceEpochHierarchy hierarchy(
+            make_helmholtz_unit_square_mesh(), 0, 3);
+        const std::vector<TriangleSignature> candidate_before =
+            canonical_triangles(hierarchy.candidate_mesh());
+        std::vector<ReferenceEpochRefinementGuardPoint> points;
+        bool stopped = false;
+        try {
+            hierarchy.enrich_candidate(
+                {0},
+                [&](const ReferenceEpochRefinementGuardPoint point,
+                    const TriMesh &) {
+                    points.push_back(point);
+                    if (point
+                        == ReferenceEpochRefinementGuardPoint::AfterNvb) {
+                        throw std::runtime_error("test resource stop");
+                    }
+                });
+        } catch (const std::runtime_error &error) {
+            stopped = std::string(error.what()) == "test resource stop";
+        }
+        require(stopped,
+                "candidate post-NVB resource guard did not propagate");
+        require(points == std::vector<ReferenceEpochRefinementGuardPoint>{
+                    ReferenceEpochRefinementGuardPoint::BeforeNvb,
+                    ReferenceEpochRefinementGuardPoint::AfterNvb},
+                "candidate refinement guard did not bracket NVB");
+        require(canonical_triangles(hierarchy.candidate_mesh())
+                    == candidate_before,
+                "post-NVB guard left a partially installed candidate mesh");
+    }
+
+    {
+        ReferenceEpochHierarchy hierarchy(
+            make_helmholtz_unit_square_mesh(), 0, 3);
+        std::vector<int> marked(hierarchy.coarse_mesh().elems.size());
+        std::iota(marked.begin(), marked.end(), 0);
+        require(hierarchy.propose_coarse_refinement(marked).changed(),
+                "resource-guard depth proposal was not created");
+        const std::size_t candidate_before =
+            hierarchy.candidate_mesh().elems.size();
+        int before_calls = 0;
+        int after_calls = 0;
+        bool stopped = false;
+        try {
+            hierarchy.deepen_candidate_over_proposed_coarse(
+                4,
+                [&](const ReferenceEpochRefinementGuardPoint point,
+                    const TriMesh &) {
+                    if (point
+                        == ReferenceEpochRefinementGuardPoint::BeforeNvb) {
+                        ++before_calls;
+                        if (before_calls == 2)
+                            throw std::runtime_error("test depth stop");
+                    } else {
+                        ++after_calls;
+                    }
+                });
+        } catch (const std::runtime_error &error) {
+            stopped = std::string(error.what()) == "test depth stop";
+        }
+        require(stopped && before_calls == 2 && after_calls == 1,
+                "candidate deepening did not guard every internal NVB step");
+        require(hierarchy.candidate_mesh().elems.size() > candidate_before,
+                "guarded deepening did not retain its completed first step");
+    }
+}
+
 void verify_revised_candidate_transaction() {
     ReferenceEpochHierarchy hierarchy(
         make_helmholtz_unit_square_mesh(), 0, 1);
@@ -363,6 +622,13 @@ void verify_revised_candidate_transaction() {
             "pending coarse proposal was not retained");
     require(hierarchy.candidate_contains_proposed_coarse(),
             "reference-inherited candidate does not contain a representable proposal");
+    std::vector<char> one_matching_cell(
+        hierarchy.proposed_coarse_mesh().elems.size(), false);
+    one_matching_cell.front() = true;
+    require(hierarchy.minimum_proposed_reference_level_gap(one_matching_cell) == 0,
+            "selected zero reference gap was incorrectly ignored");
+    require(hierarchy.minimum_proposed_candidate_level_gap(one_matching_cell) == 0,
+            "selected zero candidate gap was incorrectly ignored");
     require(hierarchy.commit_coarse_refinement().changed(),
             "representable coarse proposal was not committed");
 
@@ -419,7 +685,12 @@ void verify_revised_candidate_transaction() {
 int main() {
     try {
         verify_incremental_embedding_matches_full_rebuild();
+        verify_accepted_coarse_preview_is_reused_exactly();
         verify_incremental_candidate_refinement_matches_full_rebuild();
+        verify_incremental_pending_proposal_refinement();
+        verify_absent_pending_containment_stays_cached();
+        verify_masked_candidate_deepening();
+        verify_refinement_resource_guards();
         verify_fixed_reference_and_ambient_ratio();
         verify_transactional_refresh_boundary();
         verify_mixed_boundary_contract();

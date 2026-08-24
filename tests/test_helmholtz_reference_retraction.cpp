@@ -52,7 +52,7 @@ HelmholtzLodModel build_reference_model(
 }
 
 void verify_cached_hierarchy_model_build() {
-    const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
+    const PaperCaseData data = make_paper_case(PaperCase::R2a, 4.0);
     ReferenceEpochHierarchy hierarchy(data.initial_mesh, 1, 3);
     HelmholtzProblemConfig config;
     config.H = 1;
@@ -87,7 +87,7 @@ void verify_cached_hierarchy_model_build() {
 }
 
 void verify_retraction_identities() {
-    const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
+    const PaperCaseData data = make_paper_case(PaperCase::R2a, 4.0);
     ReferenceEpochHierarchy hierarchy(data.initial_mesh, 1, 3);
     const AmbientRatioEnforcementResult ambient_update =
         hierarchy.enforce_ambient_ratio(0.2);
@@ -182,7 +182,7 @@ void verify_clustered_sparse_generalized_spectrum() {
 }
 
 void verify_localization_certificate() {
-    const PaperCaseData data = make_paper_case(PaperCase::R1, 4.0);
+    const PaperCaseData data = make_paper_case(PaperCase::R2a, 4.0);
     ReferenceEpochHierarchy hierarchy(data.initial_mesh, 4, 6);
     const AmbientRatioEnforcementResult ambient_update =
         hierarchy.enforce_ambient_ratio(0.2);

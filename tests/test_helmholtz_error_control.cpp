@@ -209,7 +209,10 @@ void verify_exact_reference_convergence(PaperCase id) {
     std::array<double, 2> energy_differences{};
     std::array<double, 2> l2_differences{};
     int slot = 0;
-    for (int reference_level : {2, 3}) {
+    // The revised R1 load is strongly localized; two adjacent very coarse
+    // levels can show pre-asymptotic L2 oscillation. Compare against a
+    // genuinely finer evaluation reference while retaining the same check.
+    for (int reference_level : {2, 4}) {
         const TriMesh reference_mesh =
             refine_mesh_nvb(data.initial_mesh, reference_level).mesh;
         EvaluationReferenceService evaluation(reference_mesh, data.wavenumber);

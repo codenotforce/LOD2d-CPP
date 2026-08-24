@@ -396,6 +396,9 @@ CandidateFluxResult reconstruct_candidate_flux_rt0(
                 continue;
             }
             const BoundaryTag tag = boundary_tag(mesh, edge_data.nodes);
+            if (tag == BoundaryTag::Interior)
+                throw std::runtime_error(
+                    "candidate flux found an unclassified physical boundary edge");
             if (tag == BoundaryTag::Dirichlet) {
                 diagnostic.touches_dirichlet = true;
                 free_index[edge_index] = static_cast<int>(free_edges.size());
@@ -408,6 +411,8 @@ CandidateFluxResult reconstruct_candidate_flux_rt0(
                     * operators.boundary_beta)
                     * edge_hat_solution_integral(
                         mesh, edge_data.nodes, vertex, values);
+            } else if (tag != BoundaryTag::Neumann) {
+                throw std::runtime_error("candidate flux found an unknown boundary tag");
             }
             fixed_flux[edge_index] = patch_side->orientation * local_flux;
             physical_flux_integral += local_flux;
@@ -659,6 +664,9 @@ CandidateFluxResult reconstruct_candidate_flux_rt0(
             if (edge_data.incidences.size() != 1) continue;
             const BoundaryTag tag = boundary_tag(mesh, edge_data.nodes);
             if (tag == BoundaryTag::Dirichlet) continue;
+            if (tag == BoundaryTag::Interior)
+                throw std::runtime_error(
+                    "candidate flux audit found an unclassified physical boundary edge");
             const EdgeIncidence &side = edge_data.incidences.front();
             const Point2 midpoint = 0.5 * (
                 mesh.nodes[edge_data.nodes[0]]
@@ -677,6 +685,9 @@ CandidateFluxResult reconstruct_candidate_flux_rt0(
                 expected = -Complex(0.0, operators.wavenumber
                     * operators.boundary_beta) * length * 0.5
                     * (values(edge_data.nodes[0]) + values(edge_data.nodes[1]));
+            } else if (tag != BoundaryTag::Neumann) {
+                throw std::runtime_error(
+                    "candidate flux audit found an unknown boundary tag");
             }
             result.maximum_boundary_flux_residual = std::max(
                 result.maximum_boundary_flux_residual,
@@ -891,7 +902,12 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
         element_count);
     std::vector<Eigen::Matrix<double, 15, 15>> rt2_mass(element_count);
     std::vector<std::array<Point2, 6>> p2_points(element_count);
+    std::vector<std::exception_ptr> prepare_errors(element_count);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if(element_count >= 64)
+#endif
     for (int element = 0; element < element_count; ++element) {
+        try {
         maps[element] = rt2_element_map(mesh, element);
         geometry[element] = element_geometry(mesh, element);
         gradients[element] = element_gradient(
@@ -911,7 +927,12 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                 * basis.transpose() * basis;
         }
         p2_points[element] = p2_interpolation_points(mesh, element);
+        } catch (...) {
+            prepare_errors[element] = std::current_exception();
+        }
     }
+    for (const std::exception_ptr &error : prepare_errors)
+        if (error) std::rethrow_exception(error);
 
     std::vector<std::vector<int>> vertex_elements(node_count);
     for (int element = 0; element < element_count; ++element)
@@ -1020,7 +1041,10 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                 diagnostic.touches_dirichlet = true;
                 continue;
             }
-            if (tag != BoundaryTag::Robin) continue;
+            if (tag == BoundaryTag::Neumann) continue;
+            if (tag != BoundaryTag::Robin)
+                throw std::runtime_error(
+                    "candidate RT2 flux found an unclassified physical boundary edge");
             const double length = (
                 mesh.nodes[edge.nodes[1]] - mesh.nodes[edge.nodes[0]]).norm();
             const int element = sides.front()->element;
@@ -1136,6 +1160,9 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
             BoundaryTag tag = BoundaryTag::Interior;
             if (edge.incidences.size() == 1) {
                 tag = boundary_tag(mesh, edge.nodes);
+                if (tag == BoundaryTag::Interior)
+                    throw std::runtime_error(
+                        "candidate RT2 flux found an unclassified physical boundary edge");
                 free_dirichlet = tag == BoundaryTag::Dirichlet;
             }
             if (free_dirichlet) continue;
@@ -1156,6 +1183,10 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                         * operators.boundary_beta)
                         * bary(local_vertex_index[local])
                         * interpolate_p1(mesh, side.element, values, bary);
+                } else if (edge.incidences.size() == 1
+                           && tag != BoundaryTag::Neumann) {
+                    throw std::runtime_error(
+                        "candidate RT2 flux found an unknown boundary tag");
                 }
                 constraint_rows.push_back(std::move(row));
                 constraint_rhs.push_back(prescribed);
@@ -1269,7 +1300,13 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
 
     const auto audit_begin = std::chrono::steady_clock::now();
     result.element_eta_squared.assign(element_count, 0.0);
+    std::vector<double> element_divergence_residual(element_count, 0.0);
+    std::vector<std::exception_ptr> audit_errors(element_count);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if(element_count >= 64)
+#endif
     for (int element = 0; element < element_count; ++element) {
+        try {
         for (const Point2 &point : p2_points[element]) {
             const Eigen::Vector3d bary = physical_barycentric(
                 maps[element], point);
@@ -1279,8 +1316,8 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                     * operators.refractive_index[element]
                     * interpolate_p1(mesh, element, values, bary)
                 - result.delta_pg[element];
-            result.maximum_element_divergence_residual = std::max(
-                result.maximum_element_divergence_residual,
+            element_divergence_residual[element] = std::max(
+                element_divergence_residual[element],
                 std::abs(evaluate_candidate_rt2_divergence(
                     mesh, element, result.element_rt2_coefficients[element],
                     point) - expected));
@@ -1308,6 +1345,16 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
         result.element_eta_squared[element] = std::max(
             0.0, flux_error_squared + correction_squared
                 + oscillation_squared);
+        } catch (...) {
+            audit_errors[element] = std::current_exception();
+        }
+    }
+    for (int element = 0; element < element_count; ++element) {
+        if (audit_errors[element])
+            std::rethrow_exception(audit_errors[element]);
+        result.maximum_element_divergence_residual = std::max(
+            result.maximum_element_divergence_residual,
+            element_divergence_residual[element]);
     }
 
     if (result.global_reconstruction) {
@@ -1331,6 +1378,9 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                 }
                 const BoundaryTag tag = boundary_tag(mesh, edge.nodes);
                 if (tag == BoundaryTag::Dirichlet) continue;
+                if (tag == BoundaryTag::Interior)
+                    throw std::runtime_error(
+                        "candidate RT2 flux audit found an unclassified physical boundary edge");
                 const EdgeIncidence &side = edge.incidences.front();
                 const Complex actual = edge_outward_normal(mesh, edge, side)
                     .cast<Complex>().dot(evaluate_candidate_rt2_flux(
@@ -1343,6 +1393,9 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
                     expected = -Complex(0.0, operators.wavenumber
                         * operators.boundary_beta)
                         * interpolate_p1(mesh, side.element, values, bary);
+                } else if (tag != BoundaryTag::Neumann) {
+                    throw std::runtime_error(
+                        "candidate RT2 flux audit found an unknown boundary tag");
                 }
                 result.maximum_boundary_flux_residual = std::max(
                     result.maximum_boundary_flux_residual,

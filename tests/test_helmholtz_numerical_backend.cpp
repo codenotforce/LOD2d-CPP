@@ -37,9 +37,9 @@ CertificateConstantRegistry conditional_constants() {
         constant.name = name;
         constant.value = value;
         constant.direction = CertificateBoundDirection::Upper;
-        constant.source = "R1 integration-test floating constant";
+        constant.source = "R2a integration-test floating constant";
         constant.derivation = "diagnostic value, not an interval proof";
-        constant.mesh_class = "runtime R1 mesh";
+        constant.mesh_class = "runtime R2a mesh";
         constant.verified = false;
         registry.set(std::move(constant));
     };
@@ -54,19 +54,19 @@ CertificateConstantRegistry conditional_constants() {
     shift.name = "s";
     shift.value = 1.0;
     shift.direction = CertificateBoundDirection::Exact;
-    shift.source = "R1 integration-test floating constant";
+    shift.source = "R2a integration-test floating constant";
     shift.derivation = "diagnostic shift, not an interval proof";
-    shift.mesh_class = "runtime R1 mesh";
+    shift.mesh_class = "runtime R2a mesh";
     shift.verified = false;
     registry.set(std::move(shift));
     return registry;
 }
 
 NumericalCertifiedBackendConfig r1_backend_config() {
-    const PaperCaseData data = make_paper_case(PaperCase::R1, 1.0);
+    const PaperCaseData data = make_paper_case(PaperCase::R2a, 1.0);
     NumericalCertifiedBackendConfig config;
-    config.problem_id = "paper-R1-k1-small";
-    config.source_id = "R1-polynomial-plane-wave-source-v1";
+    config.problem_id = "paper-R2a-k1-small";
+    config.source_id = "R2a-localized-gaussian-source-v1";
     config.initial_mesh = data.initial_mesh;
     config.source = data.source;
     config.initial_coarse_level = 0;

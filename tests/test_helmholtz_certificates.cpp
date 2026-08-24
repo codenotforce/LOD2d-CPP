@@ -169,7 +169,11 @@ double explicit_generalized_largest(const ComplexMatrix &numerator,
 }
 
 void verify_case(PaperCase id) {
-    const CorrectorCertificateResult result = build_case(id, 0, 1, 1);
+    // Revised R1 has Dirichlet data on both horizontal sides, so its
+    // four-vertex level-zero mesh has no free coarse degree of freedom.
+    const int coarse_level = id == PaperCase::R1 ? 1 : 0;
+    const CorrectorCertificateResult result = build_case(
+        id, coarse_level, coarse_level + 1, 1);
     require(result.status == CorrectorCertificateStatus::Conditional,
             "unverified constants or assembly were promoted to certified");
     require(!result.conditional_reasons.empty(),
@@ -240,9 +244,9 @@ void verify_case(PaperCase id) {
 
 void verify_resolution_sensitivity() {
     const CorrectorCertificateResult coarse_corrector =
-        build_case(PaperCase::R1, 0, 1, 1);
+        build_case(PaperCase::R2a, 0, 1, 1);
     const CorrectorCertificateResult fine_corrector =
-        build_case(PaperCase::R1, 0, 2, 1);
+        build_case(PaperCase::R2a, 0, 2, 1);
     std::cout << "Theta_h coarse/fine corrector="
               << coarse_corrector.fine_spectrum.theta_approximation << '/'
               << fine_corrector.fine_spectrum.theta_approximation << '\n';
@@ -253,9 +257,9 @@ void verify_resolution_sensitivity() {
 
 void verify_localization_sensitivity() {
     const CorrectorCertificateResult short_patch =
-        build_case(PaperCase::R1, 1, 2, 0);
+        build_case(PaperCase::R2a, 1, 2, 0);
     const CorrectorCertificateResult long_patch =
-        build_case(PaperCase::R1, 1, 2, 1);
+        build_case(PaperCase::R2a, 1, 2, 1);
     std::cout << "Theta_tot ell0/ell1="
               << short_patch.total_spectrum.theta_approximation << '/'
               << long_patch.total_spectrum.theta_approximation << '\n';
@@ -277,7 +281,7 @@ void verify_registry_direction_gate() {
 
 void verify_plain_floating_inputs_fail_closed() {
     const CorrectorCertificateResult result = build_case(
-        PaperCase::R1, 0, 1, 1,
+        PaperCase::R2a, 0, 1, 1,
         false, false, true, false);
     require(result.status != CorrectorCertificateStatus::Certified,
             "ordinary floating-point matrices were promoted to Certified");
@@ -291,7 +295,7 @@ void verify_plain_floating_inputs_fail_closed() {
 
 void verify_stale_context_rejected() {
     const CorrectorCertificateResult bound = build_case(
-        PaperCase::R1, 0, 1, 1,
+        PaperCase::R2a, 0, 1, 1,
         true, false, true, false);
     require(bound.assembly_evidence.valid_for(bound.context_fingerprint),
             "current-context evidence fixture did not bind");
@@ -313,7 +317,7 @@ void verify_stale_context_rejected() {
             "wrong operator fingerprint matched the current context");
 
     const CorrectorCertificateResult stale_evidence = build_case(
-        PaperCase::R1, 0, 1, 1,
+        PaperCase::R2a, 0, 1, 1,
         true, true, true, false);
     require(stale_evidence.assembly_evidence.valid(),
             "stale evidence fixture is structurally invalid");
@@ -328,7 +332,7 @@ void verify_stale_context_rejected() {
             "stale assembly evidence has no mismatch reason");
 
     const CorrectorCertificateResult stale_constant = build_case(
-        PaperCase::R1, 0, 1, 1,
+        PaperCase::R2a, 0, 1, 1,
         true, false, true, true);
     const CertificateConstant *c_sd = stale_constant.constants.find("C_sd");
     require(c_sd != nullptr && !c_sd->verified,
@@ -342,7 +346,7 @@ void verify_stale_context_rejected() {
 
 void verify_localization_triangle_fallback() {
     const CorrectorCertificateResult result = build_case(
-        PaperCase::R1, 0, 1, 1,
+        PaperCase::R2a, 0, 1, 1,
         true, false, true, false);
     require(!result.localization_decay_bound_used,
             "missing C_loc/beta/s unexpectedly enabled localization decay");
@@ -362,7 +366,7 @@ void verify_inconsistent_operator_rejected() {
     bool rejected = false;
     try {
         (void)build_case(
-            PaperCase::R1, 0, 1, 1,
+            PaperCase::R2a, 0, 1, 1,
             true, false, true, false, true);
     } catch (const std::invalid_argument &) {
         rejected = true;
@@ -373,7 +377,7 @@ void verify_inconsistent_operator_rejected() {
 
 void verify_local_interval_correction_gate() {
     const CorrectorCertificateResult result =
-        build_case(PaperCase::R1, 0, 1, 1, true);
+        build_case(PaperCase::R2a, 0, 1, 1, true);
     require(!result.matrix_enclosure_arithmetic_verified,
             "ordinary-double matrix enclosure propagation was marked verified");
     require(result.total_primal_riesz.verified_solve_count == 0,

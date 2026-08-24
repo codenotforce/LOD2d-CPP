@@ -124,6 +124,14 @@ int main() {
                 ReferenceDefectGramOperator parallel(
                     hierarchy, localized.operators(), certificate.defect_rhs,
                     KernelRieszSolver::SaddlePoint, 4);
+#ifdef _OPENMP
+                require(parallel.diagnostics().parallel_threads >= 1
+                            && parallel.diagnostics().parallel_threads <= 4,
+                        "prepared Gram diagnostics report an invalid OpenMP team");
+#else
+                require(parallel.diagnostics().parallel_threads == 1,
+                        "prepared Gram diagnostics report threads without OpenMP");
+#endif
                 ReferenceDefectGramFactorCache factor_cache(1024);
                 ReferenceDefectGramOperator cached_first(
                     hierarchy, localized.operators(), certificate.defect_rhs,

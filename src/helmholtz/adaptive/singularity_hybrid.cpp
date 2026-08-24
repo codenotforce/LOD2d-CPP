@@ -153,6 +153,10 @@ SingularRegionClassification classify_impl(
     const auto graph = element_graph(mesh);
     const std::vector<int> distance = graph_distances(
         graph, result.seed_elements);
+    // N^0(S)=S in the manuscript, while graph distance zero denotes the
+    // coarse cells in N^1(S).  Hence ell_S is one plus the largest cell-graph
+    // distance needed to cover the fixed physical ball.  It remains
+    // independent of the corrector oversampling width ell.
     int physical_layers = 0;
     if (minimum_physical_radius > 0.0) {
         for (int element = 0; element < static_cast<int>(mesh.elems.size());
@@ -169,15 +173,15 @@ SingularRegionClassification classify_impl(
                     throw std::runtime_error(
                         "physical singular neighborhood is graph-disconnected");
                 physical_layers = std::max(
-                    physical_layers, (distance[element] + 1) / 2);
+                    physical_layers, distance[element]);
             }
         }
     }
-    result.l_s = std::max(ell, physical_layers);
+    result.l_s = physical_layers + 1;
     result.omega_s_elements = graph_neighborhood(
-        graph, result.seed_elements, result.l_s);
+        graph, result.seed_elements, result.l_s - 1);
     result.omega_f_elements = graph_neighborhood(
-        graph, result.seed_elements, 2 * result.l_s);
+        graph, result.seed_elements, result.l_s - 1 + ell);
     result.in_omega_s.assign(mesh.elems.size(), false);
     result.in_omega_f.assign(mesh.elems.size(), false);
     result.in_regular.assign(mesh.elems.size(), true);
@@ -192,7 +196,11 @@ SingularRegionClassification classify_impl(
         if (result.in_regular[element]) result.regular_elements.push_back(element);
 
     double covered = std::numeric_limits<double>::infinity();
-    for (int element : result.regular_elements) {
+    // Measure the radius of the physical core Omega_S, not that of the
+    // transition-enlarged matching region Omega_F.
+    for (int element = 0; element < static_cast<int>(mesh.elems.size());
+         ++element) {
+        if (result.in_omega_s[element]) continue;
         for (const Point2 &point : singular_points) {
             covered = std::min(
                 covered,
@@ -202,9 +210,13 @@ SingularRegionClassification classify_impl(
     }
     if (!std::isfinite(covered)) {
         covered = 0.0;
-        for (const Point2 &node : mesh.nodes)
+        for (const Point2 &node : mesh.nodes) {
+            double distance_to_set = std::numeric_limits<double>::infinity();
             for (const Point2 &point : singular_points)
-                covered = std::max(covered, (node - point).norm());
+                distance_to_set = std::min(
+                    distance_to_set, (node - point).norm());
+            covered = std::max(covered, distance_to_set);
+        }
     }
     result.covered_physical_radius = covered;
     if (covered + geometric_tolerance < minimum_physical_radius)
@@ -246,6 +258,51 @@ SingularRegionClassification classify_singular_regions_with_physical_radius(
     return classify_impl(
         mesh, singular_points, ell, minimum_physical_radius,
         geometric_tolerance);
+}
+
+HybridGradedReserveProfile make_hybrid_graded_reserve_profile(
+    const TriMesh &mesh,
+    const SingularRegionClassification &regions,
+    const int target_gap,
+    const int neutral_collar_layers) {
+    if (target_gap < 0 || neutral_collar_layers < 0)
+        throw std::invalid_argument(
+            "hybrid graded reserve target and collar must be nonnegative");
+    if (regions.in_omega_f.size() != mesh.elems.size()
+        || regions.in_regular.size() != mesh.elems.size()) {
+        throw std::invalid_argument(
+            "hybrid graded reserve regions do not match the coarse mesh");
+    }
+    if (regions.omega_f_elements.empty())
+        throw std::invalid_argument(
+            "hybrid graded reserve requires a nonempty matching region");
+
+    const std::vector<int> distance = graph_distances(
+        element_graph(mesh), regions.omega_f_elements);
+    HybridGradedReserveProfile result;
+    result.neutral_collar_layers = neutral_collar_layers;
+    result.target_level_gaps.assign(mesh.elems.size(), 0);
+    result.at_full_target.assign(mesh.elems.size(), false);
+    for (int element = 0; element < static_cast<int>(mesh.elems.size());
+         ++element) {
+        if (regions.in_omega_f[element]) continue;
+        if (!regions.in_regular[element])
+            throw std::invalid_argument(
+                "hybrid matching and regular masks do not form a partition");
+        const int graph_distance = distance[element];
+        if (graph_distance == std::numeric_limits<int>::max())
+            throw std::runtime_error(
+                "hybrid regular region is disconnected from the matching region");
+        result.maximum_graph_distance = std::max(
+            result.maximum_graph_distance, graph_distance);
+        const int local_target = std::min(
+            target_gap,
+            std::max(0, graph_distance - neutral_collar_layers));
+        result.target_level_gaps[element] = local_target;
+        result.at_full_target[element] = local_target == target_gap;
+        if (result.at_full_target[element]) ++result.full_target_elements;
+    }
+    return result;
 }
 
 bool hybrid_reference_matching_holds(
@@ -376,6 +433,67 @@ std::vector<int> mark_hybrid_regular_region(
     const double mass = std::accumulate(regular.begin(), regular.end(), 0.0);
     if (!(mass > 0.0)) return {};
     return mark_doerfler(regular, theta, regions.in_regular);
+}
+
+SplitRegionalDoerflerMarking mark_split_regional_doerfler(
+    const std::vector<double> &element_eta_squared,
+    const std::vector<char> &in_omega_f,
+    double theta) {
+    if (element_eta_squared.size() != in_omega_f.size())
+        throw std::invalid_argument(
+            "split regional marking mask does not match indicators");
+    if (!(theta > 0.0 && theta <= 1.0))
+        throw std::invalid_argument(
+            "split regional Doerfler theta must lie in (0,1]");
+
+    SplitRegionalDoerflerMarking result;
+    std::vector<double> omega_f(element_eta_squared.size(), 0.0);
+    std::vector<double> regular(element_eta_squared.size(), 0.0);
+    std::vector<char> in_regular(element_eta_squared.size(), false);
+    for (int element = 0;
+         element < static_cast<int>(element_eta_squared.size()); ++element) {
+        const double value = element_eta_squared[element];
+        if (!(value >= 0.0) || !std::isfinite(value))
+            throw std::invalid_argument(
+                "split regional indicators must be finite and nonnegative");
+        if (in_omega_f[element]) {
+            omega_f[element] = value;
+            result.omega_f_mass += value;
+        } else {
+            regular[element] = value;
+            in_regular[element] = true;
+            result.regular_mass += value;
+        }
+    }
+    if (!std::isfinite(result.omega_f_mass)
+        || !std::isfinite(result.regular_mass))
+        throw std::invalid_argument(
+            "split regional indicator mass is not finite");
+
+    if (result.omega_f_mass > 0.0) {
+        result.marked_omega_f_elements = mark_doerfler(
+            omega_f, theta, in_omega_f);
+        for (int element : result.marked_omega_f_elements)
+            result.marked_omega_f_mass += element_eta_squared[element];
+    }
+    if (result.regular_mass > 0.0) {
+        result.marked_regular_elements = mark_doerfler(
+            regular, theta, in_regular);
+        for (int element : result.marked_regular_elements)
+            result.marked_regular_mass += element_eta_squared[element];
+    }
+
+    result.marked_elements = result.marked_omega_f_elements;
+    result.marked_elements.insert(
+        result.marked_elements.end(),
+        result.marked_regular_elements.begin(),
+        result.marked_regular_elements.end());
+    std::sort(result.marked_elements.begin(), result.marked_elements.end());
+    result.marked_elements.erase(
+        std::unique(
+            result.marked_elements.begin(), result.marked_elements.end()),
+        result.marked_elements.end());
+    return result;
 }
 
 } // namespace lod2d::helmholtz::adaptive

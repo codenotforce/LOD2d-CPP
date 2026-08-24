@@ -5,6 +5,7 @@
 #include "helmholtz/adaptive/kernel_residual.h"
 #include "helmholtz/benchmarks/paper_cases.h"
 #include "helmholtz/boundary.h"
+#include "helmholtz/experiments/paper_config.h"
 #include "helmholtz/model.h"
 
 #include <algorithm>
@@ -18,7 +19,12 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <vector>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 using namespace lod2d;
 using namespace lod2d::helmholtz;
@@ -37,6 +43,10 @@ constexpr double kSafety = 1.25;
 struct Arguments {
     std::filesystem::path output;
     bool check = false;
+    std::string code_commit = "unrecorded";
+    std::string build_sha256 = "unrecorded";
+    std::string manuscript_sha256 = "unrecorded";
+    std::string generated_at = "unrecorded";
 };
 
 struct CorrectorRow {
@@ -64,6 +74,14 @@ Arguments parse_arguments(int argc, char **argv) {
         if (argument.starts_with("--output-dir="))
             result.output = argument.substr(13);
         else if (argument == "--check") result.check = true;
+        else if (argument.starts_with("--code-commit="))
+            result.code_commit = argument.substr(14);
+        else if (argument.starts_with("--build-sha256="))
+            result.build_sha256 = argument.substr(15);
+        else if (argument.starts_with("--manuscript-sha256="))
+            result.manuscript_sha256 = argument.substr(20);
+        else if (argument.starts_with("--generated-at="))
+            result.generated_at = argument.substr(15);
         else throw std::invalid_argument("unknown argument: " + argument);
     }
     if (result.output.empty())
@@ -101,6 +119,45 @@ int main(int argc, char **argv) {
         const PaperCaseData data = make_paper_case(PaperCase::R1, kKappa);
         ReferenceEpochHierarchy hierarchy(
             data.initial_mesh, kCoarseLevel, kReferenceLevel);
+        QuadraturePolicy quadrature_low;
+        quadrature_low.base_triangle_order = 12;
+        quadrature_low.gaussian_triangle_order = 16;
+        quadrature_low.singular_triangle_order = 24;
+        quadrature_low.max_recursive_subdivisions = 8;
+        QuadraturePolicy quadrature_high = quadrature_low;
+        quadrature_high.base_triangle_order = 16;
+        quadrature_high.gaussian_triangle_order = 24;
+        const ComplexVector load_low = assemble_helmholtz_load(
+            hierarchy.reference_mesh(), data.source, quadrature_low,
+            data.quadrature_context);
+        const ComplexVector load_high = assemble_helmholtz_load(
+            hierarchy.reference_mesh(), data.source, quadrature_high,
+            data.quadrature_context);
+        const double relative_load_change = (load_high - load_low).norm()
+            / std::max(load_high.norm(), std::numeric_limits<double>::min());
+        const HelmholtzError exact_low = compute_helmholtz_error(
+            hierarchy.reference_mesh(),
+            ComplexVector::Zero(hierarchy.reference_mesh().nodes.size()),
+            kKappa, data.exact, data.exact_gradient, quadrature_low,
+            data.quadrature_context);
+        const HelmholtzError exact_high = compute_helmholtz_error(
+            hierarchy.reference_mesh(),
+            ComplexVector::Zero(hierarchy.reference_mesh().nodes.size()),
+            kKappa, data.exact, data.exact_gradient, quadrature_high,
+            data.quadrature_context);
+        const double relative_exact_energy_change =
+            std::abs(exact_high.energy - exact_low.energy)
+            / std::max(exact_high.energy, std::numeric_limits<double>::min());
+        require(relative_load_change < 5e-5
+                    && relative_exact_energy_change < 5e-7,
+                "E0 R1 quadrature cross-check is not stable");
+        {
+            std::ofstream out(arguments.output / "00-case-quadrature.csv");
+            out << "schema_version,case,kappa,low_gaussian_order,high_gaussian_order,relative_load_change,relative_exact_energy_change,status\n"
+                << reference_epoch_paper_schema_version << ",R1,16,16,24,"
+                << number(relative_load_change) << ','
+                << number(relative_exact_energy_change) << ",passed\n";
+        }
         const std::vector<int> basis = free_nodes(hierarchy.coarse_mesh());
         const HelmholtzLodModel ideal = build_model(data, hierarchy, 8);
 
@@ -144,7 +201,8 @@ int main(int argc, char **argv) {
             std::ofstream out(arguments.output / "01-corrector-localization.csv");
             out << "schema_version,case,kappa,coarse_level,reference_level,ell,Theta_loc,direct_delta,theorem_lower,theorem_upper,bracket_holds\n";
             for (const CorrectorRow &row : corrector_rows)
-                out << "5,R1,16," << kCoarseLevel << ',' << kReferenceLevel
+                out << reference_epoch_paper_schema_version << ",R1,16,"
+                    << kCoarseLevel << ',' << kReferenceLevel
                     << ',' << row.ell << ',' << number(row.theta) << ','
                     << number(row.direct) << ',' << number(row.lower) << ','
                     << number(row.upper) << ",true\n";
@@ -179,7 +237,8 @@ int main(int argc, char **argv) {
         {
             std::ofstream out(arguments.output / "02-reference-riesz.csv");
             out << "schema_version,eta_H,local_square_sum_relative_error,nodal_to_element_allocation_relative_error,max_constraint_residual,max_riesz_residual,max_energy_identity_error,skipped_zero_kernel_patches,status\n"
-                << "5," << number(residual.eta) << ','
+                << reference_epoch_paper_schema_version << ','
+                << number(residual.eta) << ','
                 << number(residual.local_square_sum_relative_error) << ','
                 << number(residual.allocation_relative_error) << ','
                 << number(maximum_constraint) << ',' << number(maximum_riesz)
@@ -214,7 +273,8 @@ int main(int argc, char **argv) {
         {
             std::ofstream out(arguments.output / "03-candidate-rt2-p2.csv");
             out << "schema_version,eta_eq,discrete_residual_dual_norm,max_patch_compatibility,max_divergence_residual,max_normal_jump,max_boundary_flux_residual,status\n"
-                << "5," << number(flux.eta_eq) << ','
+                << reference_epoch_paper_schema_version << ','
+                << number(flux.eta_eq) << ','
                 << number(flux.discrete_residual_dual_norm) << ','
                 << number(flux.maximum_patch_compatibility_error) << ','
                 << number(flux.maximum_element_divergence_residual) << ','
@@ -252,7 +312,8 @@ int main(int argc, char **argv) {
         {
             std::ofstream out(arguments.output / "04-candidate-dual-gap.csv");
             out << "schema_version,eta_dual_c,L_c,candidate_error,L_gap_c,reference_candidate_gap,L_c_lower_bound_holds,L_gap_lower_bound_holds,status\n"
-                << "5," << number(gap.eta_dual_c) << ',' << number(gap.L_c)
+                << reference_epoch_paper_schema_version << ','
+                << number(gap.eta_dual_c) << ',' << number(gap.L_c)
                 << ',' << number(dual_validation.candidate_error) << ','
                 << number(gap.L_gap_c) << ','
                 << number(dual_validation.reference_candidate_gap)
@@ -276,7 +337,8 @@ int main(int argc, char **argv) {
         {
             std::ofstream out(
                 arguments.output / "05-frozen-reference-epoch-parameters.json");
-            out << "{\n  \"schema_version\": 5,\n"
+            out << "{\n  \"schema_version\": "
+                << reference_epoch_paper_schema_version << ",\n"
                 << "  \"scope\": \"E0-localized-smooth-R1-k16\",\n"
                 << "  \"claim\": \"implementation-study\",\n"
                 << "  \"status\": \"passed\",\n"
@@ -287,12 +349,39 @@ int main(int argc, char **argv) {
                 << number(lod_error.energy / reference_norm.energy) << ",\n"
                 << "  \"notes\": [\"Frozen once for later experiments; not a rigorous theorem constant.\"]\n}\n";
         }
+        {
+            const unsigned int hardware_threads =
+                std::thread::hardware_concurrency();
+#ifdef _OPENMP
+            const int omp_threads = omp_get_max_threads();
+#else
+            const int omp_threads = 1;
+#endif
+            std::ofstream out(
+                arguments.output / "06-calibration-provenance.json");
+            out << "{\n"
+                << "  \"schema_version\": "
+                << reference_epoch_paper_schema_version << ",\n"
+                << "  \"claim\": \"implementation-study\",\n"
+                << "  \"generator\": \"bench_helmholtz_reference_epoch_e0\",\n"
+                << "  \"code_commit\": \"" << arguments.code_commit << "\",\n"
+                << "  \"build_sha256\": \"" << arguments.build_sha256 << "\",\n"
+                << "  \"manuscript_sha256\": \""
+                << arguments.manuscript_sha256 << "\",\n"
+                << "  \"generated_at\": \"" << arguments.generated_at << "\",\n"
+                << "  \"compiler\": \"" << __VERSION__ << "\",\n"
+                << "  \"hardware_threads\": " << hardware_threads << ",\n"
+                << "  \"openmp_max_threads\": " << omp_threads << "\n"
+                << "}\n";
+        }
 
         if (arguments.check) {
-            for (const char *file : {"01-corrector-localization.csv",
+            for (const char *file : {"00-case-quadrature.csv",
+                     "01-corrector-localization.csv",
                      "02-reference-riesz.csv", "03-candidate-rt2-p2.csv",
                      "04-candidate-dual-gap.csv",
-                     "05-frozen-reference-epoch-parameters.json"})
+                     "05-frozen-reference-epoch-parameters.json",
+                     "06-calibration-provenance.json"})
                 require(std::filesystem::is_regular_file(arguments.output / file),
                         std::string("missing E0 artifact: ") + file);
         }

@@ -1,1 +1,1 @@
-{"case":"R1","domain":"unit-square","exact_solution":true,"mixed_boundary":false,"name":"smooth-manufactured"}
+{"case":"R1","domain":"unit-square","exact_solution":true,"mixed_boundary":true,"name":"localized-smooth-oscillatory","localization_center":[0.75,0.5],"localization_alpha":80.0,"boundary_partition":{"bottom":"Dirichlet","top":"Dirichlet","left":"Neumann","right":"Robin"}}

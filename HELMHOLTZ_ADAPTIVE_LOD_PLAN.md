@@ -1,6 +1,6 @@
 # Reference-epoch 自适应 Helmholtz LOD：数值实验实施计划
 
-> 状态日期：2026-08-23
+> 状态日期：2026-08-24
 >
 > 唯一理论口径：`../LOD_paper/helmholtz_lod_certified_amsart_revised.tex`
 >
@@ -15,9 +15,9 @@
 
 ```text
 file: ../LOD_paper/helmholtz_lod_certified_amsart_revised.tex
-sha256: 94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9
-paper repository base commit: 30f6c05abeafcb5b76e74cb9f23d07ee1e13b13a
-frozen: 2026-08-23
+sha256: 71f59581ea3a5e4cd65659055915715b9c86c582793db7154a5f0b3b31843ca8
+paper repository working-tree base: 30f6c05
+frozen: 2026-08-24
 ```
 
 每次论文修改后必须生成新 SHA-256。生产结果的 `run.json` 保存实际使用的论文哈希，
@@ -80,6 +80,47 @@ EpochInit
 - reference refresh 后误差目标改变，输出必须增加 epoch 编号，不能把两段曲线当作同一
   reference error 轨迹。
 
+### 1.2 2026-08-24 修订算法的强制顺序
+
+Algorithm 1 的实现顺序冻结为：先形成 prospective coarse；完成 candidate 的 Dörfler
+标记和 refinement，再添加 hierarchy closure；随后先判 structural/reserve refresh，且该分支
+不得求 candidate dual。每个 epoch 第一解初始化 lazy-dual baseline，终止前强制做一次
+dual check；刷新时继承旧 epoch 的最终 `ell`。
+
+Algorithm 2 额外冻结为：
+
+\[
+  \ell_S=\min\{j:B_{R_*}(S)\subset N^j(S)\},\qquad
+  \Omega_S=N^{\ell_S}(S),\qquad
+  \Omega_F=N^\ell(\Omega_S).
+\]
+
+在 `Omega_F` 上 coarse/reference 精确匹配；只省略 `Omega_S` 中的零 kernel corrector；
+coarse estimator 在完整 regular region 上做 bulk marking；candidate indicator 在
+`Omega_F/regular` 两侧分别做 Dörfler。prospective matching 必须在 candidate estimator
+之前完成。
+
+一般 conforming NVB 上，`Omega_F` 精确匹配与界面外所有 regular 单元统一正 reserve
+缺少可实现性条件。当前实现明确标为 `implementation-erratum`：采用
+`min(g_tar,max(0,d_graph(T,Omega_F)-b))`，自动选择最小 spill-free collar，并把每个
+trial/closure 写入 `hybrid_reserve.csv`。这不是可以隐藏的性能细节；论文下一版应同步修正
+reserve 条件。coarse marker 可从 closure-safe regular 子集选择，但最终 marked mass 仍须
+达到原始完整 regular mass 的 Dörfler 下界；若达不到则回退到 full-regular 标记并允许
+structural refresh。
+
+两套生产实验按既定 implementation-study 口径保留强预收敛点，不执行论文
+Eq. (coarse-admissibility) 的解析分辨率门；reference/candidate well-posedness 采用数值稀疏
+分解检查。因此 Algorithm 1 的 `manuscript_conformance` 记为
+`implementation-study-variant`，不得写成 `direct`。Algorithm 2 另记录
+`reserve_trigger_scope=far-full-target-regular-cells`，因为 graded collar 的触发域不是论文
+当前公式中的完整 prospective regular set。
+
+最终本地门禁（2026-08-24）：WSL Release 构建后 `ctest -R helmholtz -j4` 为
+`50/50` 通过；schema-v6 smoke 的 `iterations.csv/corrector_work.csv` 分别为 139/49 列且
+逐行一致。服务器科学门已按新版定义取消旧的 `ell_S>=ell` 判据，并把
+`RefreshReference` 的旧 epoch 行映射到真正的刷新后 `epoch+1`；同一结果目录若 commit、
+二进制 SHA256 或 patch thread 数不同会拒绝复用，防止跨构建混合 `.done`。
+
 ## 2. 资源节约原则
 
 ### 2.1 不在每一步重复计算的量
@@ -131,8 +172,8 @@ ell_max   = 6
 6. candidate dual check 只在 decrease/interval/tolerance lazy trigger 时执行；结构嵌入失败或
    `reference_refresh_level_gap` 已经确定必须刷新时直接切换 epoch，避免计算不影响决策的
    candidate dual；
-7. candidate flux 默认只在 coarse marked set 的固定层 active region 上重构；正式声明
-   这是 marking heuristic。只在小规模 audit 中运行全局 reconstruction 检查可靠性；
+7. candidate RT2/P2 flux 在完整 candidate mesh 上重构；`Omega_F/regular` 两侧只分拆同一
+   全局 indicator 的 marking mass，不截断 estimator；
 8. `Theta_loc` 使用 matrix-free Lanczos/LOBPCG、上一轮向量 warm start 和阈值分离停止；
    稠密 Gram/eigensolve 仅用于小矩阵单元测试；
 9. 默认每步只写标量日志，网格场数据只保存 epoch 初始、switch 前和最终快照；唯一例外是 E1 的第一轮 epoch：为绘制真实网格演化图，保存选定 checkpoint 的 coarse/candidate 网格，并单独保存一次固定 reference 网格；
@@ -314,24 +355,25 @@ Failed
 L-shaped 主实验需要：
 
 \[
-l_s=\max\!\left\{\ell,\min\{j:B_{R_*}(S)\cap\Omega
-\subset N^{2j}(S)\}\right\},\quad
-\Omega_S=N^{l_s}(S),\quad
-\Omega_F=N^{2l_s}(S),\quad
+\ell_S=\min\{j:B_{R_*}(S)\subset N^j(S)\},\quad
+\Omega_S=N^{\ell_S}(S),\quad
+\Omega_F=N^\ell(\Omega_S)=N^{\ell_S+\ell}(S),\quad
 V_H|_{\Omega_F}=V_h|_{\Omega_F}.
 \]
 
-其中物理半径 (R_*>0) 在整条轨迹开始前冻结。这样 (l_s\ge\ell)，且 coarse
-网格局部加细后 matching/transition region 不会在物理空间中塌缩；
-(N^{2l_s}(S)\) 可略大于固定圆，但不得漏掉 (B_{R_*}(S)\cap\Omega)。
+其中物理半径 `R_*>0` 在整条轨迹开始前冻结。物理半径只决定 singular core；实际
+oversampling `ell` 决定 transition/matching buffer。新版论文不再要求 `ell_S>=ell`，也不再
+使用旧的 `Omega_F=N^(2 ell_S)(S)`。
 
 实现要求：
 
 - 在 \(\Omega_F\) 内 coarse 与 reference 匹配；
-- 每次 corrector check 由冻结 (R_*) 与当前 \(\ell\) 重算最小 (l_s\ge\ell)，并在继续 corrector solve 前恢复 matching condition；
+- 每次 coarse/reference/`ell` 改变后由冻结 `R_*` 重算最小 `ell_S` 和
+  `Omega_F=N^ell(Omega_S)`，并在 corrector solve 前恢复 matching condition；
 - 对 \(T\subset\Omega_S\) 跳过零 kernel corrector；
 - coarse marking 仅在 regular region，global reference certificate 保持不变；
-- candidate 仍可在 singular region 加密，为下一 epoch 准备；
+- candidate 在 `Omega_F` 与 regular region 分别做 bulk marking，仍可在 singular region
+  加密，为下一 epoch 准备；
 - 记录跳过的 corrector 数量、维数和时间。
 
 ### WP7：runner、配置和输出 schema
@@ -339,34 +381,36 @@ V_H|_{\Omega_F}=V_h|_{\Omega_F}.
 将 `bench_helmholtz_adaptive_paper` 升级为 reference-epoch schema。旧配置仍可读，但
 新版生产配置不得继续输出 `ambient_mesh/rho_amb/reference_retraction` 作为核心字段。
 
-### WP6--WP7 与 E0 实施状态（2026-08-23）
+### WP6--WP7 与 E0 实施状态（2026-08-24）
 
-- **WP6 / G6 已通过组件级验收**：实现固定物理半径版本
+- **WP6 / G6 已通过组件级验收**：实现新版固定物理半径版本
   `classify_singular_regions_with_physical_radius/
   restore_hybrid_reference_matching_with_physical_radius`。按共享顶点 coarse-element
-  graph 选择最小 (l_s\ge\ell)，使固定圆 (B_{R_*}(S)\cap\Omega) 完全包含于
-  `Omega_F=N^(2l_s)(S)`，并取 `Omega_S=N^l_s(S)`。每次 coarse 或 global `ell`
+  graph 选择最小 `ell_S`，使固定圆 `B_R(S)` 完全包含于
+  `Omega_S=N^ell_S(S)`，再取 `Omega_F=N^ell(Omega_S)`。每次 coarse 或 global `ell`
   改变后，先在固定 reference 所允许的范围内事务式加密 coarse，恢复
   `V_H|Omega_F=V_h|Omega_F`，再组装 corrector；reference mesh/version 保持不变。
   `Omega_S` 中的零 kernel element corrector 被跳过并记录数量与工作维数；coarse
   Dörfler marking 仅使用 regular-region indicator mass，global reference residual
-  certificate 不截断；candidate 仍可在 singular region 加密。小网格测试在 `ell=2`
-  得到 `|Omega_S|=54`、`|Omega_F|=138`，首轮跳过 24 个 corrector、312 个工作单元。
-- **WP7 / G7 已通过 schema-v5 数值 smoke**：现有
+  certificate 不截断；candidate 的 F/R 两侧分别达到同一 `theta_c`。真实 H3/h8 回归在
+  `R_*=0.125,ell=2` 得到 `ell_S=3`、`|Omega_S|=54`、`|Omega_F|=150`。
+- **WP7 / G7 已通过 schema-v6 数值 smoke**：现有
   `bench_helmholtz_adaptive_paper` 按 `schema_version` 分派；legacy v4 路径保持可读，
-  v5 使用独立 `ReferenceEpochPaperConfig`，配置与核心输出均不含
+  v6 使用独立 `ReferenceEpochPaperConfig`，配置与核心输出均不含
   `ambient_mesh/rho_amb/reference_retraction`。数值 backend 连接 WP1--WP6，candidate
   阶段只延拓当前 reference 上的 LOD 值并执行 RT2/P2 flux 与 candidate dual-Riesz，
-  不暴露 candidate Galerkin solve。v5 输出 `iterations.csv/run.json/summary.csv/
-  epoch_history.csv/mesh_manifest.csv/corrector_work.csv`；lazy 数值写 `NA`，并记录
+  不暴露 candidate Galerkin solve。v6 输出 `iterations.csv/run.json/summary.csv/
+  epoch_history.csv/mesh_manifest.csv/corrector_work.csv/hybrid_reserve.csv`；lazy 数值写 `NA`，并记录
   coarse/reference/candidate DoF、corrector rebuild/skip、各阶段时间和最终三类网格。
 - **E0 / G0 已通过五项校准**：持久产物位于
-  `experiments/helmholtz_adaptive_paper/calibration/reference_epoch_e0_v5/`。
+  `experiments/helmholtz_adaptive_paper/calibration/reference_epoch_e0_v6_revised/`。
   R1、`kappa=16`、`H-level=3/reference-level=5` 上完成 `ell=1,2,3,4`
   direct defect/`Theta_loc` 对照、reference Riesz 与 nodal-to-element mass conservation、
   candidate RT2/P2 恒等式、隔离的 direct `u_c` dual-gap 下界审计，并一次性冻结
-  `theta_loc_usr=1.961323606684523`、`C_rel_usr=1.6358263950741063`。两者均标记为
-  implementation-study empirical parameters，不宣称为严格定理常数。
+  `theta_loc_usr=2.6311141730106273`、`C_rel_usr=1.4706194473212615`。两者均标记为
+  implementation-study empirical parameters，不宣称为严格定理常数。最终生产二进制还须
+  生成第七个 `06-calibration-provenance.json`，闭合 code commit、binary SHA、论文 SHA、
+  compiler 和线程数来源链；缺少该文件时不得启动 main。
 
 ## 4. 最小可发表实验矩阵
 
@@ -406,7 +450,42 @@ V_H|_{\Omega_F}=V_h|_{\Omega_F}.
 commit；但不得为了作图而抑制算法本应触发的 epoch switch。网格图与 \(\ell\)、epoch、
 candidate dual-check 时间线使用同一 iteration/epoch 编号。
 
-#### E1 执行状态（2026-08-23）
+#### E1 新版论文重基线（2026-08-24）
+
+旧 E1 制造解和旧 H2/h10--h12 PALOD 结果全部降级为历史诊断。新版 R1 固定为
+
+\[
+u=x^2(1-x)^2\sin(\pi y)\exp(-80((x-0.75)^2+(y-0.5)^2))e^{i\kappa x},
+\]
+
+top/bottom Dirichlet、left Neumann、right Robin。新版 E0 后冻结
+`theta_loc_usr=2.6311141730106273,C_rel_usr=1.4706194473212615`。
+
+本地最终代码门禁采用 H4/h12、8 threads、4 个解点：wall 13.90 s、峰值约
+1.94 GiB、无 swap；exact relative energy 为
+`1.8345,3.0356,7.3649,0.47126`。前三点是保留的 Helmholtz pre-asymptotic 段，第四点
+开始离开该区间，不能删除前三点后伪造单调曲线。累计瓶颈为 LOD corrector 5.18 s、
+localization certificate 4.21 s、candidate/RT2 2.92 s；这些阶段已经 patch 并行，精确误差
+积分也已并行并从 method time 单列。
+
+首次 target-gap=9 refresh 后的 h 约 44k unknowns；8-thread WSL 的 corrector/Gram 峰值
+接近 10.2 GiB，因此本地只做 4 点门禁。服务器依次运行：
+
+1. `H4/h12/gap 4->9/5-step` refresh factor；
+2. 同口径 8-step pilot；
+3. 12-step main；epoch 安全上限设为 13，避免保护上限先于 H-step 预算误停。
+
+配置和命令见 `E1_E2_REVISED_ALGORITHMS_SERVER_2026-08-24.md`。下列 2026-08-23
+记录仅保留旧轨迹审计，不再定义新版主实验。
+
+E1 主实验额外冻结 epoch 0 网格审计：每个已求解 H-step 都在
+`mesh_manifest.csv` 中记录 coarse/reference/candidate 三元组、`H_step` 与
+`reference_mesh_version`。同一 epoch 的 reference 只写一份 VTU，各 H-step 的 reference
+行复用该文件；绘图仍在每一列显示 reference，并用 version 与 SHA256 双重确认它没有变化。
+只绘制第一个 epoch，避免后续 epoch 的重复图和存储开销。操作见
+`E1_REVISED_MAIN_SERVER_2026-08-24.md`。
+
+#### E1 历史执行状态（2026-08-23，已降级）
 
 E1 四条本地 implementation-study 轨迹及绘图链已经完成，但旧 PALOD 的 `H2/h10/12-step`
 轨迹只保留为诊断结果，不再作为最终主曲线：epoch 0 后段的 exact error 约 0.14 平台来自
@@ -506,14 +585,48 @@ mesh/commit 瓶颈消除后，它仍是下一项独立优化，candidate dual �
 corrector work。必须使用论文的 mixed \(\Gamma_D/\Gamma_R\) 边界；全 Robin surrogate
 不能写成正式 L-shaped 结果。
 
-#### E2 启动状态（2026-08-23）
+#### E2 新版论文重基线（2026-08-24）
+
+> 暂停状态：用户将继续修订论文 Algorithm 2。在新的论文 SHA256 与算法口径冻结前，
+> 不启动 E2 factor/pilot/main；本节现有实现和历史 pilot 仅保留，不作为待运行主实验。
+
+新版制造解为 C-infinity radial cutoff 的
+`r^(2/3) sin(2 theta/3)` 奇异项，加上振幅 `B=0.05`、支撑位于
+`(-0.75,-0.25)x(0.25,0.75)` 的 C-infinity tensor bump wave；`R_*=0.125`。
+区域采用新版 `Omega_S=N^ell_S(S), Omega_F=N^ell(Omega_S)`，不再使用旧
+`ell_S>=ell/Omega_F=N^(2ell_S)` 口径。
+
+真实 H3/h8 回归发现论文当前 uniform regular reserve 与 exact matching 在 NVB 界面
+一般不兼容；无限追赶不是性能 bug。实现采用前述 adaptive conformity collar，并以
+`run.json: manuscript_conformance=implementation-erratum` 和 `hybrid_reserve.csv` 显式保留。
+
+closure-aware full-regular Dörfler 校准结果：
+
+- `theta_H=0.5`：完整 epoch 最多 2 点；
+- `theta_H=0.3`：仍最多 2 点；
+- `theta_H=0.1`：至少两个完整 epoch 各有 3 点，且不改变原始完整 regular mass 的
+  Dörfler 下界。
+
+因此 E2 hybrid 冻结 `theta_H=0.1,theta_c=0.5`。h8/8-point pilot 的 exact error 为
+`0.5455,0.4839,0.4666,0.4609,0.3792,0.3436,0.3257,0.2989`；两个三点 epoch 的
+log(error)--log(DOF) 斜率约 `-0.47` 与 `-1.16`。后者仍是短段暂态；最终是否稳定接近
+`N^-1/2` 只能由 h12 服务器深轨迹判定。
+
+服务器顺序冻结为 hybrid/standard refresh factor，随后 8-step pilots；通过后才运行
+hybrid 15-step（epoch 安全上限 16）、standard 12-step（安全上限 13）、AFEM 和可选
+fixed LOD。factor/pilot/main 的 `.done` 只在零 swap、matching/reserve、Dörfler、物理半径、
+patch cap、ell 继承及相应三点 epoch 自动门禁通过后生成。下列旧状态
+仅保留历史审计。
+
+#### E2 历史启动状态（2026-08-23，已降级）
 
 - schema-v5 已显式携带并哈希 case-S 制造解参数；E2 固定
   \(\gamma=0\)、quintic cutoff 外半径 1、smooth-wave amplitude \(B=0.05\)，即非振荡
   corner singularity 为主、保留小振幅 \(e^{i\kappa x}\) 光滑波。凹角边继续使用
   Dirichlet、外边 Robin，禁止退回历史默认 \(\gamma=1,B=0\)。
-- hybrid 区域不再把 (l_s) 直接等同于 corrector \(\ell\)。每次选择满足
-  (l_s\ge\ell) 且 (B_{R_*}(z)\cap\Omega\subset N^{2l_s}(z)) 的最小 (l_s)。
+- 当时的 hybrid 区域曾不再把 (l_s) 直接等同于 corrector \(\ell\)，但仍选择满足
+  (l_s\ge\ell) 且 (B_{R_*}(z)\cap\Omega\subset N^{2l_s}(z)) 的最小 (l_s)；该定义现已被
+  上文新版 `Omega_S=N^ell_S(S),Omega_F=N^ell(Omega_S)` 完全取代，不得用于新版门禁。
   `iterations.csv` 与
   `corrector_work.csv` 记录实际 (l_s)、请求半径和离散保证覆盖半径。
 - hybrid 的 level-gap guard 改为 regular region 中的最小**正** gap。\(\Omega_F\) 内
@@ -609,9 +722,15 @@ N_H, N_h, N_c, ell, kappa_H_max,
 eta_H, Theta_loc, U_practical,
 eta_eq_c, eta_dual_c, L_gap_c, dual_check_performed,
 relative_reference_energy, relative_exact_energy, relative_exact_L2,
-marked_H, marked_c, rebuilt_correctors, skipped_correctors,
-time_corrector, time_theta, time_lod_solve, time_reference_riesz,
-time_candidate_flux, time_candidate_close, time_candidate_operator_assembly,
+marked_H, hybrid_regular_indicator_mass, hybrid_admissible_indicator_mass,
+hybrid_marked_H_indicator_mass, hybrid_coarse_conformity_collar,
+hybrid_coarse_marking_closure_safe, hybrid_full_regular_doerfler,
+marked_c, active_correctors, rebuilt_correctors, reused_correctors,
+skipped_correctors, time_corrector_check_total, time_lod_build_total,
+time_lod_mesh_and_interpolation, time_lod_operators, time_corrector,
+time_lod_corrected_basis, time_lod_coarse_operator,
+time_lod_coarse_factorization, time_theta, time_lod_solve, time_reference_riesz,
+time_candidate_enrich_total, time_candidate_close, time_candidate_operator_assembly,
 time_candidate_prolongation, time_candidate_flux_reconstruction,
 time_candidate_flux_prepare, time_candidate_flux_patch_solve,
 time_candidate_flux_merge, time_candidate_flux_audit,
@@ -621,7 +740,8 @@ time_candidate_dual_load_assembly, time_candidate_dual_prolongation,
 time_candidate_dual_solve, time_candidate_dual_prepare,
 time_candidate_dual_patch_solve, time_candidate_dual_reduction,
 candidate_dual_patch_factorizations, candidate_dual_parallel_threads,
-time_mesh, time_total_cumulative,
+time_mesh, time_validation_cumulative, time_artifact_capture_cumulative,
+time_method_cumulative, time_total_cumulative,
 peak_memory_mb
 ```
 
@@ -638,7 +758,9 @@ peak_memory_mb
 - E1 第一轮 epoch 额外保存
   `mesh_E1_e000_reference.vtu`，以及每个选定 checkpoint 的
   `mesh_E1_e000_iXXX_coarse.vtu`、`mesh_E1_e000_iXXX_candidate.vtu`；
-- `corrector_work.csv`：patch dimension、rebuild/reuse/skip 和累计时间。
+- `corrector_work.csv`：active/rebuild/reuse/skip 和完整 LOD build/Gram 分阶段时间；
+- `hybrid_reserve.csv`：Algorithm 2 每次 collar trial/closure 的 spill、profile margin、far
+  gap、mesh size 和时间；非 hybrid 运行仍生成只有 header 的文件。
 
 E1 的 reference mesh 在第一轮 epoch 内只写一次，因为它严格固定。coarse/candidate checkpoint
 必须共享同一 `iteration`，并优先取 `epoch_start`、若干已 commit 的中间状态和

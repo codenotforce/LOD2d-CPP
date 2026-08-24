@@ -20,10 +20,48 @@ void require(bool condition, const char *message) {
     if (!condition) throw std::runtime_error(message);
 }
 
+void verify_parallel_exact_error_exception_order() {
+    // Use disconnected, well-shaped triangles so each callback can identify
+    // its element from the x-coordinate.  Sixty-four elements exercise the
+    // OpenMP path when it is available.
+    TriMesh mesh;
+    constexpr int element_count = 64;
+    mesh.nodes.reserve(3 * element_count);
+    mesh.elems.reserve(element_count);
+    for (int element = 0; element < element_count; ++element) {
+        const double x = 10.0 * element;
+        const int node = static_cast<int>(mesh.nodes.size());
+        mesh.nodes.emplace_back(x, 0.0);
+        mesh.nodes.emplace_back(x + 1.0, 0.0);
+        mesh.nodes.emplace_back(x, 1.0);
+        mesh.elems.push_back({node, node + 1, node + 2});
+    }
+    const ComplexVector zero = ComplexVector::Zero(mesh.nodes.size());
+    const ComplexFunction throwing_exact = [](const Point2 &point) -> Complex {
+        const int element = static_cast<int>(std::floor(point.x() / 10.0));
+        throw std::runtime_error("exact-element-" + std::to_string(element));
+    };
+    const ComplexGradientFunction unused_gradient = [](const Point2 &) {
+        return Eigen::Vector2cd::Zero();
+    };
+
+    try {
+        (void)compute_helmholtz_error(
+            mesh, zero, 2.0, throwing_exact, unused_gradient);
+    } catch (const std::runtime_error &error) {
+        require(std::string(error.what()) == "exact-element-0",
+                "parallel exact-error evaluation changed exception order");
+        return;
+    }
+    throw std::runtime_error(
+        "parallel exact-error evaluation swallowed callback exception");
+}
+
 } // namespace
 
 int main() {
     try {
+        verify_parallel_exact_error_exception_order();
         const double k = 2.0;
         const TriMesh initial = make_helmholtz_unit_square_mesh();
         const TriMesh boundary_mesh = refine_mesh_nvb(initial, 3).mesh;

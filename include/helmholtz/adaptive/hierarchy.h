@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <vector>
@@ -146,17 +147,60 @@ struct ReferenceEpochRefinementResult {
     std::size_t previous_element_count = 0;
     std::size_t current_element_count = 0;
     std::string detail;
-    // Candidate-refinement phase timings. They remain zero for operations
-    // that do not use the incremental candidate path.
+    // Incremental-refinement phase timings. They remain zero for operations
+    // that do not use the corresponding path.
     double time_nvb_refine = 0.0;
     double time_embedding_composition = 0.0;
     double time_parent_map_update = 0.0;
+    double time_proposed_embedding_update = 0.0;
     double time_candidate_quasi_interpolation = 0.0;
     double time_embedding_validation = 0.0;
 
     bool changed() const {
         return status == ReferenceEpochRefinementStatus::Refined;
     }
+};
+
+// Immutable result of previewing one marked NVB refinement of the committed
+// coarse mesh.  The expensive NVB closure and reference embedding can be
+// transferred into a pending proposal when the preview is selected.  Mesh
+// version stamps prevent a preview from being adopted after its source
+// hierarchy has changed.
+struct ReferenceEpochCoarseRefinementPreview {
+    struct CachedEmbedding {
+        Eigen::SparseMatrix<double> P_node;
+        Eigen::SparseMatrix<double> P_elem;
+        Eigen::SparseMatrix<double> P_dg;
+    };
+
+    std::vector<int> marked_elements;
+    RefineOutput refinement;
+    std::vector<int> element_levels;
+    std::optional<CachedEmbedding> to_reference;
+    std::uint64_t coarse_mesh_version = 0;
+    std::uint64_t reference_mesh_version = 0;
+    double time_nvb_refine = 0.0;
+    double time_reference_embedding_update = 0.0;
+
+    bool reference_contained() const { return to_reference.has_value(); }
+};
+
+enum class ReferenceEpochRefinementGuardPoint {
+    BeforeNvb,
+    AfterNvb,
+};
+
+using ReferenceEpochRefinementGuard = std::function<void(
+    ReferenceEpochRefinementGuardPoint, const TriMesh &)>;
+
+struct ReferenceEpochCandidateDeepeningProbe {
+    bool target_satisfied = false;
+    std::size_t refinement_steps = 0;
+    std::size_t final_element_count = 0;
+    std::size_t final_node_count = 0;
+    std::size_t protected_parent_spill = 0;
+    int minimum_gap_margin = 0;
+    int minimum_full_target_gap = 0;
 };
 
 struct AmbientRatioEnforcementResult {
@@ -312,29 +356,83 @@ public:
     // representable, while commit remains forbidden until the fixed
     // reference itself contains the proposal.
     void begin_reference_epoch();
+    ReferenceEpochCoarseRefinementPreview preview_coarse_refinement(
+        const std::vector<int> &marked_elements,
+        const ReferenceEpochRefinementGuard &resource_guard = {}) const;
     ReferenceEpochRefinementResult propose_coarse_refinement(
-        const std::vector<int> &marked_elements);
+        const std::vector<int> &marked_elements,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
+    // Adopt a previously accepted preview without repeating its NVB closure
+    // or reference-embedding construction.  The candidate embedding is built
+    // against the current candidate at adoption time.
+    ReferenceEpochRefinementResult propose_coarse_refinement(
+        ReferenceEpochCoarseRefinementPreview preview,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
+    // Open a pending transaction with T_H^+=T_H.  Algorithm 2 needs this
+    // when the regular-region indicator mass vanishes but candidate
+    // enrichment or an epoch decision must still be completed.
+    ReferenceEpochRefinementResult propose_identity_coarse();
+    // Refine an already pending proposal without changing the committed
+    // coarse mesh.  Existing proposal-to-reference/candidate embeddings are
+    // updated from their child-parent maps, so no global geometric embedding
+    // search is required.
+    ReferenceEpochRefinementResult refine_proposed_coarse(
+        const std::vector<int> &marked_proposed_elements,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
     ReferenceEpochRefinementResult enrich_candidate(
-        const std::vector<int> &marked_candidate_elements);
-    ReferenceEpochRefinementResult close_candidate_over_proposed_coarse();
+        const std::vector<int> &marked_candidate_elements,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
+    ReferenceEpochRefinementResult close_candidate_over_proposed_coarse(
+        const ReferenceEpochRefinementGuard &resource_guard = {});
     ReferenceEpochRefinementResult deepen_candidate_over_proposed_coarse(
-        int minimum_level_gap);
+        int minimum_level_gap,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
+    ReferenceEpochRefinementResult deepen_candidate_over_proposed_coarse(
+        int minimum_level_gap,
+        const std::vector<char> &included_proposed_elements,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
+    ReferenceEpochRefinementResult deepen_candidate_over_proposed_coarse(
+        const std::vector<int> &target_level_gaps,
+        const ReferenceEpochRefinementGuard &resource_guard = {});
+    // Run exactly the same marked-NVB depth loop on candidate mesh/level/
+    // parent-map scratch data only.  No hierarchy matrices or state mutate.
+    ReferenceEpochCandidateDeepeningProbe
+    probe_candidate_deepening_over_proposed_coarse(
+        const std::vector<int> &target_level_gaps,
+        const std::vector<char> &protected_proposed_elements,
+        const std::vector<char> &full_target_proposed_elements,
+        const ReferenceEpochRefinementGuard &resource_guard = {}) const;
     bool candidate_contains_proposed_coarse() const;
     bool reference_contains_proposed_coarse() const;
     int minimum_proposed_reference_level_gap() const;
     // Minimum over reference children whose proposed coarse parent is selected.
-    // This is used by the hybrid method to exclude the deliberately matching
-    // Omega_F cells and any formerly matching zero-gap cells from the early
-    // exhaustion guard. Refining a zero-gap cell remains protected by the
-    // stronger reference-containment check.
+    // The hybrid method selects only the regular region, thereby excluding
+    // the deliberately matching Omega_F cells.  A selected zero gap is a real
+    // reserve exhaustion event and is therefore retained in the minimum.
     int minimum_proposed_reference_level_gap(
         const std::vector<char> &included_proposed_elements) const;
     int minimum_proposed_candidate_level_gap() const;
+    int minimum_proposed_candidate_level_gap(
+        const std::vector<char> &included_proposed_elements) const;
+    int minimum_proposed_reference_level_gap_margin(
+        const std::vector<int> &target_level_gaps) const;
+    int minimum_proposed_candidate_level_gap_margin(
+        const std::vector<int> &target_level_gaps) const;
     bool has_proposed_coarse_refinement() const {
         return proposed_coarse_.has_value();
     }
     const TriMesh &proposed_coarse_mesh() const;
     const std::vector<int> &proposed_coarse_levels() const;
+    const Eigen::SparseMatrix<double> &
+    coarse_elements_to_proposed_coarse() const;
+    const Eigen::SparseMatrix<double> &
+    coarse_nodes_to_proposed_coarse() const;
+    const Eigen::SparseMatrix<double> &
+    proposed_coarse_elements_to_reference() const;
+    const Eigen::SparseMatrix<double> &
+    proposed_coarse_elements_to_candidate() const;
+    std::vector<int> reference_parent_proposed_coarse_elements() const;
+    std::vector<int> candidate_parent_proposed_coarse_elements() const;
     ReferenceEpochRefinementResult commit_coarse_refinement();
     void refresh_reference_from_candidate();
 
@@ -370,6 +468,7 @@ private:
         std::vector<int> levels;
         std::optional<CachedEmbedding> to_reference;
         std::optional<CachedEmbedding> to_candidate;
+        bool identity = false;
     };
     std::optional<ProposedCoarseState> proposed_coarse_;
 

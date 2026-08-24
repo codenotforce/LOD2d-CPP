@@ -3,10 +3,28 @@
 #include <chrono>
 #include <cstddef>
 #include <limits>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace lod2d::helmholtz::adaptive {
+
+// Backends use this exception only for resource guards that fire inside one
+// otherwise atomic driver action (for example, a multi-step matching or
+// reserve closure).  The driver converts it to WorkLimitReached instead of
+// treating expected resource exhaustion as a numerical failure.
+class ReferenceEpochWorkLimitExceeded final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
+
+// A requested post-refresh reserve may be geometrically unavailable while
+// preserving an exact hybrid matching region.  This is an expected bounded
+// stop, not a numerical failure or an invitation to chase the interface.
+class ReferenceEpochReserveUnavailable final : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
+};
 
 enum class ReferenceEpochDriverState {
     EpochInit,
@@ -43,15 +61,37 @@ enum class ReferenceEpochDriverAction {
 struct ReferenceEpochCorrectorObservation {
     double theta_loc = 0.0;
     double delta_loc_hat = 0.0;
+    std::size_t active_correctors = 0;
     std::size_t rebuilt_correctors = 0;
+    std::size_t reused_correctors = 0;
     std::size_t skipped_correctors = 0;
     std::size_t skipped_corrector_work_units = 0;
+    int corrector_parallel_threads = 1;
+    double corrector_patch_assembly_work_seconds = 0.0;
+    double corrector_patch_solve_work_seconds = 0.0;
+    double corrector_patch_pack_work_seconds = 0.0;
+    int corrector_maximum_patch_dofs = 0;
+    int corrector_maximum_patch_constraints = 0;
+    int corrector_maximum_patch_rhs = 0;
     int hybrid_l_s = -1;
     double hybrid_minimum_physical_radius =
         std::numeric_limits<double>::quiet_NaN();
     double hybrid_covered_physical_radius =
         std::numeric_limits<double>::quiet_NaN();
+    std::size_t hybrid_omega_s_elements = 0;
+    std::size_t hybrid_omega_f_elements = 0;
+    // One-time solve/factorization of the fixed reference problem at the
+    // first corrector check of an epoch.  This is the practical
+    // well-posedness check used by the implementation study.
+    double time_reference_stability = 0.0;
+    double time_corrector_check_total = 0.0;
+    double time_lod_build_total = 0.0;
+    double time_lod_mesh_and_interpolation = 0.0;
+    double time_lod_operators = 0.0;
     double time_corrector = 0.0;
+    double time_lod_corrected_basis = 0.0;
+    double time_lod_coarse_operator = 0.0;
+    double time_lod_coarse_factorization = 0.0;
     double time_theta = 0.0;
     double time_gram_prepare_structure = 0.0;
     double time_gram_prepare_factorization = 0.0;
@@ -72,18 +112,50 @@ struct ReferenceEpochSolveObservation {
     double eta_H = 0.0;
     double U_practical = 0.0;
     std::vector<int> marked_H;
+    double hybrid_regular_indicator_mass =
+        std::numeric_limits<double>::quiet_NaN();
+    double hybrid_admissible_indicator_mass =
+        std::numeric_limits<double>::quiet_NaN();
+    double hybrid_marked_H_indicator_mass =
+        std::numeric_limits<double>::quiet_NaN();
+    int hybrid_coarse_conformity_collar = -1;
+    bool hybrid_coarse_marking_closure_safe = false;
+    bool hybrid_full_regular_doerfler = false;
+    std::size_t hybrid_coarse_preview_attempts = 0;
+    bool hybrid_coarse_preview_cached = false;
     double relative_reference_energy =
         std::numeric_limits<double>::quiet_NaN();
     double relative_exact_energy =
         std::numeric_limits<double>::quiet_NaN();
     double relative_exact_L2 =
         std::numeric_limits<double>::quiet_NaN();
+    double relative_exact_reference_energy =
+        std::numeric_limits<double>::quiet_NaN();
     double time_lod_solve = 0.0;
     double time_reference_riesz = 0.0;
+    double time_hybrid_coarse_marking = 0.0;
+    double time_hybrid_coarse_preview = 0.0;
+    double time_hybrid_coarse_preview_nvb = 0.0;
+    double time_hybrid_coarse_preview_reference_embedding = 0.0;
+    // Experimental diagnostics, excluded from method time.  They compare the
+    // computed state with the fixed reference/exact solutions and do not
+    // participate in any adaptive decision.
+    double time_reference_validation = 0.0;
+    double time_exact_validation = 0.0;
 };
 
 struct ReferenceEpochCandidateObservation {
     double eta_eq_c = 0.0;
+    double eta_eq_c_f = std::numeric_limits<double>::quiet_NaN();
+    double eta_eq_c_r = std::numeric_limits<double>::quiet_NaN();
+    double indicator_mass_c_f = std::numeric_limits<double>::quiet_NaN();
+    double indicator_mass_c_r = std::numeric_limits<double>::quiet_NaN();
+    double marked_mass_c_f = std::numeric_limits<double>::quiet_NaN();
+    double marked_mass_c_r = std::numeric_limits<double>::quiet_NaN();
+    std::size_t marked_c_f = 0;
+    std::size_t marked_c_r = 0;
+    std::size_t candidate_cells_f = 0;
+    std::size_t candidate_cells_r = 0;
     std::vector<int> marked_c;
     double time_candidate_flux = 0.0;
     double time_candidate_close = 0.0;
@@ -107,6 +179,7 @@ struct ReferenceEpochDualObservation {
     double eta_dual_c = 0.0;
     double L_gap_c = 0.0;
     double time_candidate_dual = 0.0;
+    double time_candidate_wellposedness = 0.0;
     double time_candidate_dual_operator_assembly = 0.0;
     double time_candidate_dual_load_assembly = 0.0;
     double time_candidate_dual_prolongation = 0.0;
@@ -123,6 +196,7 @@ struct ReferenceEpochResourceSnapshot {
     std::size_t reference_unknowns = 0;
     std::size_t candidate_unknowns = 0;
     double kappa_H_max = std::numeric_limits<double>::quiet_NaN();
+    double artifact_capture_seconds = 0.0;
 };
 
 // The production contract intentionally has no candidate Helmholtz solve.
@@ -173,9 +247,9 @@ struct ReferenceEpochDriverConfig {
     // prospective coarse/candidate gap reaches this value.  This prevents a
     // new epoch from starting with an already exhausted reference.
     int reference_refresh_target_gap = 0;
-    // Suppress only the proactive level-gap guard until this many coarse
-    // commits have occurred in the current epoch. Structural non-containment
-    // and a positive dual-gap certificate remain immediate.
+    // Deprecated experimental provenance field.  The refinement-reserve
+    // trigger is mandatory in Algorithms 1--2 and is therefore never delayed
+    // by this value.  Production configurations must set it to zero.
     std::size_t minimum_H_steps_per_epoch = 0;
     // Do not open a refreshed epoch unless the remaining fixed-work budget
     // can produce at least this many SolveAndEstimate observations.
@@ -200,26 +274,68 @@ struct ReferenceEpochDriverRecord {
     double eta_H = std::numeric_limits<double>::quiet_NaN();
     double U_practical = std::numeric_limits<double>::quiet_NaN();
     double eta_eq_c = std::numeric_limits<double>::quiet_NaN();
+    double eta_eq_c_f = std::numeric_limits<double>::quiet_NaN();
+    double eta_eq_c_r = std::numeric_limits<double>::quiet_NaN();
+    double indicator_mass_c_f = std::numeric_limits<double>::quiet_NaN();
+    double indicator_mass_c_r = std::numeric_limits<double>::quiet_NaN();
+    double marked_mass_c_f = std::numeric_limits<double>::quiet_NaN();
+    double marked_mass_c_r = std::numeric_limits<double>::quiet_NaN();
     double eta_dual_c = std::numeric_limits<double>::quiet_NaN();
     double L_gap_c = std::numeric_limits<double>::quiet_NaN();
     double relative_reference_energy = std::numeric_limits<double>::quiet_NaN();
     double relative_exact_energy = std::numeric_limits<double>::quiet_NaN();
     double relative_exact_L2 = std::numeric_limits<double>::quiet_NaN();
+    double relative_exact_reference_energy =
+        std::numeric_limits<double>::quiet_NaN();
     std::size_t coarse_unknowns = 0;
     std::size_t reference_unknowns = 0;
     std::size_t candidate_unknowns = 0;
     double kappa_H_max = std::numeric_limits<double>::quiet_NaN();
     std::size_t marked_H = 0;
+    double hybrid_regular_indicator_mass =
+        std::numeric_limits<double>::quiet_NaN();
+    double hybrid_admissible_indicator_mass =
+        std::numeric_limits<double>::quiet_NaN();
+    double hybrid_marked_H_indicator_mass =
+        std::numeric_limits<double>::quiet_NaN();
+    int hybrid_coarse_conformity_collar = -1;
+    bool hybrid_coarse_marking_closure_safe = false;
+    bool hybrid_full_regular_doerfler = false;
+    std::size_t hybrid_coarse_preview_attempts = 0;
+    bool hybrid_coarse_preview_cached = false;
     std::size_t marked_c = 0;
+    std::size_t marked_c_f = 0;
+    std::size_t marked_c_r = 0;
+    std::size_t active_correctors = 0;
     std::size_t rebuilt_correctors = 0;
+    std::size_t reused_correctors = 0;
     std::size_t skipped_correctors = 0;
     std::size_t skipped_corrector_work_units = 0;
+    int corrector_parallel_threads = 1;
+    double corrector_patch_assembly_work_seconds = 0.0;
+    double corrector_patch_solve_work_seconds = 0.0;
+    double corrector_patch_pack_work_seconds = 0.0;
+    int corrector_maximum_patch_dofs = 0;
+    int corrector_maximum_patch_constraints = 0;
+    int corrector_maximum_patch_rhs = 0;
     int hybrid_l_s = -1;
     double hybrid_minimum_physical_radius =
         std::numeric_limits<double>::quiet_NaN();
     double hybrid_covered_physical_radius =
         std::numeric_limits<double>::quiet_NaN();
+    std::size_t hybrid_omega_s_elements = 0;
+    std::size_t hybrid_omega_f_elements = 0;
+    std::size_t candidate_cells_f = 0;
+    std::size_t candidate_cells_r = 0;
+    double time_reference_stability = 0.0;
+    double time_corrector_check_total = 0.0;
+    double time_lod_build_total = 0.0;
+    double time_lod_mesh_and_interpolation = 0.0;
+    double time_lod_operators = 0.0;
     double time_corrector = 0.0;
+    double time_lod_corrected_basis = 0.0;
+    double time_lod_coarse_operator = 0.0;
+    double time_lod_coarse_factorization = 0.0;
     double time_theta = 0.0;
     double time_gram_prepare_structure = 0.0;
     double time_gram_prepare_factorization = 0.0;
@@ -236,6 +352,12 @@ struct ReferenceEpochDriverRecord {
     bool localization_used_warm_start = false;
     double time_lod_solve = 0.0;
     double time_reference_riesz = 0.0;
+    double time_hybrid_coarse_marking = 0.0;
+    double time_hybrid_coarse_preview = 0.0;
+    double time_hybrid_coarse_preview_nvb = 0.0;
+    double time_hybrid_coarse_preview_reference_embedding = 0.0;
+    double time_reference_validation = 0.0;
+    double time_exact_validation = 0.0;
     double time_candidate_flux = 0.0;
     double time_candidate_close = 0.0;
     double time_candidate_operator_assembly = 0.0;
@@ -253,6 +375,7 @@ struct ReferenceEpochDriverRecord {
     double time_candidate_quasi_interpolation = 0.0;
     double time_candidate_embedding_validation = 0.0;
     double time_candidate_dual = 0.0;
+    double time_candidate_wellposedness = 0.0;
     double time_candidate_dual_operator_assembly = 0.0;
     double time_candidate_dual_load_assembly = 0.0;
     double time_candidate_dual_prolongation = 0.0;
@@ -263,6 +386,9 @@ struct ReferenceEpochDriverRecord {
     std::size_t candidate_dual_patch_factorizations = 0;
     int candidate_dual_parallel_threads = 1;
     double time_mesh = 0.0;
+    double time_validation_cumulative = 0.0;
+    double time_artifact_capture_cumulative = 0.0;
+    double time_method_cumulative = 0.0;
     double time_total_cumulative = 0.0;
     bool structural_dual_trigger = false;
     bool level_gap_dual_trigger = false;

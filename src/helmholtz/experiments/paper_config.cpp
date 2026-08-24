@@ -436,10 +436,10 @@ bool equal_work_limits(
 
 const std::vector<CaseDefinition> &paper_case_registry() {
     static const std::vector<CaseDefinition> registry{
-        {PaperCase::R1, "smooth-manufactured", "unit-square", true, false, std::nullopt},
+        {PaperCase::R1, "localized-smooth-oscillatory", "unit-square", true, true, std::nullopt},
         {PaperCase::R2a, "localized-gaussian-2^-5", "unit-square", false, false, 1.0 / 32.0},
         {PaperCase::R2b, "localized-gaussian-2^-6", "unit-square", false, false, 1.0 / 64.0},
-        {PaperCase::S, "l-shape-singular", "l-shape", true, true, std::nullopt},
+        {PaperCase::S, "l-shape-singular-interior-wave", "l-shape", true, true, std::nullopt},
     };
     return registry;
 }
@@ -2066,8 +2066,7 @@ void validate_reference_epoch_paper_config(
         || !(config.continuity_constant > 0.0)
         || !(config.overlap_constant > 0.0)
         || config.work_limits.maximum_H_steps == 0
-        || config.minimum_H_steps_per_epoch
-            > config.work_limits.maximum_H_steps
+        || config.minimum_H_steps_per_epoch != 0
         || config.minimum_solved_points_per_new_epoch
             > config.work_limits.maximum_H_steps
         || config.work_limits.maximum_epochs == 0

@@ -6,8 +6,10 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <exception>
 #include <stdexcept>
 #include <unordered_map>
+#include <vector>
 
 namespace lod2d::helmholtz {
 namespace {
@@ -234,9 +236,15 @@ HelmholtzError compute_helmholtz_error(
     if (!exact || !exact_gradient)
         throw std::invalid_argument("Helmholtz exact solution callbacks must not be empty");
 
-    double l2_squared = 0.0;
-    double gradient_squared = 0.0;
-    for (int element = 0; element < static_cast<int>(mesh.elems.size()); ++element) {
+    const int element_count = static_cast<int>(mesh.elems.size());
+    std::vector<double> element_l2_squared(element_count, 0.0);
+    std::vector<double> element_gradient_squared(element_count, 0.0);
+    std::vector<std::exception_ptr> element_errors(element_count);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if(element_count >= 64)
+#endif
+    for (int element = 0; element < element_count; ++element) {
+        try {
         const Triangle &tri = mesh.elems[element];
         std::array<Eigen::Vector2d, 3> gradients;
         (void)triangle_geometry(mesh, tri, gradients);
@@ -252,9 +260,29 @@ HelmholtzError compute_helmholtz_error(
             }
             const Complex value_error = exact(point.point) - discrete_value;
             const Eigen::Vector2cd gradient_error = exact_gradient(point.point) - discrete_gradient;
-            l2_squared += point.weight * std::norm(value_error);
-            gradient_squared += point.weight * gradient_error.squaredNorm();
+            element_l2_squared[element] +=
+                point.weight * std::norm(value_error);
+            element_gradient_squared[element] +=
+                point.weight * gradient_error.squaredNorm();
         }
+        } catch (...) {
+            element_errors[element] = std::current_exception();
+        }
+    }
+
+    // Exceptions may not escape an OpenMP work-sharing region.  Store one
+    // exception per independent element and rethrow the first element-index
+    // failure afterwards, preserving the serial failure order.
+    for (const std::exception_ptr &error : element_errors)
+        if (error) std::rethrow_exception(error);
+
+    // Reduce in element order so results do not depend on the OpenMP thread
+    // count or schedule.
+    double l2_squared = 0.0;
+    double gradient_squared = 0.0;
+    for (int element = 0; element < element_count; ++element) {
+        l2_squared += element_l2_squared[element];
+        gradient_squared += element_gradient_squared[element];
     }
 
     HelmholtzError error;

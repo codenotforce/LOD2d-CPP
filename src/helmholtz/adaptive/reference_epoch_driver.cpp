@@ -1,5 +1,6 @@
 #include "helmholtz/adaptive/reference_epoch_driver.h"
 
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <stdexcept>
@@ -83,17 +84,18 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
     ReferenceEpochDriverState state = ReferenceEpochDriverState::EpochInit;
     std::size_t epoch = 0;
     std::size_t H_steps = 0;
+    std::size_t solved_points = 0;
     std::size_t dual_checks = 0;
     int ell = config_.ell0;
     double U_practical = std::numeric_limits<double>::infinity();
     std::vector<int> marked_H;
     std::optional<double> last_dual_U;
     std::size_t last_dual_H_step = 0;
-    std::size_t epoch_start_H_step = 0;
     bool structural_trigger = false;
     bool level_gap_trigger = false;
     bool termination_trigger = false;
     bool refresh_commit_pending = false;
+    double validation_time_cumulative = 0.0;
     const auto start = std::chrono::steady_clock::now();
 
     const auto append = [&](ReferenceEpochDriverRecord record) {
@@ -108,6 +110,12 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
         record.kappa_H_max = snapshot.kappa_H_max;
         record.time_total_cumulative = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - start).count();
+        record.time_validation_cumulative = validation_time_cumulative;
+        record.time_artifact_capture_cumulative =
+            snapshot.artifact_capture_seconds;
+        record.time_method_cumulative = std::max(
+            0.0, record.time_total_cumulative - validation_time_cumulative
+                - snapshot.artifact_capture_seconds);
         result.journal.push_back(std::move(record));
     };
     const auto stop_limit = [&](const std::string &reason) {
@@ -155,7 +163,6 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     record.time_mesh = std::chrono::duration<double>(
                         std::chrono::steady_clock::now() - mesh_start).count();
                 }
-                epoch_start_H_step = H_steps;
                 last_dual_U.reset();
                 last_dual_H_step = H_steps;
                 state = ReferenceEpochDriverState::CorrectorCheck;
@@ -175,16 +182,50 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     backend_.corrector_check(ell);
                 record.theta_loc = observation.theta_loc;
                 record.delta_loc_hat = observation.delta_loc_hat;
+                record.active_correctors = observation.active_correctors;
                 record.rebuilt_correctors = observation.rebuilt_correctors;
+                record.reused_correctors = observation.reused_correctors;
                 record.skipped_correctors = observation.skipped_correctors;
                 record.skipped_corrector_work_units =
                     observation.skipped_corrector_work_units;
+                record.corrector_parallel_threads =
+                    observation.corrector_parallel_threads;
+                record.corrector_patch_assembly_work_seconds =
+                    observation.corrector_patch_assembly_work_seconds;
+                record.corrector_patch_solve_work_seconds =
+                    observation.corrector_patch_solve_work_seconds;
+                record.corrector_patch_pack_work_seconds =
+                    observation.corrector_patch_pack_work_seconds;
+                record.corrector_maximum_patch_dofs =
+                    observation.corrector_maximum_patch_dofs;
+                record.corrector_maximum_patch_constraints =
+                    observation.corrector_maximum_patch_constraints;
+                record.corrector_maximum_patch_rhs =
+                    observation.corrector_maximum_patch_rhs;
                 record.hybrid_l_s = observation.hybrid_l_s;
                 record.hybrid_minimum_physical_radius =
                     observation.hybrid_minimum_physical_radius;
                 record.hybrid_covered_physical_radius =
                     observation.hybrid_covered_physical_radius;
+                record.hybrid_omega_s_elements =
+                    observation.hybrid_omega_s_elements;
+                record.hybrid_omega_f_elements =
+                    observation.hybrid_omega_f_elements;
+                record.time_reference_stability =
+                    observation.time_reference_stability;
+                record.time_corrector_check_total =
+                    observation.time_corrector_check_total;
+                record.time_lod_build_total = observation.time_lod_build_total;
+                record.time_lod_mesh_and_interpolation =
+                    observation.time_lod_mesh_and_interpolation;
+                record.time_lod_operators = observation.time_lod_operators;
                 record.time_corrector = observation.time_corrector;
+                record.time_lod_corrected_basis =
+                    observation.time_lod_corrected_basis;
+                record.time_lod_coarse_operator =
+                    observation.time_lod_coarse_operator;
+                record.time_lod_coarse_factorization =
+                    observation.time_lod_coarse_factorization;
                 record.time_theta = observation.time_theta;
                 record.time_gram_prepare_structure =
                     observation.time_gram_prepare_structure;
@@ -214,13 +255,29 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     throw std::runtime_error("corrector check returned an invalid bound");
                 if (observation.delta_loc_hat > config_.tau_loc) {
                     if (ell >= config_.ell_max) {
-                        stop_limit("corrector threshold failed at ell_max");
+                        const std::string reason =
+                            "corrector threshold failed at ell_max";
+                        record.state_after =
+                            ReferenceEpochDriverState::WorkLimitReached;
+                        record.action =
+                            ReferenceEpochDriverAction::StopWorkLimit;
+                        record.detail = reason;
+                        state = ReferenceEpochDriverState::WorkLimitReached;
+                        append(std::move(record));
+                        result.stop_reason = reason;
                         continue;
                     }
-                    ++ell;
                     record.state_after = state;
                     record.action = ReferenceEpochDriverAction::IncreaseGlobalEll;
-                    record.detail = "corrector failure changed only global ell";
+                    record.detail = "corrector failure changed global ell from "
+                        + std::to_string(ell) + " to "
+                        + std::to_string(ell + 1);
+                    // The observation belongs to the ell that was actually
+                    // checked.  Advance only after journaling it so Theta,
+                    // Gram timings, and cache counters are not mislabeled.
+                    append(std::move(record));
+                    ++ell;
+                    continue;
                 } else {
                     state = ReferenceEpochDriverState::SolveEstimate;
                     record.state_after = state;
@@ -231,7 +288,7 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
             }
 
             case ReferenceEpochDriverState::SolveEstimate: {
-                if (H_steps >= config_.limits.maximum_H_steps) {
+                if (solved_points >= config_.limits.maximum_H_steps) {
                     stop_limit("maximum_H_steps reached");
                     continue;
                 }
@@ -241,24 +298,77 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     || !(observation.U_practical >= 0.0)
                     || !std::isfinite(observation.U_practical))
                     throw std::runtime_error("solve/estimate returned invalid values");
+                ++solved_points;
                 U_practical = observation.U_practical;
                 marked_H = observation.marked_H;
-                if (marked_H.empty() && U_practical > config_.tolerance_reference)
-                    throw std::runtime_error("positive error bound produced empty H marking");
+                // Algorithm 1 initializes the lazy-dual reference values at
+                // the first solved point of every epoch.  Without this, the
+                // decrease trigger is disabled until an interval-triggered
+                // dual solve happens, potentially delaying a numerical epoch
+                // switch by an entire m_dual block.
+                if (!last_dual_U) {
+                    last_dual_U = U_practical;
+                    last_dual_H_step = H_steps;
+                }
+                // Algorithm 2 permits an empty regular-region marking when
+                // its regional indicator mass vanishes.  The backend opens
+                // an identity proposal so candidate enrichment and the epoch
+                // decision are still executed transactionally.
                 state = ReferenceEpochDriverState::ProposeCoarse;
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::SolveAndEstimate;
                 record.eta_H = observation.eta_H;
                 record.U_practical = U_practical;
                 record.marked_H = observation.marked_H.size();
+                record.hybrid_regular_indicator_mass =
+                    observation.hybrid_regular_indicator_mass;
+                record.hybrid_admissible_indicator_mass =
+                    observation.hybrid_admissible_indicator_mass;
+                record.hybrid_marked_H_indicator_mass =
+                    observation.hybrid_marked_H_indicator_mass;
+                record.hybrid_coarse_conformity_collar =
+                    observation.hybrid_coarse_conformity_collar;
+                record.hybrid_coarse_marking_closure_safe =
+                    observation.hybrid_coarse_marking_closure_safe;
+                record.hybrid_full_regular_doerfler =
+                    observation.hybrid_full_regular_doerfler;
+                record.hybrid_coarse_preview_attempts =
+                    observation.hybrid_coarse_preview_attempts;
+                record.hybrid_coarse_preview_cached =
+                    observation.hybrid_coarse_preview_cached;
                 record.relative_reference_energy =
                     observation.relative_reference_energy;
                 record.relative_exact_energy = observation.relative_exact_energy;
                 record.relative_exact_L2 = observation.relative_exact_L2;
+                record.relative_exact_reference_energy =
+                    observation.relative_exact_reference_energy;
                 record.time_lod_solve = observation.time_lod_solve;
                 record.time_reference_riesz =
                     observation.time_reference_riesz;
+                record.time_hybrid_coarse_marking =
+                    observation.time_hybrid_coarse_marking;
+                record.time_hybrid_coarse_preview =
+                    observation.time_hybrid_coarse_preview;
+                record.time_hybrid_coarse_preview_nvb =
+                    observation.time_hybrid_coarse_preview_nvb;
+                record.time_hybrid_coarse_preview_reference_embedding =
+                    observation.time_hybrid_coarse_preview_reference_embedding;
+                record.time_reference_validation =
+                    observation.time_reference_validation;
+                record.time_exact_validation =
+                    observation.time_exact_validation;
+                validation_time_cumulative +=
+                    observation.time_reference_validation
+                    + observation.time_exact_validation;
                 append(std::move(record));
+                // maximum_H_steps is the number of solved coarse states,
+                // not the number of committed refinements.  The final
+                // solved point is already a valid trajectory datum; do not
+                // spend candidate, proposal, commit, or corrector work after
+                // recording it.
+                if (solved_points >= config_.limits.maximum_H_steps) {
+                    stop_limit("maximum_H_steps reached");
+                }
                 continue;
             }
 
@@ -284,7 +394,17 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::EnrichCandidate;
                 record.eta_eq_c = observation.eta_eq_c;
+                record.eta_eq_c_f = observation.eta_eq_c_f;
+                record.eta_eq_c_r = observation.eta_eq_c_r;
+                record.indicator_mass_c_f = observation.indicator_mass_c_f;
+                record.indicator_mass_c_r = observation.indicator_mass_c_r;
+                record.marked_mass_c_f = observation.marked_mass_c_f;
+                record.marked_mass_c_r = observation.marked_mass_c_r;
                 record.marked_c = observation.marked_c.size();
+                record.marked_c_f = observation.marked_c_f;
+                record.marked_c_r = observation.marked_c_r;
+                record.candidate_cells_f = observation.candidate_cells_f;
+                record.candidate_cells_r = observation.candidate_cells_r;
                 record.time_candidate_flux = observation.time_candidate_flux;
                 record.time_candidate_close = observation.time_candidate_close;
                 record.time_candidate_operator_assembly =
@@ -325,8 +445,6 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     backend_.minimum_reference_level_gap();
                 level_gap_trigger =
                     config_.reference_refresh_level_gap > 0
-                    && H_steps - epoch_start_H_step
-                        >= config_.minimum_H_steps_per_epoch
                     && local_level_gap
                         <= config_.reference_refresh_level_gap;
                 termination_trigger = U_practical <= config_.tolerance_reference;
@@ -337,9 +455,9 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 const bool forced_refresh = structural_trigger
                     || level_gap_trigger;
                 const std::size_t remaining_new_epoch_solves =
-                    H_steps + 1 >= config_.limits.maximum_H_steps
+                    solved_points >= config_.limits.maximum_H_steps
                     ? 0
-                    : config_.limits.maximum_H_steps - (H_steps + 1);
+                    : config_.limits.maximum_H_steps - solved_points;
                 const bool refresh_budget_available =
                     config_.minimum_solved_points_per_new_epoch == 0
                     || remaining_new_epoch_solves
@@ -392,9 +510,9 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 const bool numerical_refresh = observation.L_gap_c
                     >= config_.tau_ep * U_practical;
                 const std::size_t remaining_new_epoch_solves =
-                    H_steps + 1 >= config_.limits.maximum_H_steps
+                    solved_points >= config_.limits.maximum_H_steps
                     ? 0
-                    : config_.limits.maximum_H_steps - (H_steps + 1);
+                    : config_.limits.maximum_H_steps - solved_points;
                 const bool refresh_budget_available =
                     config_.minimum_solved_points_per_new_epoch == 0
                     || remaining_new_epoch_solves
@@ -415,6 +533,8 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.eta_dual_c = observation.eta_dual_c;
                 record.L_gap_c = observation.L_gap_c;
                 record.time_candidate_dual = observation.time_candidate_dual;
+                record.time_candidate_wellposedness =
+                    observation.time_candidate_wellposedness;
                 record.time_candidate_dual_operator_assembly =
                     observation.time_candidate_dual_operator_assembly;
                 record.time_candidate_dual_load_assembly =
@@ -439,8 +559,17 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                     backend_.minimum_reference_level_gap();
                 record.tolerance_dual_trigger = termination_trigger;
                 append(std::move(record));
-                if (state == ReferenceEpochDriverState::WorkLimitReached)
+                if (state == ReferenceEpochDriverState::WorkLimitReached) {
+                    ReferenceEpochDriverRecord stop;
+                    stop.state_before =
+                        ReferenceEpochDriverState::WorkLimitReached;
+                    stop.state_after =
+                        ReferenceEpochDriverState::WorkLimitReached;
+                    stop.action = ReferenceEpochDriverAction::StopWorkLimit;
+                    stop.detail = result.stop_reason;
+                    append(std::move(stop));
                     continue;
+                }
                 if (state == ReferenceEpochDriverState::Converged) {
                     ReferenceEpochDriverRecord complete;
                     complete.state_before = ReferenceEpochDriverState::Converged;
@@ -484,9 +613,9 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.time_mesh = std::chrono::duration<double>(
                     std::chrono::steady_clock::now() - mesh_start).count();
                 ++H_steps;
-                if (refresh_commit_pending) {
+                const bool committed_refresh = refresh_commit_pending;
+                if (committed_refresh) {
                     refresh_commit_pending = false;
-                    ++epoch;
                     state = ReferenceEpochDriverState::EpochInit;
                     record.detail = "committed prospective coarse mesh in refreshed reference";
                 } else {
@@ -495,7 +624,12 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 }
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::CommitCoarseRefinement;
+                // The commit closes the old epoch.  Journal it before
+                // advancing the epoch counter so its mesh snapshot and CSV
+                // row share the same epoch; the following BeginEpoch row is
+                // the first row owned by the new epoch.
                 append(std::move(record));
+                if (committed_refresh) ++epoch;
                 continue;
             }
 
@@ -505,6 +639,10 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 break;
             }
         }
+    } catch (const ReferenceEpochWorkLimitExceeded &error) {
+        stop_limit(error.what());
+    } catch (const ReferenceEpochReserveUnavailable &error) {
+        stop_limit(error.what());
     } catch (const std::exception &error) {
         ReferenceEpochDriverRecord record;
         record.state_before = state;
@@ -517,7 +655,7 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
     }
     result.state = state;
     result.epochs = epoch + (result.journal.empty() ? 0 : 1);
-    result.H_steps = H_steps;
+    result.H_steps = solved_points;
     result.dual_checks = dual_checks;
     result.ell = ell;
     if (state == ReferenceEpochDriverState::Converged)

@@ -216,12 +216,22 @@ HelmholtzResidualContributions assemble_helmholtz_residual_contributions(
             edge.residual_l2_squared = edge.length * std::norm(jump);
             edge.residual_nodal[0] = -0.5 * edge.length * jump;
             edge.residual_nodal[1] = -0.5 * edge.length * jump;
-        } else if (boundary_tag(fine, canonical_edge(edge.nodes[0], edge.nodes[1]))
-                   == BoundaryTag::Robin) {
-            edge.robin_boundary = true;
-            const Complex impedance(0.0, operators.wavenumber * operators.boundary_beta);
-            const Complex boundary0 = left_flux - impedance * solution(edge.nodes[0]);
-            const Complex boundary1 = left_flux - impedance * solution(edge.nodes[1]);
+        } else {
+            const BoundaryTag tag = boundary_tag(
+                fine, canonical_edge(edge.nodes[0], edge.nodes[1]));
+            if (tag != BoundaryTag::Robin && tag != BoundaryTag::Neumann) {
+                result.edges.push_back(edge);
+                continue;
+            }
+            edge.robin_boundary = tag == BoundaryTag::Robin;
+            edge.neumann_boundary = tag == BoundaryTag::Neumann;
+            const Complex impedance = tag == BoundaryTag::Robin
+                ? Complex(0.0, operators.wavenumber * operators.boundary_beta)
+                : Complex(0.0, 0.0);
+            const Complex boundary0 = left_flux
+                - impedance * solution(edge.nodes[0]);
+            const Complex boundary1 = left_flux
+                - impedance * solution(edge.nodes[1]);
             edge.residual_l2_squared = edge.length / 3.0 * (
                 std::norm(boundary0) + std::norm(boundary1)
                 + std::real(boundary0 * std::conj(boundary1)));
@@ -320,6 +330,7 @@ HelmholtzP1ResidualEstimate estimate_conforming_p1_residual(
     HelmholtzP1ResidualEstimate result;
     result.body_squared.assign(element_count, 0.0);
     result.interior_jump_squared.assign(element_count, 0.0);
+    result.neumann_boundary_squared.assign(element_count, 0.0);
     result.robin_boundary_squared.assign(element_count, 0.0);
     result.element_squared.assign(element_count, 0.0);
     for (int element = 0; element < element_count; ++element) {
@@ -333,6 +344,8 @@ HelmholtzP1ResidualEstimate estimate_conforming_p1_residual(
         if (edge.right_element >= 0) {
             result.interior_jump_squared[edge.left_element] += 0.5 * weighted;
             result.interior_jump_squared[edge.right_element] += 0.5 * weighted;
+        } else if (edge.neumann_boundary) {
+            result.neumann_boundary_squared[edge.left_element] += weighted;
         } else if (edge.robin_boundary) {
             result.robin_boundary_squared[edge.left_element] += weighted;
         }
@@ -340,6 +353,7 @@ HelmholtzP1ResidualEstimate estimate_conforming_p1_residual(
     for (int element = 0; element < element_count; ++element) {
         result.element_squared[element] = result.body_squared[element]
             + result.interior_jump_squared[element]
+            + result.neumann_boundary_squared[element]
             + result.robin_boundary_squared[element];
     }
     const double component_sum = std::accumulate(

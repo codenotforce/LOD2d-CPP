@@ -1,5 +1,6 @@
 #include "helmholtz/benchmarks/paper_cases.h"
 #include "helmholtz/boundary.h"
+#include "mesh/refine.h"
 
 #include <cmath>
 #include <iostream>
@@ -61,7 +62,7 @@ void verify_impedance_unit_square(PaperCase id) {
             "formal unit-square impedance measure is wrong");
 
     // Explicit edge tags are authoritative.  Poisoning the compatibility node
-    // list must not switch a formal R1/R2 edge to the legacy classification.
+    // list must not switch a formal R2 edge to the legacy classification.
     TriMesh poisoned = data.initial_mesh;
     poisoned.dirichlet = {0, 1, 2, 3};
     for (const BoundaryEdge &entry : poisoned.boundary_edges) {
@@ -80,20 +81,101 @@ Complex finite_difference_laplacian(
         + (value(point + ey) - 2.0 * value(point) + value(point - ey)) / (step * step);
 }
 
+Eigen::Vector2cd finite_difference_gradient(
+    const ComplexFunction &value,
+    const Point2 &point,
+    double step) {
+    Eigen::Vector2cd result;
+    result.x() = (value(point + Point2(step, 0.0))
+                - value(point - Point2(step, 0.0))) / (2.0 * step);
+    result.y() = (value(point + Point2(0.0, step))
+                - value(point - Point2(0.0, step))) / (2.0 * step);
+    return result;
+}
+
+void verify_localized_smooth_case() {
+    constexpr double kappa = 8.0;
+    constexpr double pi = 3.141592653589793238462643383279502884;
+    const PaperCaseData data = make_paper_case(PaperCase::R1, kappa);
+    validate_boundary_tags(data.initial_mesh);
+    require(std::abs(boundary_measure(
+                data.initial_mesh, BoundaryTag::Dirichlet) - 2.0) < 1e-14,
+            "R1 top/bottom Dirichlet partition is wrong");
+    require(std::abs(boundary_measure(
+                data.initial_mesh, BoundaryTag::Neumann) - 1.0) < 1e-14,
+            "R1 left Neumann partition is wrong");
+    require(std::abs(boundary_measure(
+                data.initial_mesh, BoundaryTag::Robin) - 1.0) < 1e-14,
+            "R1 right Robin partition is wrong");
+    TriMesh refined = data.initial_mesh;
+    for (int level = 0; level < 3; ++level) {
+        refined = refine_nvb(refined).mesh;
+        validate_boundary_tags(refined);
+        require(std::abs(boundary_measure(
+                    refined, BoundaryTag::Dirichlet) - 2.0) < 2e-12
+                    && std::abs(boundary_measure(
+                        refined, BoundaryTag::Neumann) - 1.0) < 2e-12
+                    && std::abs(boundary_measure(
+                        refined, BoundaryTag::Robin) - 1.0) < 2e-12,
+                "NVB failed to preserve the revised R1 D/N/R partition");
+    }
+
+    const Point2 sample(0.73, 0.52);
+    const double polynomial = sample.x() * sample.x()
+        * (1.0 - sample.x()) * (1.0 - sample.x());
+    const double amplitude = polynomial * std::sin(pi * sample.y())
+        * std::exp(-80.0 * (
+            std::pow(sample.x() - 0.75, 2)
+            + std::pow(sample.y() - 0.5, 2)));
+    const Complex expected = amplitude
+        * std::exp(Complex(0.0, kappa * sample.x()));
+    require(std::abs(data.exact(sample) - expected) < 2e-16,
+            "R1 exact solution does not match the revised localized formula");
+    require((finite_difference_gradient(data.exact, sample, 2e-6)
+             - data.exact_gradient(sample)).norm()
+                / std::max(1.0, data.exact_gradient(sample).norm()) < 1e-7,
+            "R1 analytic gradient disagrees with finite differences");
+    require(std::abs(finite_difference_laplacian(data.exact, sample, 2e-5)
+                     - data.exact_laplacian(sample))
+                / std::max(1.0, std::abs(data.exact_laplacian(sample))) < 2e-6,
+            "R1 analytic Laplacian disagrees with finite differences");
+    require(std::abs(data.source(sample) + data.exact_laplacian(sample)
+                     + kappa * kappa * data.exact(sample)) < 1e-12,
+            "R1 source violates the manufactured PDE identity");
+    require(std::abs(data.exact(Point2(0.75, 0.5)))
+                > 1e5 * std::abs(data.exact(Point2(0.2, 0.5))),
+            "R1 solution is not localized near (3/4,1/2)");
+
+    for (double x : {0.2, 0.8}) {
+        require(std::abs(data.exact(Point2(x, 0.0))) < 1e-15
+                    && std::abs(data.exact(Point2(x, 1.0))) < 1e-15,
+                "R1 violates a homogeneous Dirichlet edge");
+    }
+    const Point2 left(0.0, 0.43);
+    require(std::abs(data.exact_gradient(left).x()) < 1e-14,
+            "R1 violates the homogeneous left Neumann condition");
+    const Point2 right(1.0, 0.43);
+    require(std::abs(data.exact_gradient(right).x()
+                     - Complex(0.0, kappa) * data.exact(right)) < 1e-14,
+            "R1 violates the homogeneous right Robin condition");
+}
+
 void verify_singular_case() {
     constexpr double kappa = 8.0;
     const PaperCaseData data = make_paper_case(PaperCase::S, kappa);
+    const PaperCaseData singular_only =
+        make_paper_case(PaperCase::S, kappa, 0.0, 0.5, false, 0.0);
     const PaperCaseData corner_dominant =
         make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true);
     const PaperCaseData additive_wave =
         make_paper_case(PaperCase::S, kappa, 0.0, 1.0, true, 0.1);
-    require(data.singular_oscillatory_fraction == 1.0
+    require(data.singular_oscillatory_fraction == 0.0
                 && corner_dominant.singular_oscillatory_fraction == 0.0
                 && data.singular_cutoff_outer_radius == 0.5
                 && corner_dominant.singular_cutoff_outer_radius == 1.0
                 && !data.singular_quintic_cutoff
                 && corner_dominant.singular_quintic_cutoff
-                && data.smooth_wave_amplitude == 0.0
+                && data.smooth_wave_amplitude == 0.05
                 && additive_wave.smooth_wave_amplitude == 0.1,
             "S oscillatory fraction provenance is missing");
     require(std::abs(boundary_measure(data.initial_mesh, BoundaryTag::Dirichlet) - 2.0) < 1e-14,
@@ -112,7 +194,7 @@ void verify_singular_case() {
              &data, &corner_dominant, &additive_wave}) {
         for (const Point2 point : {
                  Point2(-0.18, 0.11), Point2(-0.31, 0.19),
-                 Point2(0.16, 0.28)}) {
+                 Point2(0.16, 0.28), Point2(-0.46, 0.52)}) {
             const Complex numerical = finite_difference_laplacian(
                 variant->exact, point, 2e-5);
             const Complex analytic = variant->exact_laplacian(point);
@@ -127,6 +209,12 @@ void verify_singular_case() {
     require(std::abs(std::imag(corner_dominant.exact(Point2(-0.18, 0.11))))
                 < 1e-14,
             "corner-dominant S exact solution is unexpectedly oscillatory");
+    require(std::abs(data.exact(Point2(-0.45, 0.42))
+                     - singular_only.exact(Point2(-0.45, 0.42))) > 1e-5,
+            "revised S benchmark lost its interior oscillatory bump");
+    require(std::abs(data.exact(Point2(-0.2, 0.5))
+                     - singular_only.exact(Point2(-0.2, 0.5))) < 1e-14,
+            "S oscillatory envelope is not compactly supported in the interior");
     require(std::abs(std::imag(additive_wave.exact(Point2(-0.45, 0.42))))
                 > 1e-5,
             "additive S exact solution lost its smooth oscillatory component");
@@ -192,7 +280,7 @@ void verify_cutoff_jet() {
 
 int main() {
     try {
-        verify_impedance_unit_square(PaperCase::R1);
+        verify_localized_smooth_case();
         verify_impedance_unit_square(PaperCase::R2a);
         verify_impedance_unit_square(PaperCase::R2b);
         verify_gaussian(PaperCase::R2a, 1.0 / 32.0);

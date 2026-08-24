@@ -117,6 +117,8 @@ void verify_registries() {
             "R2b sigma is not frozen to 2^-6");
     require(case_definition(PaperCase::S).has_mixed_boundary,
             "S must declare mixed boundary data");
+    require(case_definition(PaperCase::R1).has_mixed_boundary,
+            "revised R1 must declare its D/N/R boundary data");
     require(method_definition(PaperMethod::HlodProxy).diagnostic_only,
             "HLOD-proxy must remain diagnostic");
     require(!method_definition(PaperMethod::HlodProxy).paper_comparator,
@@ -751,7 +753,7 @@ void verify_practical_v4_contract() {
                     "SLOD accepted a nonpositive wavenumber");
 }
 
-void verify_reference_epoch_v5_S_contract() {
+void verify_reference_epoch_v6_S_contract() {
     ReferenceEpochPaperConfig config;
     config.case_id = PaperCase::S;
     config.method = "PALOD-hybrid-reference-epoch";
@@ -766,12 +768,12 @@ void verify_reference_epoch_v5_S_contract() {
     config.initial_reference_level = 6;
     config.reference_refresh_level_gap = 2;
     config.reference_refresh_target_gap = 4;
-    config.minimum_H_steps_per_epoch = 1;
+    config.minimum_H_steps_per_epoch = 0;
     config.minimum_solved_points_per_new_epoch = 2;
     config.git_commit = "WORKTREE@test";
     config.build_hash = "test-build";
     config.manuscript_sha256 =
-        "sha256:94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9";
+        "sha256:71f59581ea3a5e4cd65659055915715b9c86c582793db7154a5f0b3b31843ca8";
 
     const std::string encoded = canonical_json(config);
     const ReferenceEpochPaperConfig decoded =
@@ -786,27 +788,35 @@ void verify_reference_epoch_v5_S_contract() {
                 && decoded.singular_cutoff_outer_radius == 0.5
                 && !decoded.singular_quintic_cutoff
                 && decoded.smooth_wave_amplitude == 0.05,
-            "reference-epoch v5 lost the case-S manufactured solution");
+            "reference-epoch v6 lost the case-S manufactured solution");
     require(canonical_json(decoded) == encoded,
-            "reference-epoch v5 canonical JSON changed after round trip");
+            "reference-epoch v6 canonical JSON changed after round trip");
     ReferenceEpochPaperConfig changed = config;
     changed.smooth_wave_amplitude = 0.1;
     require(canonical_config_hash(changed) != canonical_config_hash(config),
-            "reference-epoch v5 identity ignores the smooth wave amplitude");
+            "reference-epoch v6 identity ignores the smooth wave amplitude");
     changed = config;
     changed.hybrid_maximum_corrector_patch_fine_elements = 50000;
     require(canonical_config_hash(changed) != canonical_config_hash(config),
-            "reference-epoch v5 identity ignores the hybrid patch guard");
+            "reference-epoch v6 identity ignores the hybrid patch guard");
     changed = config;
     changed.hybrid_minimum_physical_radius = 0.2;
     require(canonical_config_hash(changed) != canonical_config_hash(config),
-            "reference-epoch v5 identity ignores the hybrid physical radius");
+            "reference-epoch v6 identity ignores the hybrid physical radius");
+    changed = config;
+    changed.minimum_H_steps_per_epoch = 1;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "reference-epoch v6 accepted an epoch cooldown");
+    changed = config;
+    changed.schema_version = 5;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "reference-epoch v6 accepted a legacy schema version");
     changed = config;
     changed.case_id = PaperCase::R1;
     changed.method = "PALOD-reference-epoch";
     changed.singularity_hybrid = false;
     require_invalid([&] { (void)canonical_json(changed); },
-                    "reference-epoch v5 allowed S parameters for R1");
+                    "reference-epoch v6 allowed S parameters for R1");
 }
 
 } // namespace
@@ -820,7 +830,7 @@ int main() {
         verify_strict_validation();
         verify_status_contract();
         verify_practical_v4_contract();
-        verify_reference_epoch_v5_S_contract();
+        verify_reference_epoch_v6_S_contract();
         std::cout << "Helmholtz paper configuration protocol passed\n";
         return 0;
     } catch (const std::exception &error) {

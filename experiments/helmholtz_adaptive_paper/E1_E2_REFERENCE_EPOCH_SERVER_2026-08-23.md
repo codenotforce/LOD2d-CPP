@@ -1,5 +1,9 @@
 # E1/E2 reference-epoch 主实验服务器操作手册（2026-08-23）
 
+> **已被新版算法手册取代。** 对 `schema_version=6` 和 2026-08-24 修订论文，请使用
+> `E1_E2_REVISED_ALGORITHMS_SERVER_2026-08-24.md`。本文件仅保留旧 schema-v5 轨迹的
+> 可追溯性，不得用其中的旧区域定义或旧 main 命令启动新实验。
+
 本手册对应当前 schema-v5 reference-epoch 实现和保留的 schema-v4 对照方法。E1 是
 localized smooth；E2 是 L-shaped mixed-boundary low-regularity。两组实验不得跨 epoch
 拟合 reference error，也不得把 `WorkLimitReached: maximum_H_steps reached` 误判为失败。

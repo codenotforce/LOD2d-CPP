@@ -1760,6 +1760,7 @@ struct ReferenceDefectGramOperator::Implementation {
     ComplexSparseMatrix defect_rhs;
     RowMajorComplexSparse defect_by_row;
     KernelRieszSolver solver = KernelRieszSolver::SaddlePoint;
+    int requested_parallel_threads = 1;
     std::vector<PreparedPatch> patches;
     ReferenceDefectGramOperatorDiagnostics diagnostics;
 };
@@ -1847,14 +1848,14 @@ ReferenceDefectGramOperator::ReferenceDefectGramOperator(
         std::chrono::steady_clock::now() - structure_begin).count();
     data.diagnostics.patch_count = data.patches.size();
 #ifdef _OPENMP
-    data.diagnostics.parallel_threads = maximum_parallel_patch_solves > 0
-        ? std::min(maximum_parallel_patch_solves, omp_get_max_threads())
-        : omp_get_max_threads();
+    data.requested_parallel_threads = std::max(
+        1, maximum_parallel_patch_solves > 0
+            ? std::min(maximum_parallel_patch_solves, omp_get_max_threads())
+            : omp_get_max_threads());
 #else
     (void)maximum_parallel_patch_solves;
-    data.diagnostics.parallel_threads = 1;
 #endif
-    data.diagnostics.parallel_threads = std::max(1, data.diagnostics.parallel_threads);
+    data.diagnostics.parallel_threads = 1;
 
     if (solver != KernelRieszSolver::SaddlePoint) return;
     const auto factor_begin = std::chrono::steady_clock::now();
@@ -1871,54 +1872,83 @@ ReferenceDefectGramOperator::ReferenceDefectGramOperator(
                 ++data.diagnostics.factor_cache_misses;
         }
     }
-    for (Implementation::PreparedPatch &patch : data.patches) {
-        const int unknowns = patch.unknowns;
-        const int constraint_count = patch.constraint_count;
-        if (unknowns == 0) continue;
-        if (patch.saddle_factorization) {
+    // SparseLU objects are patch-local.  Factor the cache misses in parallel;
+    // cache mutation remains a deterministic serial pass below.  This stage
+    // dominated E1 wall time while using only one core even though the later
+    // Gram actions already exploited patch parallelism.
+    std::vector<unsigned char> newly_factorized(data.patches.size(), 0);
+    std::vector<std::string> factor_errors(data.patches.size());
+#ifdef _OPENMP
+#pragma omp parallel num_threads(data.requested_parallel_threads)
+    {
+#pragma omp single
+        data.diagnostics.parallel_threads = omp_get_num_threads();
+#pragma omp for schedule(dynamic, 1)
+#endif
+    for (int patch_index = 0;
+         patch_index < static_cast<int>(data.patches.size()); ++patch_index) {
+        try {
+            Implementation::PreparedPatch &patch = data.patches[patch_index];
+            const int unknowns = patch.unknowns;
+            const int constraint_count = patch.constraint_count;
+            if (unknowns == 0) continue;
+            if (!patch.saddle_factorization) {
+                std::vector<ComplexTriplet> triplets;
+                triplets.reserve(static_cast<std::size_t>(
+                    patch.energy.nonZeros() + 2 * patch.constraints.size()));
+                for (int column = 0; column < patch.energy.outerSize(); ++column) {
+                    for (Eigen::SparseMatrix<double>::InnerIterator it(
+                             patch.energy, column); it; ++it) {
+                        triplets.emplace_back(it.row(), it.col(), it.value());
+                    }
+                }
+                for (int row = 0; row < constraint_count; ++row) {
+                    for (int column = 0; column < unknowns; ++column) {
+                        const double value = patch.constraints(row, column);
+                        if (value == 0.0) continue;
+                        triplets.emplace_back(unknowns + row, column, value);
+                        triplets.emplace_back(column, unknowns + row, value);
+                    }
+                }
+                ComplexSparseMatrix saddle(
+                    unknowns + constraint_count, unknowns + constraint_count);
+                saddle.setFromTriplets(triplets.begin(), triplets.end());
+                saddle.makeCompressed();
+                patch.saddle_factorization =
+                    std::make_shared<ReferenceDefectGramSparseFactor>();
+                patch.saddle_factorization->analyzePattern(saddle);
+                patch.saddle_factorization->factorize(saddle);
+                if (patch.saddle_factorization->info() != Eigen::Success) {
+                    throw std::runtime_error(
+                        "prepared reference defect patch factorization failed");
+                }
+                newly_factorized[patch_index] = 1;
+            }
+            // The production action only needs the completed saddle factor
+            // and the two block dimensions.  Release preparation matrices as
+            // soon as each independent factorization is complete.
             patch.energy.resize(0, 0);
             patch.energy.data().squeeze();
             patch.constraints.resize(0, 0);
-            continue;
+        } catch (const std::exception &error) {
+            factor_errors[patch_index] = error.what();
         }
-        std::vector<ComplexTriplet> triplets;
-        triplets.reserve(static_cast<std::size_t>(
-            patch.energy.nonZeros() + 2 * patch.constraints.size()));
-        for (int column = 0; column < patch.energy.outerSize(); ++column) {
-            for (Eigen::SparseMatrix<double>::InnerIterator it(
-                     patch.energy, column); it; ++it) {
-                triplets.emplace_back(it.row(), it.col(), it.value());
-            }
-        }
-        for (int row = 0; row < constraint_count; ++row) {
-            for (int column = 0; column < unknowns; ++column) {
-                const double value = patch.constraints(row, column);
-                if (value == 0.0) continue;
-                triplets.emplace_back(unknowns + row, column, value);
-                triplets.emplace_back(column, unknowns + row, value);
-            }
-        }
-        ComplexSparseMatrix saddle(
-            unknowns + constraint_count, unknowns + constraint_count);
-        saddle.setFromTriplets(triplets.begin(), triplets.end());
-        saddle.makeCompressed();
-        patch.saddle_factorization =
-            std::make_shared<ReferenceDefectGramSparseFactor>();
-        patch.saddle_factorization->analyzePattern(saddle);
-        patch.saddle_factorization->factorize(saddle);
-        if (patch.saddle_factorization->info() != Eigen::Success) {
+    }
+#ifdef _OPENMP
+    }
+#endif
+    for (std::size_t patch_index = 0;
+         patch_index < factor_errors.size(); ++patch_index) {
+        if (!factor_errors[patch_index].empty()) {
             throw std::runtime_error(
-                "prepared reference defect patch factorization failed");
+                "reference defect Gram factorization "
+                + std::to_string(patch_index) + " failed: "
+                + factor_errors[patch_index]);
         }
-        // The production action only needs the completed saddle factor and
-        // the two block dimensions.  Keeping every local energy matrix and
-        // dense constraint block duplicated their data for the lifetime of
-        // the eigensolve and dominated late-epoch memory.
-        patch.energy.resize(0, 0);
-        patch.energy.data().squeeze();
-        patch.constraints.resize(0, 0);
+        if (!newly_factorized[patch_index]) continue;
         ++data.diagnostics.patch_factorizations;
         if (factor_cache) {
+            Implementation::PreparedPatch &patch = data.patches[patch_index];
             factor_cache->implementation_->insert(
                 patch.factor_cache_key, patch.saddle_factorization);
         }
@@ -1960,7 +1990,11 @@ ComplexMatrix ReferenceDefectGramOperator::apply(
     std::vector<std::string> errors(data.patches.size());
     const auto solve_begin = std::chrono::steady_clock::now();
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 1) num_threads(data.diagnostics.parallel_threads)
+#pragma omp parallel num_threads(data.requested_parallel_threads)
+    {
+#pragma omp single
+        data.diagnostics.parallel_threads = omp_get_num_threads();
+#pragma omp for schedule(dynamic, 1)
 #endif
     for (int patch_index = 0;
          patch_index < static_cast<int>(data.patches.size()); ++patch_index) {
@@ -2002,6 +2036,9 @@ ComplexMatrix ReferenceDefectGramOperator::apply(
             errors[patch_index] = error.what();
         }
     }
+#ifdef _OPENMP
+    }
+#endif
     data.diagnostics.action_patch_solve_seconds += std::chrono::duration<double>(
         std::chrono::steady_clock::now() - solve_begin).count();
     for (std::size_t patch = 0; patch < errors.size(); ++patch) {

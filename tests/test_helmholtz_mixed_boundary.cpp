@@ -65,7 +65,7 @@ TriMesh mixed_unit_square() {
         {{0, 1}, BoundaryTag::Dirichlet},
         {{1, 2}, BoundaryTag::Robin},
         {{2, 3}, BoundaryTag::Robin},
-        {{0, 3}, BoundaryTag::Robin}};
+        {{0, 3}, BoundaryTag::Neumann}};
     synchronize_dirichlet_nodes(mesh);
     validate_boundary_tags(mesh);
     return mesh;
@@ -76,15 +76,15 @@ void verify_mixed_global_operator_and_solve() {
     const HelmholtzOperators operators = assemble_helmholtz_operators(mesh, 2.0);
     require(operators.dirichlet_nodes == std::vector<int>({0, 1}),
             "operator lost the Dirichlet nodes");
+    require(std::abs(boundary_measure(mesh, BoundaryTag::Neumann) - 1.0) < 1e-14,
+            "mixed mesh lost its homogeneous Neumann edge");
 
     Eigen::Matrix4d expected = Eigen::Matrix4d::Zero();
-    expected(0, 0) = 1.0 / 3.0;
     expected(1, 1) = 1.0 / 3.0;
     expected(2, 2) = 2.0 / 3.0;
-    expected(3, 3) = 2.0 / 3.0;
+    expected(3, 3) = 1.0 / 3.0;
     expected(1, 2) = expected(2, 1) = 1.0 / 6.0;
     expected(2, 3) = expected(3, 2) = 1.0 / 6.0;
-    expected(3, 0) = expected(0, 3) = 1.0 / 6.0;
     require((Eigen::MatrixXd(operators.boundary_mass) - expected).norm() < 1e-14,
             "mixed Robin matrix differs from the hand reference");
 
@@ -101,7 +101,7 @@ void verify_mixed_global_operator_and_solve() {
 
 void verify_mixed_lod_chain() {
     HelmholtzProblemConfig config;
-    config.initial_mesh = make_helmholtz_l_shape_mesh();
+    config.initial_mesh = mixed_unit_square();
     config.H = 1;
     config.h = 3;
     config.ell = 1;
@@ -126,9 +126,14 @@ void verify_mixed_lod_chain() {
     require(residual.algebraic_relative_difference < 1e-10,
             "mixed residual reconstruction disagrees with the free-node algebraic residual");
     for (const auto &edge : residual.edges) {
-        if (boundary_tag(model.problem().fine, edge.nodes) == BoundaryTag::Dirichlet) {
-            require(!edge.robin_boundary && edge.residual_l2_squared == 0.0,
-                    "Dirichlet edge was assembled as a Robin residual edge");
+        const BoundaryTag tag = boundary_tag(model.problem().fine, edge.nodes);
+        if (tag == BoundaryTag::Dirichlet) {
+            require(!edge.robin_boundary && !edge.neumann_boundary
+                        && edge.residual_l2_squared == 0.0,
+                    "Dirichlet edge was assembled as a natural residual edge");
+        } else if (tag == BoundaryTag::Neumann) {
+            require(edge.neumann_boundary && !edge.robin_boundary,
+                    "homogeneous Neumann residual edge was not identified");
         }
     }
     const ComplexVector conforming = model.solve_fine_reference(lod_load);
@@ -146,9 +151,12 @@ void verify_mixed_lod_chain() {
                     afem.interior_jump_squared.begin(),
                     afem.interior_jump_squared.end()) > 0.0
                 && *std::max_element(
+                    afem.neumann_boundary_squared.begin(),
+                    afem.neumann_boundary_squared.end()) > 0.0
+                && *std::max_element(
                     afem.robin_boundary_squared.begin(),
                     afem.robin_boundary_squared.end()) > 0.0,
-            "AFEM estimate omitted body, interior-jump, or impedance terms");
+            "AFEM estimate omitted body, jump, Neumann, or impedance terms");
     require(!adaptive::mark_doerfler(afem.element_squared, 0.5).empty(),
             "AFEM residual did not produce a Doerfler marking");
     const ComplexVector load = assemble_helmholtz_load(

@@ -27,11 +27,22 @@ struct PaperCaseData {
 
 PaperCaseData make_paper_case(
     experiments::PaperCase id,
+    double wavenumber);
+
+PaperCaseData make_paper_case(
+    experiments::PaperCase id,
     double wavenumber,
-    double singular_oscillatory_fraction = 1.0,
+    double singular_oscillatory_fraction,
     double singular_cutoff_outer_radius = 0.5,
     bool singular_quintic_cutoff = false,
     double smooth_wave_amplitude = 0.0);
+
+// Case S keeps the legacy parameter hooks for controlled comparisons.  The
+// two-argument factory selects the revised paper benchmark for S:
+// oscillatory_fraction=0, cutoff_outer_radius=0.5, quintic_cutoff=false and
+// smooth_wave_amplitude=0.05. Its smooth wave uses a compactly supported
+// interior C-infinity envelope. The explicit overload retains all legacy
+// parameter hooks for controlled comparisons.
 
 double normalized_gaussian_constant(
     double sigma,

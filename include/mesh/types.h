@@ -17,7 +17,8 @@ using Edge = std::array<int, 2>;
 enum class BoundaryTag : std::uint8_t {
     Interior = 0,
     Dirichlet = 1,
-    Robin = 2
+    Robin = 2,
+    Neumann = 3
 };
 
 struct BoundaryEdge {

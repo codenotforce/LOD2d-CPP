@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plot E1 R1 energy errors for mixed paper-runner schema v4/v5 outputs."""
+"""Plot E1 R1 energy errors for mixed paper-runner schema v4/v5/v6 outputs."""
 
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ def load_run(directory: Path, label: str) -> Run:
                 last_skipped_work_units = int(
                     row.get("skipped_corrector_work_units", "0") or 0
                 )
-            if schema == 5:
+            if schema in (5, 6):
                 exact = _positive(row, "relative_exact_energy")
                 reference = _positive(row, "relative_reference_energy")
                 dofs = _positive(row, "N_H")
@@ -70,7 +70,13 @@ def load_run(directory: Path, label: str) -> Run:
                 reference = _positive(row, "reference_energy_error")
                 dofs = _positive(row, "DoF_H")
                 epoch_text = row.get("reference_epoch", "0")
-            seconds = _positive(row, "time_total_cumulative")
+            # Exact/reference comparisons are post-processing diagnostics and
+            # are excluded from method-time comparisons when schema-v6+
+            # provides the dedicated cumulative field.  Retain compatibility
+            # with historical results.
+            seconds = _positive(row, "time_method_cumulative")
+            if seconds is None:
+                seconds = _positive(row, "time_total_cumulative")
             if exact is None or dofs is None or seconds is None:
                 continue
             observations.append(
@@ -240,6 +246,49 @@ def palod_epoch_dof_exponents(run: Run, field: str) -> dict[str, float | None]:
     return result
 
 
+def common_error_efficiency(
+    runs: list[Run], targets: list[float]
+) -> dict[str, dict[str, object]]:
+    """Compare the first/minimum DoF reaching fixed exact-error targets.
+
+    The minimum is taken over all recorded points, so retained
+    pre-asymptotic non-monotonicity cannot make a later, larger mesh look
+    artificially preferable.  A target is comparable only if every method
+    reached it.
+    """
+    report: dict[str, dict[str, object]] = {}
+    for target in targets:
+        dofs = {
+            run.label: min(
+                (point.dofs for point in run.observations if point.exact <= target),
+                default=None,
+            )
+            for run in runs
+        }
+        comparable = all(value is not None for value in dofs.values())
+        winner = None
+        palod_least_dofs = None
+        ratios_to_palod: dict[str, float | None] = {}
+        if comparable:
+            best = min(value for value in dofs.values() if value is not None)
+            winners = [label for label, value in dofs.items() if value == best]
+            winner = winners[0] if len(winners) == 1 else winners
+            palod_dofs = dofs["Reference-epoch PALOD"]
+            palod_least_dofs = palod_dofs == best
+            ratios_to_palod = {
+                label: value / palod_dofs
+                for label, value in dofs.items()
+            }
+        report[f"{target:.12g}"] = {
+            "all_methods_reached": comparable,
+            "minimum_dofs_reaching_target": dofs,
+            "winner": winner,
+            "palod_has_least_dofs": palod_least_dofs,
+            "dof_ratio_to_palod": ratios_to_palod,
+        }
+    return report
+
+
 def plot_hybrid_saved_work(ax, runs: Iterable[Run]) -> None:
     hybrid = next(run for run in runs if run.label.startswith("Hybrid"))
     ax.semilogx(
@@ -264,7 +313,18 @@ def main() -> None:
     parser.add_argument("--ufem", type=Path)
     parser.add_argument("--afem", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--exact-targets", default="0.5,0.2,0.1,0.05,0.02,0.01",
+        help="comma-separated common exact-energy error targets",
+    )
+    parser.add_argument("--expected-palod-exponent", type=float, default=0.5)
+    parser.add_argument("--exponent-tolerance", type=float, default=0.1)
     arguments = parser.parse_args()
+    exact_targets = [
+        float(value) for value in arguments.exact_targets.split(",") if value
+    ]
+    if any(not math.isfinite(value) or value <= 0.0 for value in exact_targets):
+        parser.error("--exact-targets must contain positive finite values")
 
     if arguments.experiment == "E1":
         if None in (arguments.palod, arguments.fixed_lod, arguments.ufem, arguments.afem):
@@ -302,7 +362,7 @@ def main() -> None:
         plot_hybrid_saved_work(axes[1, 1], runs)
     axes[0, 0].legend(loc="best", fontsize=7.0, framealpha=0.82, handlelength=2.2)
     figure.suptitle(
-        r"E1 (R1, $\kappa=16$, initial $H$ level 2)"
+        r"E1 (R1, $\kappa=16$; PALOD starts at $H$ level 4)"
         if arguments.experiment == "E1"
         else r"E2 (L-shaped mixed boundary, $\kappa=16$, initial $H$ level 3)"
     )
@@ -346,6 +406,36 @@ def main() -> None:
         }
         for run in runs
     }
+    if arguments.experiment == "E1":
+        palod = next(run for run in runs if run.label == "Reference-epoch PALOD")
+        palod_tail = tail_dof_exponent(palod, "exact")
+        comparable_targets = common_error_efficiency(runs, exact_targets)
+        summary["_E1_claim_checks"] = {
+            "interpretation": (
+                "post-processing checks of the stated experimental expectation; "
+                "false/null outcomes must be reported and must not be filtered"
+            ),
+            "common_exact_error_targets": comparable_targets,
+            "palod_least_dofs_at_every_comparable_target": all(
+                item["palod_has_least_dofs"] is True
+                for item in comparable_targets.values()
+                if item["all_methods_reached"]
+            ) if any(
+                item["all_methods_reached"]
+                for item in comparable_targets.values()
+            ) else None,
+            "expected_exact_dof_exponent": arguments.expected_palod_exponent,
+            "allowed_absolute_shortfall": arguments.exponent_tolerance,
+            "palod_tail4_exact_dof_exponent": palod_tail,
+            "palod_tail_exponent_not_degraded": (
+                palod_tail is not None
+                and palod_tail
+                >= arguments.expected_palod_exponent - arguments.exponent_tolerance
+            ),
+            "palod_epoch_exact_dof_exponents": palod_epoch_dof_exponents(
+                palod, "exact"
+            ),
+        }
     arguments.output.with_suffix(".json").write_text(
         json.dumps(summary, indent=2) + "\n", encoding="utf-8"
     )

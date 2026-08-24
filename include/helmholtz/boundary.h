@@ -14,7 +14,8 @@ void validate_boundary_tags(const TriMesh &mesh);
 
 // Interior is returned for non-boundary edges. Legacy meshes classify a
 // boundary edge as Dirichlet iff both endpoints occur in mesh.dirichlet;
-// every other boundary edge is Robin.
+// every other boundary edge is Robin. Neumann edges therefore require the
+// explicit, complete boundary_edges contract.
 BoundaryTag boundary_tag(const TriMesh &mesh, const Edge &edge);
 
 std::vector<Edge> boundary_edges_with_tag(

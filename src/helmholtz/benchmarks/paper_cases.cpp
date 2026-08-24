@@ -1,8 +1,8 @@
 #include "helmholtz/benchmarks/paper_cases.h"
 
+#include "helmholtz/boundary.h"
 #include "helmholtz/model.h"
 
-#include <array>
 #include <cmath>
 #include <stdexcept>
 
@@ -12,6 +12,8 @@ namespace {
 constexpr double kR0 = 0.25;
 constexpr double kR1 = 0.5;
 constexpr double kAlpha = 2.0 / 3.0;
+constexpr double kR1Localization = 80.0;
+constexpr double kOscillatorySupportHalfWidth = 0.25;
 
 struct SmoothStepValue {
     double value = 0.0;
@@ -77,31 +79,95 @@ struct SmoothWaveEnvelope {
     double laplacian = 0.0;
 };
 
-SmoothWaveEnvelope smooth_wave_envelope(const Point2 &point) {
-    // g(t)=t^2(1-t^2)^2 vanishes together with g' at t=+-1 and
-    // vanishes at t=0.  Thus psi=C g(x)g(y) satisfies the outer homogeneous
-    // Robin contract and both reentrant Dirichlet rays.  C normalizes max psi
-    // to one at |x|=|y|=1/sqrt(3).
-    constexpr double normalization = 729.0 / 16.0;
-    const auto jet = [](const double value) {
-        const double v2 = value * value;
-        const double v3 = v2 * value;
-        const double v4 = v2 * v2;
-        const double v5 = v4 * value;
-        const double v6 = v3 * v3;
-        return std::array<double, 3>{
-            v2 - 2.0 * v4 + v6,
-            2.0 * value - 8.0 * v3 + 6.0 * v5,
-            2.0 - 24.0 * v2 + 30.0 * v4};
-    };
-    const auto x = jet(point.x());
-    const auto y = jet(point.y());
+TriMesh make_r1_mixed_boundary_mesh() {
+    TriMesh mesh = make_helmholtz_unit_square_mesh();
+    const auto [edges, boundary] = compute_edges(mesh);
+    mesh.boundary_edges.clear();
+    for (std::size_t index = 0; index < edges.size(); ++index) {
+        if (!boundary[index]) continue;
+        const Edge edge = edges[index];
+        const Point2 midpoint = 0.5 * (
+            mesh.nodes[edge[0]] + mesh.nodes[edge[1]]);
+        BoundaryTag tag = BoundaryTag::Robin;
+        if (std::abs(midpoint.y()) < 1e-14
+            || std::abs(midpoint.y() - 1.0) < 1e-14) {
+            tag = BoundaryTag::Dirichlet;
+        } else if (std::abs(midpoint.x()) < 1e-14) {
+            tag = BoundaryTag::Neumann;
+        }
+        mesh.boundary_edges.push_back({edge, tag});
+    }
+    synchronize_dirichlet_nodes(mesh);
+    validate_boundary_tags(mesh);
+    return mesh;
+}
+
+SmoothWaveEnvelope localized_r1_amplitude(const Point2 &point) {
+    constexpr double pi = 3.141592653589793238462643383279502884;
+    const double x = point.x();
+    const double y = point.y();
+    const double one_minus_x = 1.0 - x;
+    const double polynomial = x * x * one_minus_x * one_minus_x;
+    const double polynomial_first = 2.0 * x - 6.0 * x * x
+        + 4.0 * x * x * x;
+    const double polynomial_second = 2.0 - 12.0 * x + 12.0 * x * x;
+    const double sine = std::sin(pi * y);
+    const double sine_first = pi * std::cos(pi * y);
+    const double sine_second = -pi * pi * sine;
+    const double dx = x - 0.75;
+    const double dy = y - 0.5;
+    const double gaussian = std::exp(
+        -kR1Localization * (dx * dx + dy * dy));
+    const double gaussian_x = -2.0 * kR1Localization * dx * gaussian;
+    const double gaussian_y = -2.0 * kR1Localization * dy * gaussian;
+    const double gaussian_laplacian = (
+        4.0 * kR1Localization * kR1Localization * (dx * dx + dy * dy)
+        - 4.0 * kR1Localization) * gaussian;
+
     SmoothWaveEnvelope result;
-    result.value = normalization * x[0] * y[0];
-    result.gradient = normalization
-        * Eigen::Vector2d(x[1] * y[0], x[0] * y[1]);
-    result.laplacian = normalization
-        * (x[2] * y[0] + x[0] * y[2]);
+    result.value = polynomial * sine * gaussian;
+    result.gradient.x() = sine * (
+        polynomial_first * gaussian + polynomial * gaussian_x);
+    result.gradient.y() = polynomial * (
+        sine_first * gaussian + sine * gaussian_y);
+    result.laplacian = polynomial_second * sine * gaussian
+        + polynomial * sine_second * gaussian
+        + polynomial * sine * gaussian_laplacian
+        + 2.0 * polynomial_first * sine * gaussian_x
+        + 2.0 * polynomial * sine_first * gaussian_y;
+    return result;
+}
+
+SmoothWaveEnvelope smooth_wave_envelope(const Point2 &point) {
+    // Tensor-product C-infinity bump with support
+    // (-0.75,-0.25)x(0.25,0.75). Its support is separated from the corner
+    // and boundary, while its dyadic support edges align with the E2 mesh
+    // hierarchy and avoid quadrature cells straddling the flat cut-off.
+    const auto bump_jet = [](double coordinate, double center) {
+        const double s = (coordinate - center)
+            / kOscillatorySupportHalfWidth;
+        if (!(std::abs(s) < 1.0)) return SmoothStepValue{};
+        const double t = 1.0 - s * s;
+        const double log_value = 1.0 - 1.0 / t;
+        if (log_value < -700.0) return SmoothStepValue{};
+        const double value = std::exp(log_value);
+        const double log_first = -2.0 * s / (t * t);
+        const double log_second = -2.0 / (t * t)
+            - 8.0 * s * s / (t * t * t);
+        return SmoothStepValue{
+            value,
+            value * log_first / kOscillatorySupportHalfWidth,
+            value * (log_first * log_first + log_second)
+                / (kOscillatorySupportHalfWidth
+                   * kOscillatorySupportHalfWidth)};
+    };
+    const SmoothStepValue x = bump_jet(point.x(), -0.5);
+    const SmoothStepValue y = bump_jet(point.y(), 0.5);
+    SmoothWaveEnvelope result;
+    result.value = x.value * y.value;
+    result.gradient = Eigen::Vector2d(
+        x.first * y.value, x.value * y.first);
+    result.laplacian = x.second * y.value + x.value * y.second;
     return result;
 }
 
@@ -140,18 +206,43 @@ SingularAmplitude singular_amplitude(
 }
 
 PaperCaseData make_r1(double wavenumber) {
-    const HelmholtzManufacturedSolution manufactured =
-        make_polynomial_plane_wave_solution(wavenumber);
     PaperCaseData result;
     result.id = experiments::PaperCase::R1;
     result.wavenumber = wavenumber;
-    result.initial_mesh = make_helmholtz_unit_square_mesh();
-    result.source = manufactured.source;
-    result.exact = manufactured.value;
-    result.exact_gradient = manufactured.gradient;
+    result.initial_mesh = make_r1_mixed_boundary_mesh();
+    result.quadrature_context.integrand_class = QuadratureClass::LocalizedGaussian;
+    result.quadrature_context.feature_point = Point2(0.75, 0.5);
+    result.quadrature_context.feature_scale = 1.0 / std::sqrt(160.0);
+    result.exact = [=](const Point2 &point) {
+        const SmoothWaveEnvelope amplitude = localized_r1_amplitude(point);
+        return amplitude.value
+            * std::exp(Complex(0.0, wavenumber * point.x()));
+    };
+    result.exact_gradient = [=](const Point2 &point) {
+        const SmoothWaveEnvelope amplitude = localized_r1_amplitude(point);
+        const Complex phase = std::exp(
+            Complex(0.0, wavenumber * point.x()));
+        Eigen::Vector2cd gradient = phase
+            * amplitude.gradient.cast<Complex>();
+        gradient.x() += phase * Complex(0.0, wavenumber * amplitude.value);
+        return gradient;
+    };
     result.exact_laplacian = [=](const Point2 &point) {
-        return -manufactured.source(point)
-            - wavenumber * wavenumber * manufactured.value(point);
+        const SmoothWaveEnvelope amplitude = localized_r1_amplitude(point);
+        const Complex phase = std::exp(
+            Complex(0.0, wavenumber * point.x()));
+        return phase * (
+            amplitude.laplacian
+            + Complex(0.0, 2.0 * wavenumber * amplitude.gradient.x())
+            - wavenumber * wavenumber * amplitude.value);
+    };
+    result.source = [=](const Point2 &point) {
+        const SmoothWaveEnvelope amplitude = localized_r1_amplitude(point);
+        const Complex phase = std::exp(
+            Complex(0.0, wavenumber * point.x()));
+        return -phase * (
+            amplitude.laplacian
+            + Complex(0.0, 2.0 * wavenumber * amplitude.gradient.x()));
     };
     return result;
 }
@@ -296,6 +387,17 @@ double normalized_gaussian_constant(double sigma, const Point2 &center) {
 double singular_cutoff(double radius) { return cutoff_jet(radius).value; }
 double singular_cutoff_prime(double radius) { return cutoff_jet(radius).first; }
 double singular_cutoff_second(double radius) { return cutoff_jet(radius).second; }
+
+PaperCaseData make_paper_case(
+    experiments::PaperCase id,
+    double wavenumber) {
+    if (id == experiments::PaperCase::S) {
+        return make_paper_case(
+            id, wavenumber, 0.0, kR1, false, 0.05);
+    }
+    return make_paper_case(
+        id, wavenumber, 1.0, kR1, false, 0.0);
+}
 
 PaperCaseData make_paper_case(
     experiments::PaperCase id,

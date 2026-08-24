@@ -134,7 +134,10 @@ RefineOutput build_nested_mesh_embedding(
     if (!parent_mesh.boundary_edges.empty()) {
         if (child_mesh.boundary_edges.empty())
             throw std::invalid_argument("nested child mesh lost explicit boundary tags");
-        for (BoundaryTag tag : {BoundaryTag::Dirichlet, BoundaryTag::Robin}) {
+        for (BoundaryTag tag : {
+                 BoundaryTag::Dirichlet,
+                 BoundaryTag::Neumann,
+                 BoundaryTag::Robin}) {
             const double parent_measure = boundary_measure(parent_mesh, tag);
             const double child_measure = boundary_measure(child_mesh, tag);
             const double scale = std::max({1.0, parent_measure, child_measure});
@@ -1424,9 +1427,67 @@ void ReferenceEpochHierarchy::begin_reference_epoch() {
     replace_candidate(reference, reference_completion_.element_levels);
 }
 
+ReferenceEpochCoarseRefinementPreview
+ReferenceEpochHierarchy::preview_coarse_refinement(
+    const std::vector<int> &marked_elements,
+    const ReferenceEpochRefinementGuard &resource_guard) const {
+    if (proposed_coarse_) {
+        throw std::logic_error(
+            "a coarse refinement preview requires no pending proposal");
+    }
+    if (marked_elements.empty()) {
+        throw std::invalid_argument(
+            "a coarse refinement preview requires marked elements");
+    }
+    validate_indices(
+        marked_elements,
+        static_cast<int>(coarse_mesh_.elems.size()),
+        "reference-epoch preview marked coarse element");
+
+    ReferenceEpochCoarseRefinementPreview preview;
+    preview.marked_elements = marked_elements;
+    preview.coarse_mesh_version = coarse_mesh_version_;
+    preview.reference_mesh_version = reference_mesh_version_;
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::BeforeNvb, coarse_mesh_);
+    }
+    const auto nvb_begin = std::chrono::steady_clock::now();
+    preview.refinement = bisect_newest_vertex(coarse_mesh_, marked_elements);
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::AfterNvb,
+            preview.refinement.mesh);
+    }
+    preview.element_levels = refinement_child_levels(
+        coarse_mesh_, coarse_levels_, preview.refinement);
+    preview.time_nvb_refine = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - nvb_begin).count();
+
+    const auto embedding_begin = std::chrono::steady_clock::now();
+    try {
+        RefineOutput embedding =
+            update_nested_mesh_embedding_after_parent_refinement(
+                coarse_mesh_, preview.refinement, reference_mesh(),
+                reference_parent_coarse_elements_);
+        ReferenceEpochCoarseRefinementPreview::CachedEmbedding cached;
+        cached.P_node = std::move(embedding.P_node);
+        cached.P_elem = std::move(embedding.P_elem);
+        cached.P_dg = std::move(embedding.P_dg);
+        preview.to_reference = std::move(cached);
+    } catch (const std::invalid_argument &) {
+        preview.to_reference.reset();
+    }
+    preview.time_reference_embedding_update =
+        std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - embedding_begin).count();
+    return preview;
+}
+
 ReferenceEpochRefinementResult
 ReferenceEpochHierarchy::propose_coarse_refinement(
-    const std::vector<int> &marked_elements) {
+    const std::vector<int> &marked_elements,
+    const ReferenceEpochRefinementGuard &resource_guard) {
     ReferenceEpochRefinementResult result;
     result.previous_element_count = coarse_mesh_.elems.size();
     result.current_element_count = coarse_mesh_.elems.size();
@@ -1444,9 +1505,21 @@ ReferenceEpochHierarchy::propose_coarse_refinement(
         "reference-epoch marked coarse element");
 
     ProposedCoarseState proposed;
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::BeforeNvb, coarse_mesh_);
+    }
+    const auto nvb_begin = std::chrono::steady_clock::now();
     proposed.refinement = bisect_newest_vertex(coarse_mesh_, marked_elements);
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::AfterNvb,
+            proposed.refinement.mesh);
+    }
     proposed.levels = refinement_child_levels(
         coarse_mesh_, coarse_levels_, proposed.refinement);
+    result.time_nvb_refine = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - nvb_begin).count();
     const auto cache = [](RefineOutput embedding) {
         ProposedCoarseState::CachedEmbedding result;
         result.P_node = std::move(embedding.P_node);
@@ -1454,18 +1527,25 @@ ReferenceEpochHierarchy::propose_coarse_refinement(
         result.P_dg = std::move(embedding.P_dg);
         return result;
     };
+    const auto embedding_begin = std::chrono::steady_clock::now();
     try {
-        proposed.to_reference = cache(build_nested_mesh_embedding(
-            proposed.refinement.mesh, reference_mesh()));
+        proposed.to_reference = cache(
+            update_nested_mesh_embedding_after_parent_refinement(
+                coarse_mesh_, proposed.refinement, reference_mesh(),
+                reference_parent_coarse_elements_));
     } catch (const std::invalid_argument &) {
         proposed.to_reference.reset();
     }
     try {
-        proposed.to_candidate = cache(build_nested_mesh_embedding(
-            proposed.refinement.mesh, candidate_mesh()));
+        proposed.to_candidate = cache(
+            update_nested_mesh_embedding_after_parent_refinement(
+                coarse_mesh_, proposed.refinement, candidate_mesh(),
+                ambient_parent_coarse_elements_));
     } catch (const std::invalid_argument &) {
         proposed.to_candidate.reset();
     }
+    result.time_proposed_embedding_update = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - embedding_begin).count();
     result.status = ReferenceEpochRefinementStatus::Refined;
     result.current_element_count = proposed.refinement.mesh.elems.size();
     result.detail = "coarse refinement proposed without mutating the committed mesh";
@@ -1473,8 +1553,253 @@ ReferenceEpochHierarchy::propose_coarse_refinement(
     return result;
 }
 
+ReferenceEpochRefinementResult
+ReferenceEpochHierarchy::propose_coarse_refinement(
+    ReferenceEpochCoarseRefinementPreview preview,
+    const ReferenceEpochRefinementGuard &resource_guard) {
+    ReferenceEpochRefinementResult result;
+    result.previous_element_count = coarse_mesh_.elems.size();
+    result.current_element_count = coarse_mesh_.elems.size();
+    if (proposed_coarse_) {
+        throw std::logic_error(
+            "a coarse refinement proposal is already pending");
+    }
+    if (preview.marked_elements.empty()) {
+        throw std::invalid_argument(
+            "an adopted coarse refinement preview has no marked elements");
+    }
+    if (preview.coarse_mesh_version != coarse_mesh_version_
+        || preview.reference_mesh_version != reference_mesh_version_) {
+        throw std::logic_error(
+            "coarse refinement preview is stale for the current hierarchy");
+    }
+    validate_indices(
+        preview.marked_elements,
+        static_cast<int>(coarse_mesh_.elems.size()),
+        "adopted preview marked coarse element");
+    const int coarse_nodes = static_cast<int>(coarse_mesh_.nodes.size());
+    const int coarse_elements = static_cast<int>(coarse_mesh_.elems.size());
+    const int proposed_nodes =
+        static_cast<int>(preview.refinement.mesh.nodes.size());
+    const int proposed_elements =
+        static_cast<int>(preview.refinement.mesh.elems.size());
+    if (preview.refinement.P_node.rows() != proposed_nodes
+        || preview.refinement.P_node.cols() != coarse_nodes
+        || preview.refinement.P_elem.rows() != proposed_elements
+        || preview.refinement.P_elem.cols() != coarse_elements
+        || preview.refinement.P_dg.rows() != 3 * proposed_elements
+        || preview.refinement.P_dg.cols() != 3 * coarse_elements
+        || preview.element_levels.size()
+            != preview.refinement.mesh.elems.size()) {
+        throw std::invalid_argument(
+            "adopted coarse refinement preview has inconsistent dimensions");
+    }
+    if (preview.to_reference
+        && (preview.to_reference->P_node.rows()
+                != static_cast<int>(reference_mesh().nodes.size())
+            || preview.to_reference->P_node.cols() != proposed_nodes
+            || preview.to_reference->P_elem.rows()
+                != static_cast<int>(reference_mesh().elems.size())
+            || preview.to_reference->P_elem.cols() != proposed_elements
+            || preview.to_reference->P_dg.rows()
+                != 3 * static_cast<int>(reference_mesh().elems.size())
+            || preview.to_reference->P_dg.cols() != 3 * proposed_elements)) {
+        throw std::invalid_argument(
+            "adopted coarse refinement preview has an invalid reference embedding");
+    }
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::BeforeNvb, coarse_mesh_);
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::AfterNvb,
+            preview.refinement.mesh);
+    }
+
+    ProposedCoarseState proposed;
+    proposed.refinement = std::move(preview.refinement);
+    proposed.levels = std::move(preview.element_levels);
+    if (preview.to_reference) {
+        ProposedCoarseState::CachedEmbedding cached;
+        cached.P_node = std::move(preview.to_reference->P_node);
+        cached.P_elem = std::move(preview.to_reference->P_elem);
+        cached.P_dg = std::move(preview.to_reference->P_dg);
+        proposed.to_reference = std::move(cached);
+    }
+    const auto embedding_begin = std::chrono::steady_clock::now();
+    try {
+        RefineOutput embedding =
+            update_nested_mesh_embedding_after_parent_refinement(
+                coarse_mesh_, proposed.refinement, candidate_mesh(),
+                ambient_parent_coarse_elements_);
+        ProposedCoarseState::CachedEmbedding cached;
+        cached.P_node = std::move(embedding.P_node);
+        cached.P_elem = std::move(embedding.P_elem);
+        cached.P_dg = std::move(embedding.P_dg);
+        proposed.to_candidate = std::move(cached);
+    } catch (const std::invalid_argument &) {
+        proposed.to_candidate.reset();
+    }
+    result.time_proposed_embedding_update = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - embedding_begin).count();
+    result.status = ReferenceEpochRefinementStatus::Refined;
+    result.current_element_count = proposed.refinement.mesh.elems.size();
+    result.detail =
+        "cached coarse preview adopted without repeating NVB/reference embedding";
+    proposed_coarse_ = std::move(proposed);
+    return result;
+}
+
+ReferenceEpochRefinementResult
+ReferenceEpochHierarchy::propose_identity_coarse() {
+    ReferenceEpochRefinementResult result;
+    result.previous_element_count = coarse_mesh_.elems.size();
+    result.current_element_count = coarse_mesh_.elems.size();
+    if (proposed_coarse_) {
+        throw std::logic_error(
+            "an identity coarse proposal cannot replace a pending proposal");
+    }
+    ProposedCoarseState proposed;
+    proposed.refinement.mesh = coarse_mesh_;
+    proposed.refinement.P_node = identity_sparse(
+        static_cast<int>(coarse_mesh_.nodes.size()));
+    proposed.refinement.P_elem = identity_sparse(
+        static_cast<int>(coarse_mesh_.elems.size()));
+    proposed.refinement.P_dg = identity_sparse(
+        3 * static_cast<int>(coarse_mesh_.elems.size()));
+    proposed.levels = coarse_levels_;
+    ProposedCoarseState::CachedEmbedding to_reference;
+    to_reference.P_node = reference_completion_.refinement.P_node;
+    to_reference.P_elem = reference_completion_.refinement.P_elem;
+    to_reference.P_dg = reference_completion_.refinement.P_dg;
+    proposed.to_reference = std::move(to_reference);
+    ProposedCoarseState::CachedEmbedding to_candidate;
+    to_candidate.P_node = coarse_to_ambient_.P_node;
+    to_candidate.P_elem = coarse_to_ambient_.P_elem;
+    to_candidate.P_dg = coarse_to_ambient_.P_dg;
+    proposed.to_candidate = std::move(to_candidate);
+    proposed.identity = true;
+    proposed_coarse_ = std::move(proposed);
+    result.status = ReferenceEpochRefinementStatus::Refined;
+    result.detail = "identity coarse proposal opened";
+    return result;
+}
+
+ReferenceEpochRefinementResult
+ReferenceEpochHierarchy::refine_proposed_coarse(
+    const std::vector<int> &marked_proposed_elements,
+    const ReferenceEpochRefinementGuard &resource_guard) {
+    ReferenceEpochRefinementResult result;
+    if (!proposed_coarse_) {
+        throw std::logic_error(
+            "refining a proposed coarse mesh requires a pending proposal");
+    }
+    const ProposedCoarseState &old = *proposed_coarse_;
+    result.previous_element_count = old.refinement.mesh.elems.size();
+    result.current_element_count = old.refinement.mesh.elems.size();
+    if (marked_proposed_elements.empty()) {
+        result.detail = "no proposed coarse elements were marked";
+        return result;
+    }
+    validate_indices(
+        marked_proposed_elements,
+        static_cast<int>(old.refinement.mesh.elems.size()),
+        "marked proposed coarse element");
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::BeforeNvb,
+            old.refinement.mesh);
+    }
+
+    // Cache the fine-to-old-proposal parent maps before refining the parent.
+    // If an embedding was already known to be absent, keep it absent: a
+    // transactional matching closure must not re-enter the global geometry
+    // search merely to probe whether containment has changed.
+    std::vector<int> old_reference_parents;
+    std::vector<int> old_candidate_parents;
+    const auto parent_begin = std::chrono::steady_clock::now();
+    if (old.to_reference) {
+        old_reference_parents = fine_element_parents(
+            old.to_reference->P_elem,
+            static_cast<int>(reference_mesh().elems.size()),
+            static_cast<int>(old.refinement.mesh.elems.size()));
+    }
+    if (old.to_candidate) {
+        old_candidate_parents = fine_element_parents(
+            old.to_candidate->P_elem,
+            static_cast<int>(candidate_mesh().elems.size()),
+            static_cast<int>(old.refinement.mesh.elems.size()));
+    }
+    result.time_parent_map_update = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - parent_begin).count();
+
+    const auto nvb_begin = std::chrono::steady_clock::now();
+    RefineOutput step = bisect_newest_vertex(
+        old.refinement.mesh, marked_proposed_elements);
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::AfterNvb, step.mesh);
+    }
+    std::vector<int> next_levels = refinement_child_levels(
+        old.refinement.mesh, old.levels, step);
+    result.time_nvb_refine = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - nvb_begin).count();
+
+    ProposedCoarseState next;
+    next.identity = false;
+    const auto composition_begin = std::chrono::steady_clock::now();
+    next.refinement.P_node = step.P_node * old.refinement.P_node;
+    next.refinement.P_elem = step.P_elem * old.refinement.P_elem;
+    next.refinement.P_dg = step.P_dg * old.refinement.P_dg;
+    next.refinement.P_node.makeCompressed();
+    next.refinement.P_elem.makeCompressed();
+    next.refinement.P_dg.makeCompressed();
+    result.time_embedding_composition = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - composition_begin).count();
+
+    const auto embedding_begin = std::chrono::steady_clock::now();
+    const auto cache = [](RefineOutput embedding) {
+        ProposedCoarseState::CachedEmbedding cached;
+        cached.P_node = std::move(embedding.P_node);
+        cached.P_elem = std::move(embedding.P_elem);
+        cached.P_dg = std::move(embedding.P_dg);
+        return cached;
+    };
+    if (old.to_reference) {
+        try {
+            next.to_reference = cache(
+                update_nested_mesh_embedding_after_parent_refinement(
+                    old.refinement.mesh, step, reference_mesh(),
+                    old_reference_parents));
+        } catch (const std::invalid_argument &) {
+            next.to_reference.reset();
+        }
+    }
+    if (old.to_candidate) {
+        try {
+            next.to_candidate = cache(
+                update_nested_mesh_embedding_after_parent_refinement(
+                    old.refinement.mesh, step, candidate_mesh(),
+                    old_candidate_parents));
+        } catch (const std::invalid_argument &) {
+            next.to_candidate.reset();
+        }
+    }
+    result.time_proposed_embedding_update = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - embedding_begin).count();
+
+    next.refinement.mesh = std::move(step.mesh);
+    next.levels = std::move(next_levels);
+    result.status = ReferenceEpochRefinementStatus::Refined;
+    result.current_element_count = next.refinement.mesh.elems.size();
+    result.detail =
+        "pending coarse proposal refined without mutating the committed mesh";
+    proposed_coarse_ = std::move(next);
+    return result;
+}
+
 ReferenceEpochRefinementResult ReferenceEpochHierarchy::enrich_candidate(
-    const std::vector<int> &marked_candidate_elements) {
+    const std::vector<int> &marked_candidate_elements,
+    const ReferenceEpochRefinementGuard &resource_guard) {
     ReferenceEpochRefinementResult result;
     result.previous_element_count = candidate_mesh().elems.size();
     result.current_element_count = candidate_mesh().elems.size();
@@ -1486,11 +1811,20 @@ ReferenceEpochRefinementResult ReferenceEpochHierarchy::enrich_candidate(
         marked_candidate_elements,
         static_cast<int>(candidate_mesh().elems.size()),
         "marked candidate element");
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::BeforeNvb,
+            candidate_mesh());
+    }
     const TriMesh parent = candidate_mesh();
     const std::vector<int> parent_levels = ambient_element_levels_;
     const auto nvb_begin = std::chrono::steady_clock::now();
     RefineOutput refined = bisect_newest_vertex(
         parent, marked_candidate_elements);
+    if (resource_guard) {
+        resource_guard(
+            ReferenceEpochRefinementGuardPoint::AfterNvb, refined.mesh);
+    }
     std::vector<int> levels = refinement_child_levels(
         parent, parent_levels, refined);
     result.time_nvb_refine = std::chrono::duration<double>(
@@ -1649,26 +1983,103 @@ int ReferenceEpochHierarchy::minimum_proposed_reference_level_gap(
         if (!included_proposed_elements[parents[child]]) continue;
         const int local_gap = reference_completion_.element_levels[child]
             - proposed_coarse_->levels[parents[child]];
-        if (local_gap > 0) gap = std::min(gap, local_gap);
+        gap = std::min(gap, local_gap);
     }
     return gap;
 }
 
 int ReferenceEpochHierarchy::minimum_proposed_candidate_level_gap() const {
+    std::vector<char> included;
+    if (proposed_coarse_) {
+        included.assign(proposed_coarse_->refinement.mesh.elems.size(), true);
+    }
+    return minimum_proposed_candidate_level_gap(included);
+}
+
+int ReferenceEpochHierarchy::minimum_proposed_candidate_level_gap(
+    const std::vector<char> &included_proposed_elements) const {
     if (!proposed_coarse_ || !proposed_coarse_->to_candidate)
         return std::numeric_limits<int>::max();
+    if (included_proposed_elements.size()
+        != proposed_coarse_->refinement.mesh.elems.size()) {
+        throw std::invalid_argument(
+            "proposed candidate gap mask does not match the proposed mesh");
+    }
     const std::vector<int> parents = fine_element_parents(
         proposed_coarse_->to_candidate->P_elem,
         static_cast<int>(candidate_mesh().elems.size()),
         static_cast<int>(proposed_coarse_->refinement.mesh.elems.size()));
     int gap = std::numeric_limits<int>::max();
     for (int child = 0; child < static_cast<int>(parents.size()); ++child) {
+        if (!included_proposed_elements[parents[child]]) continue;
         gap = std::min(
             gap,
             ambient_element_levels_[child]
                 - proposed_coarse_->levels[parents[child]]);
     }
     return gap;
+}
+
+int ReferenceEpochHierarchy::minimum_proposed_reference_level_gap_margin(
+    const std::vector<int> &target_level_gaps) const {
+    if (!proposed_coarse_ || !proposed_coarse_->to_reference)
+        return std::numeric_limits<int>::max();
+    if (target_level_gaps.size()
+        != proposed_coarse_->refinement.mesh.elems.size()) {
+        throw std::invalid_argument(
+            "proposed reference gap targets do not match the proposed mesh");
+    }
+    if (std::any_of(
+            target_level_gaps.begin(), target_level_gaps.end(),
+            [](const int target) { return target < 0; })) {
+        throw std::invalid_argument(
+            "proposed reference gap targets must be nonnegative");
+    }
+    const std::vector<int> parents = fine_element_parents(
+        proposed_coarse_->to_reference->P_elem,
+        static_cast<int>(reference_mesh().elems.size()),
+        static_cast<int>(proposed_coarse_->refinement.mesh.elems.size()));
+    int margin = std::numeric_limits<int>::max();
+    for (int child = 0; child < static_cast<int>(parents.size()); ++child) {
+        const int parent = parents[child];
+        margin = std::min(
+            margin,
+            reference_completion_.element_levels[child]
+                - proposed_coarse_->levels[parent]
+                - target_level_gaps[parent]);
+    }
+    return margin;
+}
+
+int ReferenceEpochHierarchy::minimum_proposed_candidate_level_gap_margin(
+    const std::vector<int> &target_level_gaps) const {
+    if (!proposed_coarse_ || !proposed_coarse_->to_candidate)
+        return std::numeric_limits<int>::max();
+    if (target_level_gaps.size()
+        != proposed_coarse_->refinement.mesh.elems.size()) {
+        throw std::invalid_argument(
+            "proposed candidate gap targets do not match the proposed mesh");
+    }
+    if (std::any_of(
+            target_level_gaps.begin(), target_level_gaps.end(),
+            [](const int target) { return target < 0; })) {
+        throw std::invalid_argument(
+            "proposed candidate gap targets must be nonnegative");
+    }
+    const std::vector<int> parents = fine_element_parents(
+        proposed_coarse_->to_candidate->P_elem,
+        static_cast<int>(candidate_mesh().elems.size()),
+        static_cast<int>(proposed_coarse_->refinement.mesh.elems.size()));
+    int margin = std::numeric_limits<int>::max();
+    for (int child = 0; child < static_cast<int>(parents.size()); ++child) {
+        const int parent = parents[child];
+        margin = std::min(
+            margin,
+            ambient_element_levels_[child]
+                - proposed_coarse_->levels[parent]
+                - target_level_gaps[parent]);
+    }
+    return margin;
 }
 
 const TriMesh &ReferenceEpochHierarchy::proposed_coarse_mesh() const {
@@ -1686,8 +2097,69 @@ ReferenceEpochHierarchy::proposed_coarse_levels() const {
     return proposed_coarse_->levels;
 }
 
+const Eigen::SparseMatrix<double> &
+ReferenceEpochHierarchy::coarse_elements_to_proposed_coarse() const {
+    if (!proposed_coarse_) {
+        throw std::logic_error("there is no pending coarse refinement proposal");
+    }
+    return proposed_coarse_->refinement.P_elem;
+}
+
+const Eigen::SparseMatrix<double> &
+ReferenceEpochHierarchy::coarse_nodes_to_proposed_coarse() const {
+    if (!proposed_coarse_) {
+        throw std::logic_error("there is no pending coarse refinement proposal");
+    }
+    return proposed_coarse_->refinement.P_node;
+}
+
+const Eigen::SparseMatrix<double> &
+ReferenceEpochHierarchy::proposed_coarse_elements_to_reference() const {
+    if (!proposed_coarse_) {
+        throw std::logic_error("there is no pending coarse refinement proposal");
+    }
+    if (!proposed_coarse_->to_reference) {
+        throw std::logic_error(
+            "the pending coarse proposal is not contained in the reference");
+    }
+    return proposed_coarse_->to_reference->P_elem;
+}
+
+const Eigen::SparseMatrix<double> &
+ReferenceEpochHierarchy::proposed_coarse_elements_to_candidate() const {
+    if (!proposed_coarse_) {
+        throw std::logic_error("there is no pending coarse refinement proposal");
+    }
+    if (!proposed_coarse_->to_candidate) {
+        throw std::logic_error(
+            "the pending coarse proposal is not contained in the candidate");
+    }
+    return proposed_coarse_->to_candidate->P_elem;
+}
+
+std::vector<int>
+ReferenceEpochHierarchy::reference_parent_proposed_coarse_elements() const {
+    const Eigen::SparseMatrix<double> &embedding =
+        proposed_coarse_elements_to_reference();
+    return fine_element_parents(
+        embedding,
+        static_cast<int>(reference_mesh().elems.size()),
+        static_cast<int>(proposed_coarse_mesh().elems.size()));
+}
+
+std::vector<int>
+ReferenceEpochHierarchy::candidate_parent_proposed_coarse_elements() const {
+    const Eigen::SparseMatrix<double> &embedding =
+        proposed_coarse_elements_to_candidate();
+    return fine_element_parents(
+        embedding,
+        static_cast<int>(candidate_mesh().elems.size()),
+        static_cast<int>(proposed_coarse_mesh().elems.size()));
+}
+
 ReferenceEpochRefinementResult
-ReferenceEpochHierarchy::close_candidate_over_proposed_coarse() {
+ReferenceEpochHierarchy::close_candidate_over_proposed_coarse(
+    const ReferenceEpochRefinementGuard &resource_guard) {
     ReferenceEpochRefinementResult result;
     result.previous_element_count = candidate_mesh().elems.size();
     result.current_element_count = candidate_mesh().elems.size();
@@ -1732,7 +2204,7 @@ ReferenceEpochHierarchy::close_candidate_over_proposed_coarse() {
                 "candidate closure could not locate the proposed coarse region");
         }
         const ReferenceEpochRefinementResult enriched =
-            enrich_candidate(marked);
+            enrich_candidate(marked, resource_guard);
         result.time_nvb_refine += enriched.time_nvb_refine;
         result.time_embedding_composition +=
             enriched.time_embedding_composition;
@@ -1755,7 +2227,21 @@ ReferenceEpochHierarchy::close_candidate_over_proposed_coarse() {
 
 ReferenceEpochRefinementResult
 ReferenceEpochHierarchy::deepen_candidate_over_proposed_coarse(
-    const int minimum_level_gap) {
+    const int minimum_level_gap,
+    const ReferenceEpochRefinementGuard &resource_guard) {
+    std::vector<char> included;
+    if (proposed_coarse_) {
+        included.assign(proposed_coarse_->refinement.mesh.elems.size(), true);
+    }
+    return deepen_candidate_over_proposed_coarse(
+        minimum_level_gap, included, resource_guard);
+}
+
+ReferenceEpochRefinementResult
+ReferenceEpochHierarchy::deepen_candidate_over_proposed_coarse(
+    const int minimum_level_gap,
+    const std::vector<char> &included_proposed_elements,
+    const ReferenceEpochRefinementGuard &resource_guard) {
     ReferenceEpochRefinementResult result;
     result.previous_element_count = candidate_mesh().elems.size();
     result.current_element_count = candidate_mesh().elems.size();
@@ -1767,6 +2253,150 @@ ReferenceEpochHierarchy::deepen_candidate_over_proposed_coarse(
         throw std::logic_error(
             "candidate depth target requires a contained coarse proposal");
     }
+    if (included_proposed_elements.size()
+        != proposed_coarse_->refinement.mesh.elems.size()) {
+        throw std::invalid_argument(
+            "candidate depth mask does not match the proposed mesh");
+    }
+    std::vector<int> target_level_gaps(
+        included_proposed_elements.size(), 0);
+    for (int element = 0;
+         element < static_cast<int>(included_proposed_elements.size());
+         ++element) {
+        if (included_proposed_elements[element])
+            target_level_gaps[element] = minimum_level_gap;
+    }
+    return deepen_candidate_over_proposed_coarse(
+        target_level_gaps, resource_guard);
+}
+
+ReferenceEpochCandidateDeepeningProbe
+ReferenceEpochHierarchy::probe_candidate_deepening_over_proposed_coarse(
+    const std::vector<int> &target_level_gaps,
+    const std::vector<char> &protected_proposed_elements,
+    const std::vector<char> &full_target_proposed_elements,
+    const ReferenceEpochRefinementGuard &resource_guard) const {
+    if (!proposed_coarse_ || !proposed_coarse_->to_candidate) {
+        throw std::logic_error(
+            "candidate depth probe requires a contained coarse proposal");
+    }
+    const std::size_t proposed_size =
+        proposed_coarse_->refinement.mesh.elems.size();
+    if (target_level_gaps.size() != proposed_size
+        || protected_proposed_elements.size() != proposed_size
+        || full_target_proposed_elements.size() != proposed_size) {
+        throw std::invalid_argument(
+            "candidate depth probe data do not match the proposed mesh");
+    }
+    if (std::any_of(
+            target_level_gaps.begin(), target_level_gaps.end(),
+            [](const int target) { return target < 0; })) {
+        throw std::invalid_argument(
+            "candidate depth probe targets must be nonnegative");
+    }
+
+    TriMesh mesh = candidate_mesh();
+    std::vector<int> levels = ambient_element_levels_;
+    std::vector<int> proposed_parents =
+        candidate_parent_proposed_coarse_elements();
+    ReferenceEpochCandidateDeepeningProbe result;
+    constexpr int maximum_deepening_steps = 32;
+    for (int step = 0; step <= maximum_deepening_steps; ++step) {
+        std::vector<int> marked;
+        marked.reserve(mesh.elems.size());
+        for (int child = 0; child < static_cast<int>(mesh.elems.size());
+             ++child) {
+            const int parent = proposed_parents[child];
+            if (levels[child] - proposed_coarse_->levels[parent]
+                < target_level_gaps[parent]) {
+                marked.push_back(child);
+            }
+        }
+        if (marked.empty()) {
+            result.target_satisfied = true;
+            break;
+        }
+        if (step == maximum_deepening_steps) break;
+        if (resource_guard) {
+            resource_guard(
+                ReferenceEpochRefinementGuardPoint::BeforeNvb, mesh);
+        }
+        RefineOutput refined = bisect_newest_vertex(mesh, marked);
+        if (resource_guard) {
+            resource_guard(
+                ReferenceEpochRefinementGuardPoint::AfterNvb,
+                refined.mesh);
+        }
+        std::vector<int> next_levels = refinement_child_levels(
+            mesh, levels, refined);
+        const std::vector<int> step_parents = fine_element_parents(
+            refined.P_elem, static_cast<int>(refined.mesh.elems.size()),
+            static_cast<int>(mesh.elems.size()));
+        std::vector<int> next_proposed_parents(step_parents.size());
+        for (int child = 0; child < static_cast<int>(step_parents.size());
+             ++child) {
+            next_proposed_parents[child] =
+                proposed_parents[step_parents[child]];
+        }
+        mesh = std::move(refined.mesh);
+        levels = std::move(next_levels);
+        proposed_parents = std::move(next_proposed_parents);
+        ++result.refinement_steps;
+    }
+
+    std::vector<std::size_t> child_counts(proposed_size, 0);
+    result.minimum_gap_margin = std::numeric_limits<int>::max();
+    result.minimum_full_target_gap = std::numeric_limits<int>::max();
+    for (int child = 0; child < static_cast<int>(mesh.elems.size()); ++child) {
+        const int parent = proposed_parents[child];
+        ++child_counts[parent];
+        const int gap = levels[child] - proposed_coarse_->levels[parent];
+        result.minimum_gap_margin = std::min(
+            result.minimum_gap_margin, gap - target_level_gaps[parent]);
+        if (full_target_proposed_elements[parent]) {
+            result.minimum_full_target_gap = std::min(
+                result.minimum_full_target_gap, gap);
+        }
+    }
+    for (int parent = 0; parent < static_cast<int>(proposed_size); ++parent) {
+        if (protected_proposed_elements[parent]
+            && child_counts[parent] != 1) {
+            ++result.protected_parent_spill;
+        }
+    }
+    result.final_element_count = mesh.elems.size();
+    result.final_node_count = mesh.nodes.size();
+    return result;
+}
+
+ReferenceEpochRefinementResult
+ReferenceEpochHierarchy::deepen_candidate_over_proposed_coarse(
+    const std::vector<int> &target_level_gaps,
+    const ReferenceEpochRefinementGuard &resource_guard) {
+    ReferenceEpochRefinementResult result;
+    result.previous_element_count = candidate_mesh().elems.size();
+    result.current_element_count = candidate_mesh().elems.size();
+    if (!proposed_coarse_ || !proposed_coarse_->to_candidate) {
+        throw std::logic_error(
+            "candidate depth target requires a contained coarse proposal");
+    }
+    if (target_level_gaps.size()
+        != proposed_coarse_->refinement.mesh.elems.size()) {
+        throw std::invalid_argument(
+            "candidate depth targets do not match the proposed mesh");
+    }
+    if (std::any_of(
+            target_level_gaps.begin(), target_level_gaps.end(),
+            [](const int target) { return target < 0; })) {
+        throw std::invalid_argument(
+            "candidate depth targets must be nonnegative");
+    }
+    if (std::none_of(
+            target_level_gaps.begin(), target_level_gaps.end(),
+            [](const int target) { return target > 0; })) {
+        result.detail = "candidate depth target is disabled";
+        return result;
+    }
     constexpr int maximum_deepening_steps = 32;
     for (int step = 0; step < maximum_deepening_steps; ++step) {
         const std::vector<int> parents = fine_element_parents(
@@ -1776,18 +2406,22 @@ ReferenceEpochHierarchy::deepen_candidate_over_proposed_coarse(
         std::vector<int> marked;
         marked.reserve(parents.size());
         for (int child = 0; child < static_cast<int>(parents.size()); ++child) {
-            if (ambient_element_levels_[child]
+            const int target = target_level_gaps[parents[child]];
+            if (target > 0
+                && ambient_element_levels_[child]
                     - proposed_coarse_->levels[parents[child]]
-                < minimum_level_gap) {
+                < target) {
                 marked.push_back(child);
             }
         }
         if (marked.empty()) {
             result.current_element_count = candidate_mesh().elems.size();
-            result.detail = "candidate satisfies the post-refresh level-gap target";
+            result.detail =
+                "candidate satisfies the graded post-refresh level-gap targets";
             return result;
         }
-        const ReferenceEpochRefinementResult enriched = enrich_candidate(marked);
+        const ReferenceEpochRefinementResult enriched =
+            enrich_candidate(marked, resource_guard);
         result.status = ReferenceEpochRefinementStatus::Refined;
         result.current_element_count = enriched.current_element_count;
         result.time_nvb_refine += enriched.time_nvb_refine;
@@ -1818,6 +2452,13 @@ ReferenceEpochHierarchy::commit_coarse_refinement() {
             ReferenceEpochRefinementStatus::ReferenceRefreshRequired;
         result.detail =
             "cached proposed embedding is not contained in reference/candidate";
+        return result;
+    }
+
+    if (proposed_coarse_->identity) {
+        proposed_coarse_.reset();
+        result.status = ReferenceEpochRefinementStatus::Refined;
+        result.detail = "identity coarse proposal committed";
         return result;
     }
 

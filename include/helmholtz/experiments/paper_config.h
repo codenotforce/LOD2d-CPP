@@ -16,7 +16,7 @@ namespace lod2d::helmholtz::experiments {
 
 inline constexpr int paper_schema_version = 1;
 inline constexpr int practical_paper_schema_version = 4;
-inline constexpr int reference_epoch_paper_schema_version = 5;
+inline constexpr int reference_epoch_paper_schema_version = 6;
 
 enum class PaperCase { R1, R2a, R2b, S };
 enum class PaperMethod {
@@ -300,7 +300,7 @@ struct ReferenceEpochPaperConfig {
     std::string method = "PALOD-reference-epoch";
     double wavenumber = 16.0;
     // Case S manufactured solution:
-    // u=a[(1-gamma)+gamma exp(ikx)] + B psi exp(ikx).
+    // u=chi_s r^(2/3)sin(2 theta/3) + B chi_osc exp(ikx).
     double singular_oscillatory_fraction = 1.0;
     double singular_cutoff_outer_radius = 0.5;
     bool singular_quintic_cutoff = false;
@@ -308,9 +308,10 @@ struct ReferenceEpochPaperConfig {
     int initial_coarse_level = 3;
     int initial_reference_level = 5;
     bool singularity_hybrid = false;
-    // Case-S hybrid only.  The graph radius l_s is chosen at every matching
-    // check so that l_s >= ell and N^{2 l_s}(z) covers this fixed physical
-    // radius.  Zero is required for non-hybrid runs.
+    // Case-S hybrid only.  At every matching check ell_S is the smallest
+    // graph radius such that B_R(S) lies in Omega_S=N^{ell_S}(S); the exact
+    // matching region is Omega_F=N^{ell_S+ell}(S).  Zero is required for
+    // non-hybrid runs.
     double hybrid_minimum_physical_radius = 0.0;
     // Abort before corrector assembly when an active coarse patch expands to
     // more reference elements than this guard.  This is a reproducible pilot

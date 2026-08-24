@@ -25,6 +25,7 @@ struct ResidualEdgeContribution {
     int left_parent = -1;
     int right_parent = -1;
     bool robin_boundary = false;
+    bool neumann_boundary = false;
     double length = 0.0;
     double residual_l2_squared = 0.0;
     std::array<Complex, 2> residual_nodal{Complex(0.0), Complex(0.0)};
@@ -54,11 +55,13 @@ struct HelmholtzIndicatorSet {
 // Standard conforming P1 AFEM estimator on one mesh:
 //   h_T^2 ||f + kappa^2 n u_H||_T^2
 // + h_E ||[A grad u_H . n]||_E^2
-// + h_E ||A grad u_H . n - i kappa beta u_H||_E^2.
+// + h_E ||A grad u_H . n||_E^2 on homogeneous Neumann edges
+// + h_E ||A grad u_H . n - i kappa beta u_H||_E^2 on Robin edges.
 // Interior-edge contributions are split equally between their neighbours.
 struct HelmholtzP1ResidualEstimate {
     std::vector<double> body_squared;
     std::vector<double> interior_jump_squared;
+    std::vector<double> neumann_boundary_squared;
     std::vector<double> robin_boundary_squared;
     std::vector<double> element_squared;
     double eta = 0.0;

@@ -83,10 +83,10 @@ if(LOD2D_BUILD_TESTS)
             --output-dir=${CMAKE_CURRENT_BINARY_DIR}/adaptive-paper-v4-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE_LEGACY_V4.sha256
             --check)
-    add_test(NAME helmholtz_reference_epoch_paper_v5_smoke
+    add_test(NAME helmholtz_reference_epoch_paper_v6_smoke
         COMMAND bench_helmholtz_adaptive_paper
-            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-reference-epoch-smoke-v5.json
-            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/reference-epoch-paper-v5-smoke
+            --config=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/configs/R1-reference-epoch-smoke-v6.json
+            --output-dir=${CMAKE_CURRENT_BINARY_DIR}/reference-epoch-paper-v6-smoke
             --manuscript-baseline=${CMAKE_SOURCE_DIR}/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256
             --check)
     add_test(NAME helmholtz_hlod_fixed_paper_v4_smoke
@@ -134,8 +134,8 @@ if(LOD2D_BUILD_TESTS)
         helmholtz_afem_paper_v4_smoke
         helmholtz_afem_exact_only_reference_exhaustion_v4_smoke
         PROPERTIES TIMEOUT 60 LABELS "smoke;helmholtz;practical-paper-v4")
-    set_tests_properties(helmholtz_reference_epoch_paper_v5_smoke
-        PROPERTIES TIMEOUT 300 LABELS "smoke;helmholtz;reference-epoch-paper-v5")
+    set_tests_properties(helmholtz_reference_epoch_paper_v6_smoke
+        PROPERTIES TIMEOUT 300 LABELS "smoke;helmholtz;reference-epoch-paper-v6")
     set_tests_properties(
         helmholtz_slod_paper_v4_smoke PROPERTIES TIMEOUT 120)
 endif()
@@ -177,7 +177,7 @@ if(LOD2D_BUILD_TESTS)
             --output-dir=${CMAKE_CURRENT_BINARY_DIR}/reference-epoch-e0
             --check)
     set_tests_properties(helmholtz_reference_epoch_e0
-        PROPERTIES TIMEOUT 420 LABELS "calibration;helmholtz;reference-epoch-v5")
+        PROPERTIES TIMEOUT 420 LABELS "calibration;helmholtz;reference-epoch-v6")
 endif()
 
 add_executable(bench_helmholtz_certified bench_helmholtz_certified.cpp)

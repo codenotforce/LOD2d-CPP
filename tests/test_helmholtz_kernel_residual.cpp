@@ -111,7 +111,7 @@ void verify_patch_constraints_and_solver_agreement() {
     require(!uninitialized_evidence.matches_result(uninitialized_estimate),
             "default eta_H evidence matched an uninitialized result");
 
-    AuditProblem problem(PaperCase::R1, 1, 3);
+    AuditProblem problem(PaperCase::R2a, 1, 3);
     const ComplexVector candidate = ComplexVector::Zero(problem.load.size());
     const AuditKernelResidualEstimate saddle = estimate_audit_kernel_residual(
         problem.hierarchy,
@@ -274,7 +274,7 @@ void verify_patch_constraints_and_solver_agreement() {
 }
 
 void verify_reference_residual_riesz() {
-    ReferenceEpochProblem problem(PaperCase::R1, 1, 3);
+    ReferenceEpochProblem problem(PaperCase::R2a, 1, 3);
     const ComplexVector candidate = ComplexVector::Zero(
         problem.reference_load.size());
     const ReferenceResidualRiesz saddle = compute_reference_residual_riesz(
@@ -373,7 +373,7 @@ void verify_reference_residual_riesz() {
 }
 
 void verify_ambient_defect_riesz_gram() {
-    ReferenceEpochProblem problem(PaperCase::R1, 1, 3);
+    ReferenceEpochProblem problem(PaperCase::R2a, 1, 3);
     const AmbientRatioEnforcementResult update =
         problem.hierarchy.enforce_ambient_ratio(0.2);
     require(update.changed,
@@ -532,7 +532,7 @@ void verify_ambient_defect_riesz_gram() {
 }
 
 void verify_explicit_global_kernel_bounds() {
-    AuditProblem problem(PaperCase::R1, 1, 2);
+    AuditProblem problem(PaperCase::R2a, 1, 2);
     const AuditKernelResidualEstimate estimate = estimate_audit_kernel_residual(
         problem.hierarchy,
         problem.operators,
@@ -555,7 +555,8 @@ void verify_explicit_global_kernel_bounds() {
 }
 
 void verify_effectivity_distribution(PaperCase id) {
-    AuditProblem problem(id, 0, 2);
+    const int coarse_level = id == PaperCase::R1 ? 1 : 0;
+    AuditProblem problem(id, coarse_level, coarse_level + 2);
     const LodAuditCandidate lod = solve_lod_candidate(problem);
     const ComplexVector &candidate = lod.values;
     const ComplexVector certification = solve_helmholtz_fem(
@@ -592,7 +593,7 @@ void verify_effectivity_distribution(PaperCase id) {
 }
 
 void verify_equal_mesh_degeneracy() {
-    AuditProblem problem(PaperCase::R1, 0, 0);
+    AuditProblem problem(PaperCase::R2a, 0, 0);
     const LodAuditCandidate lod = solve_lod_candidate(problem);
     const ComplexVector &candidate = lod.values;
     const ComplexVector certification = solve_helmholtz_fem(

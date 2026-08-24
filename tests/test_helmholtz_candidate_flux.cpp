@@ -23,7 +23,7 @@ void require(bool condition, const char *message) {
 
 void verify_case(PaperCase id) {
     const PaperCaseData data = id == PaperCase::S
-        ? make_paper_case(id, 16.0, 0.05)
+        ? make_paper_case(id, 16.0, 0.0, 0.5, false, 0.05)
         : make_paper_case(id, 16.0);
     const TriMesh mesh = refine_mesh_nvb(data.initial_mesh, 2).mesh;
     const HelmholtzOperators operators = assemble_helmholtz_operators(

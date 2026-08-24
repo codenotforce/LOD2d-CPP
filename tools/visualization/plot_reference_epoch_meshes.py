@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -16,6 +17,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.collections import LineCollection, PolyCollection
+from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Circle
 
 from paper_style import apply_paper_style
@@ -24,12 +26,14 @@ from paper_style import apply_paper_style
 @dataclass(frozen=True)
 class MeshEntry:
     epoch: int
+    h_step: int
     iteration: int
     stage: str
     role: str
     filename: str
     cells: int
     dofs: int
+    reference_mesh_version: int | None
 
 
 def read_manifest(path: Path, epoch: int | None = None) -> list[MeshEntry]:
@@ -38,9 +42,15 @@ def read_manifest(path: Path, epoch: int | None = None) -> list[MeshEntry]:
     entries = [
         MeshEntry(
             epoch=int(row["epoch"]),
+            h_step=int(row.get("H_step", row["iteration"])),
             iteration=int(row["iteration"]), stage=row["stage"],
             role=row["mesh_role"], filename=row["filename"],
             cells=int(row["N_cells"]), dofs=int(row["N_dofs"]),
+            reference_mesh_version=(
+                int(row["reference_mesh_version"])
+                if row.get("reference_mesh_version") not in (None, "", "NA")
+                else None
+            ),
         )
         for row in rows if epoch is None or int(row["epoch"]) == epoch
     ]
@@ -94,17 +104,35 @@ def draw_mesh(ax, path: Path, title: str, linewidth: float) -> None:
     ax.set_yticks([])
 
 
-def select_checkpoints(entries: list[MeshEntry], count: int) -> list[tuple[MeshEntry, MeshEntry]]:
-    by_key = {(entry.iteration, entry.role): entry for entry in entries}
+def select_checkpoints(
+    entries: list[MeshEntry], count: int, all_checkpoints: bool,
+) -> list[tuple[MeshEntry, MeshEntry, MeshEntry]]:
+    checkpoint_entries = [
+        entry for entry in entries
+        if entry.stage in {"epoch_start", "committed", "pre_switch"}
+    ]
+    by_key = {(entry.iteration, entry.role): entry for entry in checkpoint_entries}
     iterations = sorted(
         iteration for iteration, role in by_key
-        if role == "coarse" and (iteration, "candidate") in by_key
+        if role == "coarse"
+        and (iteration, "reference") in by_key
+        and (iteration, "candidate") in by_key
     )
     if not iterations:
-        raise ValueError("no matching coarse/candidate epoch-0 checkpoints")
-    indices = np.linspace(0, len(iterations) - 1, min(count, len(iterations)))
-    selected = sorted({iterations[int(round(index))] for index in indices})
-    return [(by_key[(iteration, "coarse")], by_key[(iteration, "candidate")]) for iteration in selected]
+        raise ValueError("no matching coarse/reference/candidate checkpoints")
+    if all_checkpoints:
+        selected = iterations
+    else:
+        indices = np.linspace(0, len(iterations) - 1, min(count, len(iterations)))
+        selected = sorted({iterations[int(round(index))] for index in indices})
+    return [
+        (
+            by_key[(iteration, "coarse")],
+            by_key[(iteration, "reference")],
+            by_key[(iteration, "candidate")],
+        )
+        for iteration in selected
+    ]
 
 
 def save_reference(
@@ -123,27 +151,108 @@ def save_reference(
 
 def save_evolution(
     run_dir: Path, output_dir: Path,
-    pairs: list[tuple[MeshEntry, MeshEntry]], role_index: int,
+    triplets: list[tuple[MeshEntry, MeshEntry, MeshEntry]], role_index: int,
     experiment: str,
 ) -> None:
-    role = "coarse" if role_index == 0 else "candidate"
+    role = ("coarse", "reference", "candidate")[role_index]
     figure, axes = plt.subplots(
-        1, len(pairs), figsize=(3.15 * len(pairs), 3.15), constrained_layout=True
+        1, len(triplets),
+        figsize=(3.15 * len(triplets), 3.15), constrained_layout=True
     )
-    for ax, pair in zip(np.atleast_1d(axes), pairs):
-        entry = pair[role_index]
+    for ax, triplet in zip(np.atleast_1d(axes), triplets):
+        entry = triplet[role_index]
         draw_mesh(
             ax, run_dir / entry.filename,
-            rf"$i={entry.iteration}$ — {entry.cells} cells",
+            rf"$H$-step {entry.h_step}, $i={entry.iteration}$" + "\n"
+            + f"{entry.cells} cells",
             0.42 if role == "coarse" else 0.12,
         )
     figure.suptitle(
-        f"{experiment} epoch {pairs[0][0].epoch}: {role} mesh evolution", fontsize=10
+        f"{experiment} epoch {triplets[0][0].epoch}: {role} mesh evolution",
+        fontsize=10,
     )
-    stem = f"{experiment}_epoch{pairs[0][0].epoch}_{role}_evolution"
+    stem = f"{experiment}_epoch{triplets[0][0].epoch}_{role}_evolution"
     figure.savefig(output_dir / f"{stem}.png", dpi=260)
     figure.savefig(output_dir / f"{stem}.pdf")
     plt.close(figure)
+
+
+def file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def save_triplet_pages(
+    run_dir: Path,
+    output_dir: Path,
+    triplets: list[tuple[MeshEntry, MeshEntry, MeshEntry]],
+    experiment: str,
+    page_columns: int,
+) -> None:
+    if page_columns < 1:
+        raise ValueError("--page-columns must be positive")
+    reference_entries = [triplet[1] for triplet in triplets]
+    reference_versions = {
+        entry.reference_mesh_version for entry in reference_entries
+        if entry.reference_mesh_version is not None
+    }
+    reference_hashes = {
+        file_sha256(run_dir / entry.filename) for entry in reference_entries
+    }
+    if len(reference_versions) > 1 or len(reference_hashes) != 1:
+        raise ValueError(
+            "reference mesh changed inside the selected epoch: "
+            f"versions={sorted(reference_versions)}, hashes={sorted(reference_hashes)}"
+        )
+
+    epoch = triplets[0][0].epoch
+    stem = f"{experiment}_epoch{epoch}_coarse_reference_candidate_by_H_step"
+    audit = {
+        "experiment": experiment,
+        "epoch": epoch,
+        "H_steps": [triplet[0].h_step for triplet in triplets],
+        "reference_mesh_versions": sorted(reference_versions),
+        "reference_sha256": sorted(reference_hashes),
+        "reference_unchanged_within_epoch": True,
+    }
+    (output_dir / f"{stem}.json").write_text(
+        json.dumps(audit, indent=2) + "\n", encoding="utf-8"
+    )
+
+    roles = ("Coarse $\\mathcal{T}_H$", "Reference $\\mathcal{T}_h$",
+             "Candidate $\\mathcal{T}_c$")
+    widths = (0.42, 0.10, 0.10)
+    with PdfPages(output_dir / f"{stem}.pdf") as pdf:
+        for page, start in enumerate(range(0, len(triplets), page_columns), 1):
+            chunk = triplets[start:start + page_columns]
+            figure, axes = plt.subplots(
+                3, len(chunk), figsize=(3.0 * len(chunk), 8.4),
+                constrained_layout=True, squeeze=False,
+            )
+            for column, triplet in enumerate(chunk):
+                for row, entry in enumerate(triplet):
+                    title = (
+                        rf"$H$-step {entry.h_step}, $i={entry.iteration}$"
+                        + "\n" + f"{entry.cells} cells"
+                        if row == 0 else f"{entry.cells} cells"
+                    )
+                    draw_mesh(
+                        axes[row, column], run_dir / entry.filename,
+                        title, widths[row],
+                    )
+                    if column == 0:
+                        axes[row, column].set_ylabel(roles[row], fontsize=8.5)
+            figure.suptitle(
+                f"{experiment} epoch {epoch}: matched mesh snapshots "
+                f"(page {page})",
+                fontsize=10,
+            )
+            pdf.savefig(figure)
+            figure.savefig(output_dir / f"{stem}_p{page:02d}.png", dpi=240)
+            plt.close(figure)
 
 
 def hybrid_physical_radius(run_dir: Path) -> float | None:
@@ -214,17 +323,24 @@ def main() -> None:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--checkpoints", type=int, default=4)
+    parser.add_argument(
+        "--all-checkpoints", action="store_true",
+        help="render every saved H-step rather than an evenly spaced subset",
+    )
+    parser.add_argument("--page-columns", type=int, default=4)
     parser.add_argument("--epoch", type=int, default=0)
     parser.add_argument("--experiment-label", default="E1")
     arguments = parser.parse_args()
-    if arguments.checkpoints < 2:
+    if not arguments.all_checkpoints and arguments.checkpoints < 2:
         raise ValueError("--checkpoints must be at least two")
     manifest = arguments.run_dir / "mesh_manifest.csv"
     entries = read_manifest(manifest, arguments.epoch)
     references = [entry for entry in entries if entry.role == "reference"]
     if not references:
         raise ValueError("epoch-0 reference mesh is missing")
-    pairs = select_checkpoints(entries, arguments.checkpoints)
+    triplets = select_checkpoints(
+        entries, arguments.checkpoints, arguments.all_checkpoints
+    )
     arguments.output_dir.mkdir(parents=True, exist_ok=True)
     apply_paper_style()
     save_reference(
@@ -232,12 +348,20 @@ def main() -> None:
         arguments.experiment_label,
     )
     save_evolution(
-        arguments.run_dir, arguments.output_dir, pairs, 0,
+        arguments.run_dir, arguments.output_dir, triplets, 0,
         arguments.experiment_label,
     )
     save_evolution(
-        arguments.run_dir, arguments.output_dir, pairs, 1,
+        arguments.run_dir, arguments.output_dir, triplets, 1,
         arguments.experiment_label,
+    )
+    save_evolution(
+        arguments.run_dir, arguments.output_dir, triplets, 2,
+        arguments.experiment_label,
+    )
+    save_triplet_pages(
+        arguments.run_dir, arguments.output_dir, triplets,
+        arguments.experiment_label, arguments.page_columns,
     )
     if arguments.experiment_label == "E2":
         hybrid = [entry for entry in read_manifest(manifest) if entry.role == "hybrid_regions"]

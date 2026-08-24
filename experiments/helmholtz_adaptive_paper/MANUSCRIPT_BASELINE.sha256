@@ -1,5 +1,5 @@
-94b0c1469312ce006f3b76d08b30f920115d274f442e3912ca660ccf919bd3f9  ../LOD_paper/helmholtz_lod_certified_amsart_revised.tex
+71f59581ea3a5e4cd65659055915715b9c86c582793db7154a5f0b3b31843ca8  ../LOD_paper/helmholtz_lod_certified_amsart_revised.tex
 
-# Frozen 2026-08-23 for the reference-epoch numerical plan.
-# Paper repository base commit: 30f6c05abeafcb5b76e74cb9f23d07ee1e13b13a.
+# Frozen 2026-08-24 for reference-epoch schema v6 from the revised manuscript
+# working tree based on paper commit 30f6c05abeafcb5b76e74cb9f23d07ee1e13b13a.
 # Every production run must copy this SHA-256 value into run.json.

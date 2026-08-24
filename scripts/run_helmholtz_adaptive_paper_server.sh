@@ -8,7 +8,9 @@ REFERENCE_CACHE_DIR=${REFERENCE_CACHE_DIR:-"$RESULT_DIR/reference-cache"}
 MODE=${MODE:-pilot}
 JOBS=${JOBS:-16}
 PATCH_THREADS=${PATCH_THREADS:-16}
-MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-16}
+MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-}
+MIN_FREE_DISK_GIB=${MIN_FREE_DISK_GIB:-}
+EXTERNAL_TIMEOUT_SECONDS=${EXTERNAL_TIMEOUT_SECONDS:-}
 VALIDATE=${VALIDATE:-1}
 
 if ! git -C "$ROOT_DIR" diff --quiet ||
@@ -69,48 +71,76 @@ case "$MODE" in
       experiments/helmholtz_adaptive_paper/configs/S-corner-wave-palod-k16-H6-h12-to-h20-gap4-step10-v4.json
     )
     ;;
-  e1-main)
+  e1-revised-factor)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H2-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-gap9-step5-refresh-factor-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=96
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=11700
+    ;;
+  e1-revised-pilot)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-gap9-step8-pilot-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=192
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
+  e1-revised-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H4-h12-gap9-step12-main-v6.json
       experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H2-level18-step40-v4.json
       experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H2-level18-step16-v4.json
       experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H2-h15-ell3-step15-v4.json
     )
+    MODE_MIN_AVAILABLE_GIB=320
+    MODE_MIN_FREE_DISK_GIB=200
+    MODE_TIMEOUT_SECONDS=36900
     ;;
-  e2-main)
+  e2-revised-factor)
     DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-gap4-step15-v5.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap4-step15-v5.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-thetaH01-step5-refresh-factor-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step6-refresh-factor-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=96
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=11700
+    ;;
+  e2-revised-pilot)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-thetaH01-step8-pilot-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step8-pilot-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=192
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
+  e2-revised-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-radius0125-step15-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap9-step12-main-v6.json
       experiments/helmholtz_adaptive_paper/configs/E2-S-afem-k16-H3-level20-step40-v4.json
       experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H3-h16-ell3-step12-v4.json
     )
-    ;;
-  e2-radius-pilot)
-    DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-radius00625-h12-step1-pilot-v5.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-radius0125-h12-step1-pilot-v5.json
-    )
-    ;;
-  e1-e2-main)
-    DEFAULT_CONFIGS=(
-      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-reference-epoch-k16-H2-h12-gap4-step15-v5.json
-      experiments/helmholtz_adaptive_paper/configs/E1-R1-afem-k16-H2-level18-step40-v4.json
-      experiments/helmholtz_adaptive_paper/configs/E1-R1-ufem-k16-H2-level18-step16-v4.json
-      experiments/helmholtz_adaptive_paper/configs/E1-R1-hlod-fixed-k16-H2-h15-ell3-step15-v4.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-hybrid-reference-epoch-k16-H3-h12-gap4-step15-v5.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-reference-epoch-k16-H3-h12-gap4-step15-v5.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-afem-k16-H3-level20-step40-v4.json
-      experiments/helmholtz_adaptive_paper/configs/E2-S-hlod-fixed-k16-H3-h16-ell3-step12-v4.json
-    )
+    MODE_MIN_AVAILABLE_GIB=320
+    MODE_MIN_FREE_DISK_GIB=200
+    # The AFEM and fixed-LOD comparison configs retain a 24-hour internal
+    # guard.  Leave 15 minutes for their structured shutdown/artifact write.
+    MODE_TIMEOUT_SECONDS=87300
     ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
   *)
-    echo "MODE must be smoke, pilot, calibration, r2a-krobust, s-corner-wave-366g, s-corner-wave-medium, e1-main, e2-main, e2-radius-pilot, e1-e2-main, or custom" >&2
+    echo "unknown MODE=$MODE; use a documented *-revised-factor, *-revised-pilot, *-revised-main, legacy mode, or custom" >&2
     exit 2
     ;;
 esac
+
+MIN_AVAILABLE_GIB=${MIN_AVAILABLE_GIB:-${MODE_MIN_AVAILABLE_GIB:-16}}
+MIN_FREE_DISK_GIB=${MIN_FREE_DISK_GIB:-${MODE_MIN_FREE_DISK_GIB:-20}}
+EXTERNAL_TIMEOUT_SECONDS=${EXTERNAL_TIMEOUT_SECONDS:-${MODE_TIMEOUT_SECONDS:-86400}}
 
 if ! [[ "$PATCH_THREADS" =~ ^[1-9][0-9]*$ ]]; then
   echo "PATCH_THREADS must be a positive integer" >&2
@@ -140,6 +170,15 @@ require_memory_gate() {
   fi
 }
 
+require_disk_gate() {
+  local free_gib
+  free_gib=$(df -Pk "$RESULT_DIR" | awk 'NR==2 {printf "%d\n", $4 / 1024 / 1024}')
+  if (( free_gib < MIN_FREE_DISK_GIB )); then
+    echo "Refusing to start: free disk=${free_gib} GiB < ${MIN_FREE_DISK_GIB} GiB" >&2
+    exit 3
+  fi
+}
+
 mkdir -p "$BUILD_DIR" "$RESULT_DIR" "$REFERENCE_CACHE_DIR" \
   "$RESULT_DIR/runtime-configs" "$RESULT_DIR/logs"
 
@@ -154,6 +193,7 @@ cmake --build "$BUILD_DIR" -j "$JOBS" --target \
   test_helmholtz_reference_solution_cache \
   test_helmholtz_paper_config \
   test_helmholtz_paper_cases \
+  test_helmholtz_reference_epoch_driver \
   test_helmholtz_reference_epoch_hierarchy \
   test_helmholtz_singularity_hybrid \
   bench_helmholtz_adaptive_paper
@@ -164,6 +204,7 @@ if [[ "$VALIDATE" == 1 ]]; then
   "$BUILD_DIR/tests/test_helmholtz_reference_solution_cache"
   "$BUILD_DIR/tests/test_helmholtz_paper_config"
   "$BUILD_DIR/tests/test_helmholtz_paper_cases"
+  "$BUILD_DIR/tests/test_helmholtz_reference_epoch_driver"
   "$BUILD_DIR/tests/test_helmholtz_reference_epoch_hierarchy"
   "$BUILD_DIR/tests/test_helmholtz_singularity_hybrid"
 fi
@@ -171,12 +212,25 @@ fi
 BINARY="$BUILD_DIR/benchmarks/bench_helmholtz_adaptive_paper"
 GIT_COMMIT=$(git -C "$ROOT_DIR" rev-parse HEAD)
 BUILD_HASH="sha256:$(sha256sum "$BINARY" | awk '{print $1}')"
-BASELINE_V5="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256"
+BASELINE_V6="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE.sha256"
 BASELINE_V4="$ROOT_DIR/experiments/helmholtz_adaptive_paper/MANUSCRIPT_BASELINE_LEGACY_V4.sha256"
 
+IDENTITY_FILE="$RESULT_DIR/server-build-identity.txt"
+if [[ -f "$IDENTITY_FILE" ]]; then
+  recorded_commit=$(awk -F= '$1 == "git_commit" {print $2}' "$IDENTITY_FILE")
+  recorded_build=$(awk -F= '$1 == "build_hash" {print $2}' "$IDENTITY_FILE")
+  recorded_threads=$(awk -F= '$1 == "patch_threads" {print $2}' "$IDENTITY_FILE")
+  if [[ "$recorded_commit" != "$GIT_COMMIT" \
+        || "$recorded_build" != "$BUILD_HASH" \
+        || "$recorded_threads" != "$PATCH_THREADS" ]]; then
+    echo "Refusing to mix a different commit/build/thread count in RESULT_DIR=$RESULT_DIR" >&2
+    echo "recorded: commit=$recorded_commit build=$recorded_build threads=$recorded_threads" >&2
+    echo "current:  commit=$GIT_COMMIT build=$BUILD_HASH threads=$PATCH_THREADS" >&2
+    exit 2
+  fi
+fi
 printf 'git_commit=%s\nbuild_hash=%s\npatch_threads=%s\n' \
-  "$GIT_COMMIT" "$BUILD_HASH" "$PATCH_THREADS" \
-  > "$RESULT_DIR/server-build-identity.txt"
+  "$GIT_COMMIT" "$BUILD_HASH" "$PATCH_THREADS" > "$IDENTITY_FILE"
 lscpu > "$RESULT_DIR/lscpu.txt"
 cat /proc/meminfo > "$RESULT_DIR/meminfo-before.txt"
 
@@ -205,6 +259,7 @@ for config_relative in "${CONFIG_LIST[@]}"; do
     continue
   fi
   require_memory_gate
+  require_disk_gate
   mkdir -p "$case_dir"
 
   python3 - "$template" "$runtime_config" "$GIT_COMMIT" "$BUILD_HASH" <<'PY'
@@ -219,17 +274,23 @@ pathlib.Path(destination).write_text(
 PY
 
   echo "start $stem; MemAvailable=$(available_gib) GiB"
-  schema_version=$(python3 -c \
-    'import json,sys; print(json.load(open(sys.argv[1]))["schema_version"])' \
+  config_manuscript=$(python3 -c \
+    'import json,sys; print(json.load(open(sys.argv[1]))["manuscript_sha256"].removeprefix("sha256:"))' \
     "$runtime_config")
-  if [[ "$schema_version" == 5 ]]; then
-    baseline="$BASELINE_V5"
-  else
+  revised_manuscript=$(awk 'NF && $1 !~ /^#/ {print $1; exit}' "$BASELINE_V6")
+  legacy_manuscript=$(awk 'NF && $1 !~ /^#/ {print $1; exit}' "$BASELINE_V4")
+  if [[ "$config_manuscript" == "$revised_manuscript" ]]; then
+    baseline="$BASELINE_V6"
+  elif [[ "$config_manuscript" == "$legacy_manuscript" ]]; then
     baseline="$BASELINE_V4"
+  else
+    echo "Config manuscript hash matches neither frozen baseline: $config_manuscript" >&2
+    exit 2
   fi
   set +e
-  /usr/bin/time -v -o "$time_file" \
-    "$BINARY" \
+  timeout --signal=INT --kill-after=600s "${EXTERNAL_TIMEOUT_SECONDS}s" \
+    /usr/bin/time -v -o "$time_file" \
+    stdbuf -oL -eL "$BINARY" \
       --config="$runtime_config" \
       --output-dir="$case_dir" \
       --reference-cache-dir="$REFERENCE_CACHE_DIR" \
@@ -242,24 +303,238 @@ PY
     exit "$status"
   fi
 
-  python3 - "$case_dir" <<'PY'
-import json, pathlib, sys
+  python3 - "$case_dir" "$time_file" "$stdout_file" "$MODE" <<'PY'
+import csv, json, math, pathlib, re, sys
 root = pathlib.Path(sys.argv[1])
+time_path = pathlib.Path(sys.argv[2])
+stdout_path = pathlib.Path(sys.argv[3])
+mode = sys.argv[4]
 manifests = list(root.glob("*/run.json"))
 if len(manifests) != 1:
     raise SystemExit(f"expected one run.json below {root}, found {len(manifests)}")
 manifest = json.loads(manifests[0].read_text(encoding="utf-8"))
 schema = int(manifest["schema_version"])
-if schema == 5:
+revised_mode = "-revised-" in mode
+if revised_mode:
+    timing_text = time_path.read_text(encoding="utf-8", errors="replace")
+    swap_match = re.search(r"^\s*Swaps:\s*(\d+)\s*$", timing_text, re.MULTILINE)
+    if not swap_match:
+        raise SystemExit(f"missing swap count in {time_path}")
+    if int(swap_match.group(1)) != 0:
+        raise SystemExit(f"scientific gate rejected swap use: {swap_match.group(1)}")
+if schema == 6:
     if manifest["status"] == "Failed":
         raise SystemExit(
             f"reference-epoch run failed: reason={manifest.get('stop_reason', '<missing>')}")
+    if manifest["status"] == "WorkLimitReached" and not any(
+        manifest.get("stop_reason", "").startswith(reason)
+        for reason in (
+            "maximum_H_steps reached",
+            "insufficient remaining H-step budget for a new reference epoch",
+        )
+    ):
+        raise SystemExit(
+            "reference-epoch run hit an unaccepted work limit: "
+            f"reason={manifest.get('stop_reason', '<missing>')}")
     required = (
         "iterations.csv", "summary.csv", "epoch_history.csv",
-        "mesh_manifest.csv", "corrector_work.csv")
+        "mesh_manifest.csv", "corrector_work.csv", "hybrid_reserve.csv")
     for name in required:
         if not (manifests[0].parent / name).is_file():
-            raise SystemExit(f"missing schema-v5 artifact: {name}")
+            raise SystemExit(f"missing schema-v6 artifact: {name}")
+    if revised_mode:
+        if manifest.get("claim") != "implementation-study":
+            raise SystemExit("revised run is missing claim=implementation-study")
+        config = manifest["config"]
+        method = config["method"]
+        hybrid = bool(config.get("singularity_hybrid"))
+        variant = manifest.get("algorithm_variant", {})
+        expected_conformance = (
+            "implementation-erratum" if hybrid
+            else "implementation-study-variant")
+        if variant.get("manuscript_conformance") != expected_conformance:
+            raise SystemExit(
+                "unexpected manuscript conformance: "
+                f"{variant.get('manuscript_conformance')!r}")
+        if variant.get("candidate_hierarchy_closure_order") != "post-estimator":
+            raise SystemExit("candidate hierarchy closure is not post-estimator")
+        if variant.get("coarse_admissibility") != \
+                "not-enforced;pre-asymptotic-points-retained":
+            raise SystemExit("coarse-admissibility study policy is undeclared")
+
+        def number(value):
+            if value in (None, "", "NA"):
+                return None
+            result = float(value)
+            return result if math.isfinite(result) else None
+
+        def integer(value):
+            parsed = number(value)
+            return None if parsed is None else int(parsed)
+
+        def truth(value):
+            return str(value).lower() == "true"
+
+        with (manifests[0].parent / "iterations.csv").open(
+                newline="", encoding="utf-8") as stream:
+            iterations = list(csv.DictReader(stream))
+        iterations.sort(key=lambda row: int(row["event_sequence"]))
+        solved = [row for row in iterations
+                  if row["action"] == "SolveAndEstimate"]
+        with (manifests[0].parent / "mesh_manifest.csv").open(
+                newline="", encoding="utf-8") as stream:
+            mesh_rows = list(csv.DictReader(stream))
+        maximum_steps = int(config["work_limits"]["maximum_H_steps"])
+        if manifest["status"] == "WorkLimitReached" \
+                and manifest.get("stop_reason", "").startswith(
+                    "maximum_H_steps reached") \
+                and len(solved) != maximum_steps:
+            raise SystemExit(
+                f"solve count {len(solved)} != maximum_H_steps {maximum_steps}")
+
+        if config["case"] == "R1" and method.startswith("PALOD"):
+            checkpoints = [
+                row for row in mesh_rows
+                if int(row["epoch"]) == 0
+                and row["stage"] in {"epoch_start", "committed", "pre_switch"}
+            ]
+            grouped = {}
+            for row in checkpoints:
+                key = (int(row["H_step"]), int(row["iteration"]))
+                grouped.setdefault(key, set()).add(row["mesh_role"])
+            if any(roles != {"coarse", "reference", "candidate"}
+                   for roles in grouped.values()):
+                raise SystemExit("E1 epoch-0 mesh checkpoint is not a complete triplet")
+            solved_steps = {
+                int(row["H_step"]) for row in solved if int(row["epoch"]) == 0}
+            captured_steps = {key[0] for key in grouped}
+            if not solved_steps.issubset(captured_steps):
+                raise SystemExit(
+                    "E1 epoch-0 mesh triplets miss solved H-steps: "
+                    f"{sorted(solved_steps - captured_steps)}")
+            reference_rows = [
+                row for row in checkpoints if row["mesh_role"] == "reference"]
+            reference_versions = {
+                row.get("reference_mesh_version", "") for row in reference_rows}
+            reference_files = {row["filename"] for row in reference_rows}
+            if len(reference_versions) != 1 or "" in reference_versions \
+                    or len(reference_files) != 1:
+                raise SystemExit(
+                    "E1 reference mesh changed inside epoch 0 or lacks version audit")
+
+        # Corrector accounting and cross-epoch ell inheritance are exact
+        # state-machine invariants, not empirical convergence heuristics.
+        for row in iterations:
+            active = integer(row.get("active_correctors"))
+            rebuilt = integer(row.get("rebuilt_correctors"))
+            reused = integer(row.get("reused_correctors"))
+            if active is not None and rebuilt is not None and reused is not None \
+                    and active != rebuilt + reused:
+                raise SystemExit("active_correctors != rebuilt + reused")
+        begin_rows = {
+            int(row["epoch"]): row for row in iterations
+            if row["action"] == "BeginEpoch"}
+        for epoch, begin in sorted(begin_rows.items()):
+            if epoch == 0:
+                continue
+            prior = [row for row in iterations if int(row["epoch"]) == epoch - 1]
+            if not prior:
+                raise SystemExit(f"epoch {epoch} has no preceding journal rows")
+            if integer(begin["ell"]) != integer(prior[-1]["ell"]):
+                raise SystemExit(f"ell was not inherited into epoch {epoch}")
+
+        if hybrid:
+            if variant.get("reserve_trigger_scope") != \
+                    "far-full-target-regular-cells":
+                raise SystemExit("hybrid reserve trigger scope is undeclared")
+            radius = float(config["hybrid_minimum_physical_radius"])
+            if abs(radius - 0.125) > 1e-14:
+                raise SystemExit(f"unexpected E2 physical radius {radius}")
+            theta_h = float(config["theta_H"])
+            theta_c = float(config["theta_c"])
+            for row in iterations:
+                covered = number(row.get("hybrid_covered_physical_radius"))
+                ell_s = integer(row.get("hybrid_ell_S"))
+                if row["action"] == "SolveAndEstimate" \
+                        and (covered is None or ell_s is None):
+                    raise SystemExit(
+                        "hybrid solve row is missing physical-radius diagnostics")
+                if covered is not None and covered + 1e-14 < radius:
+                    raise SystemExit("hybrid singular core misses R_star")
+                regular = number(row.get("hybrid_regular_indicator_mass"))
+                marked_h = number(row.get("hybrid_marked_H_indicator_mass"))
+                if regular is not None and regular > 0.0:
+                    if marked_h is None or marked_h + 1e-12 * regular \
+                            < theta_h * regular \
+                            or not truth(row.get("hybrid_full_regular_doerfler")):
+                        raise SystemExit("hybrid coarse full-regular Doerfler gate failed")
+                for suffix in ("F", "R"):
+                    mass = number(row.get(f"indicator_mass_c_{suffix}"))
+                    marked = number(row.get(f"marked_mass_c_{suffix}"))
+                    if mass is not None and mass > 0.0 \
+                            and (marked is None
+                                 or marked + 1e-12 * mass < theta_c * mass):
+                        raise SystemExit(
+                            f"candidate {suffix} regional Doerfler gate failed")
+
+            with (manifests[0].parent / "hybrid_reserve.csv").open(
+                    newline="", encoding="utf-8") as stream:
+                reserve_rows = list(csv.DictReader(stream))
+            closures = [row for row in reserve_rows if row["row_type"] == "closure"]
+            if not closures:
+                raise SystemExit("hybrid run produced no audited reserve closure")
+            for row in closures:
+                requested = int(row["requested_target_gap"])
+                if row["status"] != "achieved" \
+                        or not truth(row["target_satisfied"]) \
+                        or int(row["matching_spill"]) != 0 \
+                        or int(row["profile_margin_after"]) < 0 \
+                        or int(row["far_gap_after"]) < requested:
+                    raise SystemExit("hybrid reserve closure scientific gate failed")
+
+            preflight = re.findall(
+                r"\[hybrid-preflight\].*?max_patch_fine_elements=(\d+).*?guard=(\d+)",
+                stdout_path.read_text(encoding="utf-8", errors="replace"))
+            if not preflight:
+                raise SystemExit("hybrid patch preflight diagnostics are missing")
+            if any(int(cost) > int(limit) for cost, limit in preflight):
+                raise SystemExit("hybrid corrector patch cap was exceeded")
+            if not (manifests[0].parent /
+                    "mesh_E2_final_hybrid_regions.vtu").is_file():
+                raise SystemExit("hybrid final-region mesh artifact is missing")
+
+        actions = [row["action"] for row in iterations]
+        if mode.endswith("-factor") and method.startswith("PALOD") \
+                and "RefreshReference" not in actions:
+            raise SystemExit("factor did not exercise a reference refresh")
+
+        if mode.endswith(("-pilot", "-main")) and method.startswith("PALOD"):
+            by_epoch = {}
+            for row in solved:
+                by_epoch.setdefault(int(row["epoch"]), []).append(row)
+            refresh_epochs = {
+                int(row["epoch"]) + 1 for row in iterations
+                if row["action"] == "RefreshReference"}
+            missing_begin = refresh_epochs.difference(begin_rows)
+            if missing_begin:
+                raise SystemExit(
+                    "refreshed epoch has no BeginEpoch row: "
+                    f"{sorted(missing_begin)}")
+            if config["case"] == "R1":
+                candidates = [rows for epoch, rows in by_epoch.items()
+                              if epoch > 0 and len(rows) >= 3]
+            elif hybrid:
+                candidates = [rows for epoch, rows in by_epoch.items()
+                              if epoch in refresh_epochs and len(rows) >= 3]
+            else:
+                candidates = []
+            if (config["case"] == "R1" or hybrid) and not candidates:
+                raise SystemExit("pilot/main has no required three-point epoch segment")
+            if candidates:
+                errors = [number(row["relative_exact_energy"])
+                          for row in candidates[0]]
+                if any(value is None for value in errors) or errors[-1] >= errors[0]:
+                    raise SystemExit("selected three-point epoch has no net exact-error decay")
     print(
         f"validated {manifest['run_id']}: state={manifest['status']} "
         f"reason={manifest.get('stop_reason', '')}")

@@ -1,1 +1,1 @@
-{"case":"S","domain":"l-shape","exact_solution":true,"mixed_boundary":true,"name":"l-shape-singular","r0":0.25,"r1":0.5}
+{"case":"S","domain":"l-shape","exact_solution":true,"mixed_boundary":true,"name":"l-shape-singular-interior-wave","r0":0.25,"r1":0.5,"singular_cutoff":"c-infinity","oscillatory_envelope":"c-infinity-tensor-bump","oscillatory_center":[-0.5,0.5],"oscillatory_support_half_width":0.25,"production_epsilon_osc":0.05}
