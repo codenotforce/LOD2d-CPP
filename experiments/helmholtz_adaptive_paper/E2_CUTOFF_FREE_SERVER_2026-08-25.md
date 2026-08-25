@@ -1,5 +1,25 @@
 # E2 cut-off-free L-shaped experiment (2026-08-25)
 
+## Algorithm-2 regional-marking correction
+
+The current manuscript requires independent candidate Dörfler marking in
+the matching region `Omega_F` and its regular complement. Results produced
+before this correction at commit `68a3e44` used a global candidate marked
+set and are retained only as a diagnostic baseline. In particular,
+`results/E2-cutofffree-optimized-main-68a3e44` is not the final Algorithm-2
+paper trajectory even though it completed successfully.
+
+Before accepting a new moving-PALOD result, verify for every
+`EnrichCandidate` record with positive regional mass that
+
+```text
+marked_mass_c_F >= theta_c * indicator_mass_c_F
+marked_mass_c_R >= theta_c * indicator_mass_c_R
+```
+
+and require the 24-point tail audit to pass. The initial corrected 16-step
+gate gave final-8/final-6 exponents about `0.603/0.616` with zero swap.
+
 This runbook reproduces the revised E2 manufactured-solution experiment from
 `helmholtz_lod_certified_amsart_revised.tex`.  The frozen manuscript SHA-256 is
 

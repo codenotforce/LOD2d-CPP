@@ -1069,6 +1069,7 @@ public:
         const double time_flux = seconds_since(flux_start);
         result.eta_eq_c = flux.eta_eq;
         std::vector<int> marked_candidate = flux.marked_elements;
+        double regional_marking_seconds = 0.0;
         if (config_.singularity_hybrid) {
             if (!proposed_regions_)
                 throw std::logic_error(
@@ -1100,40 +1101,22 @@ public:
                 if (in_omega_f[element]) ++result.candidate_cells_f;
                 else ++result.candidate_cells_r;
             }
-            // The revised experiment uses one global Dörfler selection.  The
-            // F/R fields remain a diagnostic partition of the global mass and
-            // of the globally marked set; neither region has a separate bulk
-            // constraint.
-            result.indicator_mass_c_f = 0.0;
-            result.indicator_mass_c_r = 0.0;
-            result.marked_mass_c_f = 0.0;
-            result.marked_mass_c_r = 0.0;
-            std::vector<char> is_marked(parents.size(), false);
-            for (const int element : marked_candidate) {
-                if (element < 0
-                    || element >= static_cast<int>(parents.size())) {
-                    throw std::logic_error(
-                        "global candidate marking returned an invalid element");
-                }
-                is_marked[element] = true;
-            }
-            for (int element = 0;
-                 element < static_cast<int>(parents.size()); ++element) {
-                const double mass = flux.element_eta_squared[element];
-                if (in_omega_f[element]) {
-                    result.indicator_mass_c_f += mass;
-                    if (is_marked[element]) {
-                        result.marked_mass_c_f += mass;
-                        ++result.marked_c_f;
-                    }
-                } else {
-                    result.indicator_mass_c_r += mass;
-                    if (is_marked[element]) {
-                        result.marked_mass_c_r += mass;
-                        ++result.marked_c_r;
-                    }
-                }
-            }
+            // Algorithm 2 uses independent Dörfler constraints in the
+            // matching and regular regions.  A single global marked set can
+            // otherwise spend the complete bulk budget in Omega_R and starve
+            // the corner region even though its indicator mass is nonzero.
+            const Clock::time_point regional_marking_start = Clock::now();
+            const SplitRegionalDoerflerMarking regional =
+                mark_split_regional_doerfler(
+                    flux.element_eta_squared, in_omega_f, config_.theta_c);
+            regional_marking_seconds = seconds_since(regional_marking_start);
+            marked_candidate = regional.marked_elements;
+            result.indicator_mass_c_f = regional.omega_f_mass;
+            result.indicator_mass_c_r = regional.regular_mass;
+            result.marked_mass_c_f = regional.marked_omega_f_mass;
+            result.marked_mass_c_r = regional.marked_regular_mass;
+            result.marked_c_f = regional.marked_omega_f_elements.size();
+            result.marked_c_r = regional.marked_regular_elements.size();
             result.eta_eq_c_f = std::sqrt(result.indicator_mass_c_f);
             result.eta_eq_c_r = std::sqrt(result.indicator_mass_c_r);
             const double total_mass = result.indicator_mass_c_f
@@ -1144,18 +1127,22 @@ public:
                 throw std::runtime_error(
                     "hybrid regional candidate masses do not recover eta_eq_c");
             }
-            const double globally_marked_mass = result.marked_mass_c_f
-                + result.marked_mass_c_r;
-            if (total_mass > 0.0
-                && globally_marked_mass + 1e-12 * total_mass
-                    < config_.theta_c * total_mass) {
+            if (result.indicator_mass_c_f > 0.0
+                && result.marked_mass_c_f
+                    + 1e-12 * result.indicator_mass_c_f
+                    < config_.theta_c * result.indicator_mass_c_f)
                 throw std::runtime_error(
-                    "global candidate Doerfler marking misses its target");
-            }
+                    "Omega_F candidate Doerfler marking misses its target");
+            if (result.indicator_mass_c_r > 0.0
+                && result.marked_mass_c_r
+                    + 1e-12 * result.indicator_mass_c_r
+                    < config_.theta_c * result.indicator_mass_c_r)
+                throw std::runtime_error(
+                    "regular candidate Doerfler marking misses its target");
             if (result.marked_c_f + result.marked_c_r
                 != marked_candidate.size()) {
                 throw std::runtime_error(
-                    "global candidate regional accounting misses marked elements");
+                    "split candidate regional accounting misses marked elements");
             }
         }
         result.marked_c = marked_candidate;
@@ -1189,10 +1176,17 @@ public:
         result.time_candidate_flux_patch_solve = flux.time_patch_solve;
         result.time_candidate_flux_merge = flux.time_deterministic_merge;
         result.time_candidate_flux_audit = flux.time_estimator_and_audit;
-        result.time_candidate_marking = flux.time_marking;
-        result.candidate_marking_pool = flux.marking_candidate_pool;
+        result.time_candidate_marking =
+            flux.time_marking + regional_marking_seconds;
+        result.candidate_marking_pool = config_.singularity_hybrid
+            ? marked_candidate.size() : flux.marking_candidate_pool;
+        // The global closure-cost estimate produced inside the flux routine
+        // does not describe the split regional set and must not be reported
+        // as if it did.  A regional closure-cost audit can be added later
+        // without changing the two mandatory bulk constraints.
         result.candidate_estimated_selected_closure_cost =
-            flux.estimated_selected_closure_cost;
+            config_.singularity_hybrid
+                ? 0 : flux.estimated_selected_closure_cost;
         result.candidate_flux_parallel_threads = flux.parallel_threads;
         result.time_candidate_nvb_refine = close_result.time_nvb_refine
             + enrich_result.time_nvb_refine;

@@ -607,6 +607,19 @@ L-shaped 结果。
 
 #### E2 无径向 cut-off 最终重基线（2026-08-25）
 
+> 2026-08-25 后续审计：最新版论文 Algorithm 2 明确要求 candidate
+> 在 `Omega_F` 与 regular region 分别满足同一个 `theta_c` Dörfler
+> 下界。早期 cutoff-free 主轨迹误用了一个全局最小标记集；23 次 candidate
+> 更新中有 10 次没有标记任何 `Omega_F` 单元，最终网格呈现角点中心偏粗、
+> 外围 matching interface 楔形加细的结构，末 4/6 点指数降至约
+> `0.417/0.437`。该轨迹保留为反例审计，不再作为 Algorithm 2 主结果。
+>
+> runner 已恢复 `Omega_F/regular` 独立 bulk marking。H6/h10、
+> `theta_H=theta_c=0.2` 的 16-step 本地门禁峰值约 5.64 GiB、零 swap，
+> 末 4/6/8/12 点 exact-error 指数分别约
+> `0.593/0.616/0.603/0.671`，且每一步两区都达到各自 bulk 下界。
+> 24-step 服务器结果通过后方可冻结最终 E2 收敛图与新最终网格。
+
 最新版论文将制造解冻结为
 
 \[
