@@ -258,3 +258,94 @@ python3 tools/visualization/plot_vtu_mesh.py \
 Do not infer the claimed convergence rate from a cross-epoch PALOD fit.  Report
 standard-PALOD fits epoch by epoch, and use a tail fit for moving PALOD, SLOD and
 AFEM.  Retain all pre-asymptotic points in the figure.
+
+## Regional-candidate extension and deep-tail rerun
+
+The follow-up experiment keeps the two PALOD methods mathematically distinct:
+
+- standard PALOD has `moving_reference=false`; within an epoch its reference
+  is fixed and only nestedness
+  `T_H <= T_h <= T_c` is required.  Its candidate now satisfies independent
+  Doerfler constraints in the physical corner region and its complement;
+- moving PALOD still promotes the frozen candidate after every nonterminal
+  step and uses the same split-regional candidate constraint prescribed by
+  Algorithm 2.
+
+The standard gate uses `H6/h10`, refresh trigger 1 and target gap 4.  A local
+12-step gate completed in 48.3 s with 7.8 GiB peak RSS and zero swap.  The
+reference remained fixed for two H-steps in each post-initial epoch, and every
+checked candidate sweep separately achieved `theta_c=0.2` in both regions.
+The rejected `H6/h12` local gate reached 11.1 GiB and was killed by the 12 GiB
+WSL limit; it is not a production configuration.
+
+Two deep-size performance switches preserve the old fast path on small meshes:
+
+- below 50,000 reference elements, Gram patches use the historical full scan;
+  at and above the threshold they use a coarse-parent element index and visit
+  only local patch buckets, removing the previous `O(N_H N_h)` scan;
+- below 80,000 candidate elements, quasi interpolation uses the historical
+  sparse products; at and above the threshold it assembles the algebraically
+  identical 3-by-3 element contributions directly.
+
+The 16-step local moving gate completed with zero swap and reproduced the old
+exact-error trajectory to roundoff.  It stays below both switches, so it is a
+correctness and small-path gate rather than evidence of deep-size speedup.
+
+After pulling the commit, run the gates first:
+
+```bash
+cd /home/sutai/code/LOD2d-CPP
+HEAD7=$(git rev-parse --short HEAD)
+tmux new-session -d -s e2-regional-gates \
+  "cd /home/sutai/code/LOD2d-CPP && \
+   MODE=e2-revised-regional-linear-gates \
+   RESULT_DIR=/home/sutai/code/LOD2d-CPP/results/E2-regional-linear-gates-${HEAD7}-20260825 \
+   JOBS=16 PATCH_THREADS=16 \
+   bash scripts/run_helmholtz_adaptive_paper_server.sh \
+   > results/E2-regional-linear-gates-${HEAD7}-launch.log 2>&1"
+```
+
+Only after both `.done` files exist and swaps remain zero, start the serialized
+28-step main trajectories.  Completed AFEM, SLOD and fixed-LOD results are
+reused and are not recomputed:
+
+```bash
+HEAD7=$(git rev-parse --short HEAD)
+tmux new-session -d -s e2-regional-main \
+  "cd /home/sutai/code/LOD2d-CPP && \
+   MODE=e2-revised-regional-linear-main \
+   RESULT_DIR=/home/sutai/code/LOD2d-CPP/results/E2-regional-linear-main-${HEAD7}-20260825 \
+   JOBS=16 PATCH_THREADS=16 \
+   bash scripts/run_helmholtz_adaptive_paper_server.sh \
+   > results/E2-regional-linear-main-${HEAD7}-launch.log 2>&1"
+```
+
+The script runs standard PALOD first and the deepest moving PALOD last.  The
+two main trajectories are not parallelized: both eventually become
+memory-heavy and concurrent execution would invalidate timing comparisons.
+The two short gates are also kept serial because both already use all patch
+threads; parallel gate processes would measure CPU contention rather than the
+optimization.
+
+The E1 tail is a separate job.  The earlier nominal 36-step config stopped at
+33 solves because only three slots remained while a new epoch requires four.
+The 38-step config retains the deterministic prefix and leaves five slots for
+the final epoch, with the practical target of reducing exact relative energy
+from 0.01123 to at most 0.01:
+
+```bash
+HEAD7=$(git rev-parse --short HEAD)
+tmux new-session -d -s e1-tail \
+  "cd /home/sutai/code/LOD2d-CPP && \
+   MODE=e1-revised-candidate-optimized-tail \
+   RESULT_DIR=/home/sutai/code/LOD2d-CPP/results/E1-optimized-tail-${HEAD7}-20260825 \
+   JOBS=16 PATCH_THREADS=16 \
+   bash scripts/run_helmholtz_adaptive_paper_server.sh \
+   > results/E1-optimized-tail-${HEAD7}-launch.log 2>&1"
+```
+
+Because the runner does not persist factorization/checkpoint state, this job
+replays the existing deterministic prefix; it does not pretend to resume a
+serialized numerical state.  Accept it only if the final
+`relative_exact_energy <= 0.01` and the overlapping prefix agrees with the
+previous run to roundoff.

@@ -180,6 +180,18 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=100
     MODE_TIMEOUT_SECONDS=87300
     ;;
+  e1-revised-candidate-optimized-tail)
+    # Re-run the deterministic optimized prefix with enough budget to open
+    # one final epoch.  The previous 36-step configuration stopped after 33
+    # solves because only three slots remained while the reserve guard
+    # requires four solved points in every new epoch.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-gap6-schur-thetaH01-thetaC03-stride2-closurecost-step38-tail-target001-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=240
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   e1-revised-h6-main)
     # Short/low-memory methods precede uniform standard LOD and the two
     # expensive adaptive LOD trajectories.  Runs remain serial so peak-memory
@@ -312,6 +324,31 @@ case "$MODE" in
     )
     MODE_MIN_AVAILABLE_GIB=240
     MODE_MIN_FREE_DISK_GIB=80
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
+  e2-revised-regional-linear-gates)
+    # Both gates are modest enough for a quick turnaround.  Keep them serial
+    # so their stage timings remain comparable; moving PALOD precedes the
+    # standard reference-epoch gate even though both now start from H6/h10.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-linear-locality-step16-gate-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-cutofffree-regional-k16-H6-h10-trigger1-target4-schur-thetaH02-thetaC02-step12-gate-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=48
+    MODE_MIN_FREE_DISK_GIB=40
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
+  e2-revised-regional-linear-main)
+    # Do not repeat completed AFEM/SLOD/fixed-LOD comparators.  Run the lower
+    # expected wall-time standard trajectory first and leave the deepest
+    # moving-reference tail last; both are isolated for meaningful RSS and
+    # wall-time measurements.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-standard-cutofffree-regional-k16-H6-h10-trigger1-target4-schur-thetaH02-thetaC02-step28-main-v6.json
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-linear-locality-step28-main-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=300
+    MODE_MIN_FREE_DISK_GIB=100
     MODE_TIMEOUT_SECONDS=87300
     ;;
   custom)
@@ -637,7 +674,8 @@ if schema == 6:
                     or variant.get("reserve_trigger_scope") != "not-applicable" \
                     or variant.get("reserve_selection") != \
                         "not-applicable-immediate-promotion" \
-                    or variant.get("candidate_marking") != "global-Doerfler":
+                    or variant.get("candidate_marking") != \
+                        "split-regional-Doerfler":
                 raise SystemExit("moving-reference update policy is undeclared")
             radius = float(config["hybrid_minimum_physical_radius"])
             if not radius > 0.0:
@@ -665,12 +703,14 @@ if schema == 6:
                 marked_f = number(row.get("marked_mass_c_F"))
                 marked_r = number(row.get("marked_mass_c_R"))
                 if mass_f is not None and mass_r is not None:
-                    total = mass_f + mass_r
-                    marked = (marked_f or 0.0) + (marked_r or 0.0)
-                    if total > 0.0 and marked + 1e-12 * total \
-                            < theta_c * total:
-                        raise SystemExit(
-                            "candidate global Doerfler gate failed")
+                    if mass_f > 0.0 and (marked_f is None
+                            or marked_f + 1e-12 * mass_f
+                            < theta_c * mass_f):
+                        raise SystemExit("candidate Omega_F Doerfler gate failed")
+                    if mass_r > 0.0 and (marked_r is None
+                            or marked_r + 1e-12 * mass_r
+                            < theta_c * mass_r):
+                        raise SystemExit("candidate regular Doerfler gate failed")
 
             with (manifests[0].parent / "hybrid_reserve.csv").open(
                     newline="", encoding="utf-8") as stream:
@@ -702,6 +742,49 @@ if schema == 6:
             if not (manifests[0].parent /
                     "mesh_E2_final_hybrid_regions.vtu").is_file():
                 raise SystemExit("hybrid final-region mesh artifact is missing")
+
+        if bool(config.get("candidate_split_regional_marking")):
+            if hybrid or variant.get("name") != \
+                    "safeguarded-reference-epoch-regional-candidate-v1" \
+                    or variant.get("candidate_marking") != \
+                        "split-regional-Doerfler":
+                raise SystemExit(
+                    "standard split-regional candidate policy is undeclared")
+            theta_c = float(config["theta_c"])
+            checked = 0
+            for row in iterations:
+                if row["action"] != "EnrichCandidate" \
+                        or not truth(row.get(
+                            "candidate_accuracy_sweep_performed")):
+                    continue
+                mass_f = number(row.get("indicator_mass_c_F"))
+                mass_r = number(row.get("indicator_mass_c_R"))
+                marked_f = number(row.get("marked_mass_c_F"))
+                marked_r = number(row.get("marked_mass_c_R"))
+                if mass_f is None or mass_r is None:
+                    raise SystemExit(
+                        "standard regional candidate diagnostics are missing")
+                if mass_f > 0.0 and (marked_f is None
+                        or marked_f + 1e-12 * mass_f < theta_c * mass_f):
+                    raise SystemExit(
+                        "standard candidate Omega_F Doerfler gate failed")
+                if mass_r > 0.0 and (marked_r is None
+                        or marked_r + 1e-12 * mass_r < theta_c * mass_r):
+                    raise SystemExit(
+                        "standard candidate regular Doerfler gate failed")
+                checked += 1
+            if checked == 0:
+                raise SystemExit(
+                    "standard regional candidate run performed no checked sweep")
+
+        if mode == "e1-revised-candidate-optimized-tail":
+            if not solved:
+                raise SystemExit("E1 tail produced no solved points")
+            final_exact = number(solved[-1].get("relative_exact_energy"))
+            if final_exact is None or final_exact > 0.01:
+                raise SystemExit(
+                    "E1 tail did not reach the requested exact relative "
+                    f"energy target 0.01: final={final_exact}")
 
         actions = [row["action"] for row in iterations]
         if mode.endswith("-factor") and method.startswith("PALOD") \

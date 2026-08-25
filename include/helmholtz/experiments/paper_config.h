@@ -317,6 +317,12 @@ struct ReferenceEpochPaperConfig {
     int initial_coarse_level = 3;
     int initial_reference_level = 5;
     bool singularity_hybrid = false;
+    // Implementation-study option for the standard (fixed-reference within
+    // each epoch) PALOD.  It changes only candidate marking: Omega_F and its
+    // complement satisfy independent Doerfler bulk constraints.  It does not
+    // enable moving-reference promotion or coarse/reference equality.
+    bool candidate_split_regional_marking = false;
+    double candidate_regional_minimum_physical_radius = 0.0;
     // Case-S hybrid only.  At every matching check ell_S is the smallest
     // graph radius such that B_R(S) lies in Omega_S=N^{ell_S}(S); the exact
     // matching region is Omega_F=N^{ell_S+ell}(S).  Zero is required for

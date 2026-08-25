@@ -882,6 +882,27 @@ void verify_reference_epoch_v6_S_contract() {
     require_invalid([&] { (void)canonical_json(changed); },
                     "reference-epoch v6 accepted an empty closure-cost pool");
     changed = config;
+    changed.method = "PALOD-reference-epoch";
+    changed.singularity_hybrid = false;
+    changed.hybrid_minimum_physical_radius = 0.0;
+    changed.hybrid_maximum_corrector_patch_fine_elements = 0;
+    changed.candidate_split_regional_marking = true;
+    changed.candidate_regional_minimum_physical_radius = 0.125;
+    changed.reference_refresh_level_gap = 2;
+    changed.reference_refresh_target_gap = 6;
+    changed.minimum_solved_points_per_new_epoch = 4;
+    const ReferenceEpochPaperConfig decoded_regional_standard =
+        parse_reference_epoch_paper_config(canonical_json(changed));
+    require(decoded_regional_standard.candidate_split_regional_marking
+                && decoded_regional_standard
+                       .candidate_regional_minimum_physical_radius == 0.125
+                && !make_reference_epoch_driver_config(
+                        decoded_regional_standard).moving_reference,
+            "standard split-regional candidate policy enabled moving reference");
+    changed.candidate_regional_minimum_physical_radius = 0.0;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "split regional candidate marking accepted a zero radius");
+    changed = config;
     changed.minimum_H_steps_per_epoch = 1;
     require_invalid([&] { (void)canonical_json(changed); },
                     "reference-epoch v6 accepted an epoch cooldown");

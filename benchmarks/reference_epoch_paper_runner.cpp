@@ -661,6 +661,14 @@ public:
                     << ", R=" << config_.hybrid_minimum_physical_radius;
                 throw ReferenceEpochWorkLimitExceeded(message.str());
             }
+        } else if (config_.candidate_split_regional_marking) {
+            // Standard PALOD keeps the reference fixed throughout this epoch.
+            // The physical-region classification is used only by the
+            // candidate marker; it neither skips correctors nor promotes the
+            // candidate after every H-step.
+            regions_ = classify_singular_regions_with_physical_radius(
+                hierarchy_.coarse_mesh(), {Point2(0.0, 0.0)}, ell,
+                config_.candidate_regional_minimum_physical_radius);
         }
         HelmholtzProblemConfig model_config;
         model_config.ell = ell;
@@ -994,7 +1002,8 @@ public:
         }
         if (!proposed.changed())
             throw std::runtime_error("coarse proposal transaction did not open");
-        if (!config_.singularity_hybrid) return;
+        if (!config_.singularity_hybrid
+            && !config_.candidate_split_regional_marking) return;
 
         const Clock::time_point matching_start = Clock::now();
         // The moving-reference algorithm freezes the candidate before it
@@ -1003,7 +1012,9 @@ public:
         // the prescribed ordering of Algorithm 2.
         proposed_regions_ = classify_singular_regions_with_physical_radius(
             hierarchy_.proposed_coarse_mesh(), {Point2(0.0, 0.0)},
-            current_ell_, config_.hybrid_minimum_physical_radius);
+            current_ell_, config_.singularity_hybrid
+                ? config_.hybrid_minimum_physical_radius
+                : config_.candidate_regional_minimum_physical_radius);
         std::cerr
             << "[hybrid-prospective-classification] seconds="
             << seconds_since(matching_start)
@@ -1070,7 +1081,9 @@ public:
         result.eta_eq_c = flux.eta_eq;
         std::vector<int> marked_candidate = flux.marked_elements;
         double regional_marking_seconds = 0.0;
-        if (config_.singularity_hybrid) {
+        const bool split_regional_candidate = config_.singularity_hybrid
+            || config_.candidate_split_regional_marking;
+        if (split_regional_candidate) {
             if (!proposed_regions_)
                 throw std::logic_error(
                     "hybrid candidate marking has no prospective regions");
@@ -1094,7 +1107,7 @@ public:
                     || parent >= static_cast<int>(
                         marking_regions.in_omega_f.size())) {
                     throw std::logic_error(
-                        "candidate/prospective hybrid parent is invalid");
+                        "candidate/prospective regional parent is invalid");
                 }
                 in_omega_f[element] =
                     marking_regions.in_omega_f[parent];
@@ -1125,7 +1138,7 @@ public:
             if (std::abs(total_mass - flux_mass)
                 > 1e-9 * std::max(1.0, flux_mass)) {
                 throw std::runtime_error(
-                    "hybrid regional candidate masses do not recover eta_eq_c");
+                    "regional candidate masses do not recover eta_eq_c");
             }
             if (result.indicator_mass_c_f > 0.0
                 && result.marked_mass_c_f
@@ -1178,14 +1191,14 @@ public:
         result.time_candidate_flux_audit = flux.time_estimator_and_audit;
         result.time_candidate_marking =
             flux.time_marking + regional_marking_seconds;
-        result.candidate_marking_pool = config_.singularity_hybrid
+        result.candidate_marking_pool = split_regional_candidate
             ? marked_candidate.size() : flux.marking_candidate_pool;
         // The global closure-cost estimate produced inside the flux routine
         // does not describe the split regional set and must not be reported
         // as if it did.  A regional closure-cost audit can be added later
         // without changing the two mandatory bulk constraints.
         result.candidate_estimated_selected_closure_cost =
-            config_.singularity_hybrid
+            split_regional_candidate
                 ? 0 : flux.estimated_selected_closure_cost;
         result.candidate_flux_parallel_threads = flux.parallel_threads;
         result.time_candidate_nvb_refine = close_result.time_nvb_refine
@@ -2636,6 +2649,8 @@ void write_auxiliary_outputs(
             << json_string(
                    config.singularity_hybrid
                    ? "moving-reference-singularity-aware-v1"
+                   : config.candidate_split_regional_marking
+                   ? "safeguarded-reference-epoch-regional-candidate-v1"
                    : "safeguarded-reference-epoch-v1")
             << ",\"manuscript_conformance\":"
             << json_string(
@@ -2648,7 +2663,11 @@ void write_auxiliary_outputs(
                    ? "full-regular-Doerfler"
                    : "full-Doerfler")
             << ",\"candidate_marking\":"
-            << json_string("global-Doerfler")
+            << json_string(
+                   config.singularity_hybrid
+                       || config.candidate_split_regional_marking
+                   ? "split-regional-Doerfler"
+                   : "global-Doerfler")
             << ",\"reserve_selection\":"
             << json_string(
                    config.singularity_hybrid

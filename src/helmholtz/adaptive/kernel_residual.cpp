@@ -581,6 +581,29 @@ std::vector<KernelRieszPatch> build_kernel_riesz_patches_impl(
     std::vector<char> is_dirichlet(view.discrete->nodes.size(), false);
     for (int node : dirichlet_nodes(*view.discrete)) is_dirichlet[node] = true;
 
+    // The parent map is fixed for this prepared operator.  Bucket the
+    // discrete elements once instead of scanning the complete reference mesh
+    // for every coarse-node patch.  The old loop was O(N_H N_h) and dominated
+    // deep moving-reference steps even though each patch is local.
+    constexpr std::size_t parent_bucket_element_threshold = 50000;
+    const bool use_parent_buckets = view.discrete->elems.size()
+        >= parent_bucket_element_threshold;
+    std::vector<std::vector<int>> discrete_elements_by_coarse_parent;
+    if (use_parent_buckets) {
+        discrete_elements_by_coarse_parent.resize(view.coarse->elems.size());
+        for (int element = 0;
+             element < static_cast<int>(view.discrete->elems.size()); ++element) {
+            const int parent = data.discrete_element_parent[element];
+            if (parent < 0
+                || parent >= static_cast<int>(
+                    discrete_elements_by_coarse_parent.size())) {
+                throw std::runtime_error(
+                    "kernel Riesz discrete element has an invalid coarse parent");
+            }
+            discrete_elements_by_coarse_parent[parent].push_back(element);
+        }
+    }
+
     std::vector<KernelRieszPatch> result;
     result.reserve(view.coarse->nodes.size());
     for (int coarse_node = 0;
@@ -601,27 +624,64 @@ std::vector<KernelRieszPatch> build_kernel_riesz_patches_impl(
                 "D_z does not contain all required coarse supports");
         }
 
-        std::vector<char> in_patch(view.coarse->elems.size(), false);
-        std::vector<char> in_enlarged(view.coarse->elems.size(), false);
-        for (int element : patch.coarse_elements) in_patch[element] = true;
-        for (int element : patch.enlarged_coarse_elements)
-            in_enlarged[element] = true;
-        std::vector<int> local_incidence(view.discrete->nodes.size(), 0);
-        for (int element = 0;
-             element < static_cast<int>(view.discrete->elems.size()); ++element) {
-            const int parent = data.discrete_element_parent[element];
-            if (in_enlarged[parent])
-                patch.enlarged_discrete_elements.push_back(element);
-            if (!in_patch[parent]) continue;
-            for (int node : view.discrete->elems[element])
-                ++local_incidence[node];
-        }
-        for (int node = 0;
-             node < static_cast<int>(view.discrete->nodes.size()); ++node) {
-            if (!is_dirichlet[node] && local_incidence[node] > 0
-                && local_incidence[node] == global_incidence[node]) {
-                patch.discrete_dofs.push_back(node);
+        if (!use_parent_buckets) {
+            std::vector<char> in_patch(view.coarse->elems.size(), false);
+            std::vector<char> in_enlarged(view.coarse->elems.size(), false);
+            for (int element : patch.coarse_elements) in_patch[element] = true;
+            for (int element : patch.enlarged_coarse_elements)
+                in_enlarged[element] = true;
+            std::vector<int> local_incidence(view.discrete->nodes.size(), 0);
+            for (int element = 0;
+                 element < static_cast<int>(view.discrete->elems.size());
+                 ++element) {
+                const int parent = data.discrete_element_parent[element];
+                if (in_enlarged[parent])
+                    patch.enlarged_discrete_elements.push_back(element);
+                if (!in_patch[parent]) continue;
+                for (int node : view.discrete->elems[element])
+                    ++local_incidence[node];
             }
+            for (int node = 0;
+                 node < static_cast<int>(view.discrete->nodes.size()); ++node) {
+                if (!is_dirichlet[node] && local_incidence[node] > 0
+                    && local_incidence[node] == global_incidence[node]) {
+                    patch.discrete_dofs.push_back(node);
+                }
+            }
+        } else {
+            std::vector<int> patch_nodes;
+            for (int parent : patch.coarse_elements) {
+                const std::vector<int> &children =
+                    discrete_elements_by_coarse_parent[parent];
+                patch_nodes.reserve(patch_nodes.size() + 3 * children.size());
+                for (int element : children) {
+                    for (int node : view.discrete->elems[element])
+                        patch_nodes.push_back(node);
+                }
+            }
+            std::sort(patch_nodes.begin(), patch_nodes.end());
+            for (std::size_t first = 0; first < patch_nodes.size();) {
+                std::size_t last = first + 1;
+                while (last < patch_nodes.size()
+                       && patch_nodes[last] == patch_nodes[first]) ++last;
+                const int node = patch_nodes[first];
+                const int local_incidence = static_cast<int>(last - first);
+                if (!is_dirichlet[node]
+                    && local_incidence == global_incidence[node]) {
+                    patch.discrete_dofs.push_back(node);
+                }
+                first = last;
+            }
+            for (int parent : patch.enlarged_coarse_elements) {
+                const std::vector<int> &children =
+                    discrete_elements_by_coarse_parent[parent];
+                patch.enlarged_discrete_elements.insert(
+                    patch.enlarged_discrete_elements.end(),
+                    children.begin(), children.end());
+            }
+            std::sort(
+                patch.enlarged_discrete_elements.begin(),
+                patch.enlarged_discrete_elements.end());
         }
 
         const ConstraintReduction constraints = reduce_constraints(

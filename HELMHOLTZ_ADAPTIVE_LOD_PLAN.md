@@ -999,3 +999,37 @@ localized smooth 精确解的局部中心 \((x_\star,y_\star)=(3/4,1/2)\) 可用
 - 局部 oversampling \(\ell_T\)；
 - directed rounding 和所有代数量的严格区间验证；
 - 超出正文所需的网格动画和每步高分辨率 VTU。
+
+## 13. 2026-08-25 E1 尾部与 E2 区域 candidate 扩展
+
+当前 E1 PALOD 的 36-step 配置实际只得到 33 个解点；停止原因是最后一次结构刷新时
+剩余预算为 3，而 `minimum_solved_points_per_new_epoch=4`。这不是 `tol_ref` 收敛。
+新增 38-step 尾部配置允许最后一个 epoch 至少保留 4 个点，目标只下探到精确相对能量
+误差 0.01，不继续无目的加细。该任务会重放确定性前缀，因为当前 runner 没有可恢复的
+数值 checkpoint。
+
+E2 standard reference-epoch PALOD 新增一个明确标注的 implementation-study 变体：
+
+\[
+  \mathcal T_H^e \preceq \mathcal T_h^e \preceq \mathcal T_c^{e,n},
+  \qquad \mathcal T_H^e\ne \mathcal T_h^e\ \text{一般成立}.
+\]
+
+它不启用 moving reference；只把 candidate 的 Dörfler marking 改为在物理角点区域
+与规则区域中分别满足 bulk 条件。粗网格仍使用全局 Dörfler marking，reference 在 epoch
+内部固定。冻结参数采用 `H6/h10`、`trigger=1`、`target gap=4`、
+`theta_H=theta_c=0.2`。本地 12-step gate 表明 post-initial epoch 各包含约两个 H-step，
+且两个 candidate 区域均独立通过 marking audit。
+
+Moving PALOD 的深层性能优化采用尺寸门控，避免小网格倒退：
+
+1. `N_reference < 50000` 保留原 Gram 扫描；更大时按 coarse parent 建立 reference
+   element buckets，只访问局部 patch，消除 `O(N_H N_h)` 全扫描；
+2. `N_candidate < 80000` 保留 Eigen 稀疏乘法；更大时直接装配等价的 3x3 局部
+   quasi-interpolation contribution；
+3. 先过 16-step moving gate 和 12-step standard gate，再运行两个 28-step 主轨迹；
+4. 主轨迹串行执行。短任务虽然内存允许并行，但每个任务已经占用全部 patch threads，
+   并行会污染计时，因此不作为正式性能数据并发运行。
+
+最终验收需同时报告 moving PALOD 最后 4/6/8/12 点的斜率、相关系数和最大逐点误差比；
+只有后几步持续下降且尾部指数不掉阶，才能把扩展曲线用于正文。

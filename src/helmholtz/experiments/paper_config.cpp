@@ -2099,6 +2099,9 @@ void validate_reference_epoch_paper_config(
         || !std::isfinite(config.hybrid_minimum_physical_radius)
         || config.hybrid_minimum_physical_radius < 0.0
         || config.hybrid_minimum_physical_radius > 1.0
+        || !std::isfinite(config.candidate_regional_minimum_physical_radius)
+        || config.candidate_regional_minimum_physical_radius < 0.0
+        || config.candidate_regional_minimum_physical_radius > 1.0
         || config.initial_coarse_level < 0
         || config.initial_reference_level <= config.initial_coarse_level
         || config.ell0 < 0 || config.ell_max < config.ell0
@@ -2165,6 +2168,14 @@ void validate_reference_epoch_paper_config(
         throw std::invalid_argument("hybrid method and singularity_hybrid disagree");
     if (config.singularity_hybrid && config.case_id != PaperCase::S)
         throw std::invalid_argument("hybrid reference-epoch mode is restricted to case S");
+    if (config.candidate_split_regional_marking
+        && (config.case_id != PaperCase::S || config.singularity_hybrid))
+        throw std::invalid_argument(
+            "split regional candidate marking is restricted to standard case-S reference epochs");
+    if (config.candidate_split_regional_marking
+        != (config.candidate_regional_minimum_physical_radius > 0.0))
+        throw std::invalid_argument(
+            "candidate regional radius must be positive exactly for split regional marking");
     if (config.singularity_hybrid
         != (config.hybrid_minimum_physical_radius > 0.0))
         throw std::invalid_argument(
@@ -2224,6 +2235,10 @@ std::string canonical_json(const ReferenceEpochPaperConfig &config) {
         << config.candidate_closure_cost_pool_factor
         << ",\"candidate_force_level_gap\":"
         << config.candidate_force_level_gap
+        << ",\"candidate_regional_minimum_physical_radius\":"
+        << number(config.candidate_regional_minimum_physical_radius)
+        << ",\"candidate_split_regional_marking\":"
+        << (config.candidate_split_regional_marking ? "true" : "false")
         << ",\"candidate_update_stride\":"
         << config.candidate_update_stride
         << ",\"continuity_constant\":" << number(config.continuity_constant)
@@ -2319,6 +2334,15 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
         root.contains("candidate_update_stride");
     const bool has_candidate_force_level_gap =
         root.contains("candidate_force_level_gap");
+    const bool has_candidate_split_regional_marking =
+        root.contains("candidate_split_regional_marking");
+    const bool has_candidate_regional_minimum_physical_radius =
+        root.contains("candidate_regional_minimum_physical_radius");
+    if (has_candidate_split_regional_marking
+        != has_candidate_regional_minimum_physical_radius) {
+        throw std::invalid_argument(
+            "candidate regional marking requires both policy and radius");
+    }
     const bool has_reference_solver_kind =
         root.contains("reference_solver_kind");
     const bool has_reference_validation_stride =
@@ -2340,6 +2364,8 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     contract_root.erase("singular_solution_profile");
     contract_root.erase("candidate_update_stride");
     contract_root.erase("candidate_force_level_gap");
+    contract_root.erase("candidate_split_regional_marking");
+    contract_root.erase("candidate_regional_minimum_physical_radius");
     contract_root.erase("candidate_closure_cost_aware_marking");
     contract_root.erase("candidate_closure_cost_pool_factor");
     contract_root.erase("reference_solver_kind");
@@ -2425,6 +2451,14 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
         "localization_eigen_relative_tolerance");
     config.singularity_hybrid = as_bool(
         get(root, "singularity_hybrid"), "singularity_hybrid");
+    if (has_candidate_split_regional_marking) {
+        config.candidate_split_regional_marking = as_bool(
+            get(root, "candidate_split_regional_marking"),
+            "candidate_split_regional_marking");
+        config.candidate_regional_minimum_physical_radius = as_number(
+            get(root, "candidate_regional_minimum_physical_radius"),
+            "candidate_regional_minimum_physical_radius");
+    }
     config.ell0 = as_integer(get(root, "ell0"), "ell0");
     config.ell_max = as_integer(get(root, "ell_max"), "ell_max");
     config.theta_loc_usr = as_number(get(root, "theta_loc_usr"), "theta_loc_usr");
