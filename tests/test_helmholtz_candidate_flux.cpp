@@ -68,6 +68,24 @@ void verify_case(PaperCase id) {
         flux.element_eta_squared.end(), 0.0);
     require(marked + 2e-12 >= config.doerfler_theta * total,
             "candidate Doerfler marking misses its target");
+
+    CandidateFluxConfig closure_aware = config;
+    closure_aware.compute_discrete_residual_audit = false;
+    closure_aware.closure_cost_aware_marking = true;
+    closure_aware.closure_cost_candidate_pool_factor = 2;
+    const CandidateFluxRT2Result economical = reconstruct_candidate_flux_rt2(
+        mesh, operators, data.source, values, closure_aware);
+    double economical_marked = 0.0;
+    for (const int element : economical.marked_elements)
+        economical_marked += economical.element_eta_squared[element];
+    require(economical_marked + 2e-12
+                >= closure_aware.doerfler_theta * total,
+            "closure-cost-aware candidate marking misses its raw Doerfler target");
+    require(economical.marking_candidate_pool
+                >= economical.marked_elements.size()
+                && economical.estimated_selected_closure_cost > 0
+                && economical.time_marking >= 0.0,
+            "closure-cost-aware candidate diagnostics are invalid");
     std::cout << "case=" << static_cast<int>(id)
               << " eta_eq=" << flux.eta_eq
               << " residual_dual=" << flux.discrete_residual_dual_norm

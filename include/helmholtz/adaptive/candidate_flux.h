@@ -10,6 +10,8 @@ namespace lod2d::helmholtz::adaptive {
 
 struct CandidateFluxConfig {
     double doerfler_theta = 0.5;
+    bool closure_cost_aware_marking = false;
+    std::size_t closure_cost_candidate_pool_factor = 2;
     QuadraturePolicy quadrature;
     QuadratureContext quadrature_context;
     // Empty means the theorem-level global reconstruction.  A nonempty list
@@ -47,6 +49,9 @@ struct CandidateFluxResult {
     double discrete_residual_dual_norm = 0.0;
     bool discrete_residual_audit_performed = false;
     bool global_reconstruction = true;
+    double time_marking = 0.0;
+    std::size_t marking_candidate_pool = 0;
+    std::size_t estimated_selected_closure_cost = 0;
 };
 
 // Coefficients in the reference-triangle basis
@@ -75,6 +80,9 @@ struct CandidateFluxRT2Result {
     double time_patch_solve = 0.0;
     double time_deterministic_merge = 0.0;
     double time_estimator_and_audit = 0.0;
+    double time_marking = 0.0;
+    std::size_t marking_candidate_pool = 0;
+    std::size_t estimated_selected_closure_cost = 0;
     int parallel_threads = 1;
 };
 

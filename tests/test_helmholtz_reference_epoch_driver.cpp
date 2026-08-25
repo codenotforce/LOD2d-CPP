@@ -66,11 +66,14 @@ struct ScriptedBackend final : ReferenceEpochDriverBackend {
         calls.push_back("propose");
     }
 
-    ReferenceEpochCandidateObservation enrich_candidate() override {
-        calls.push_back("enrich");
+    ReferenceEpochCandidateObservation enrich_candidate(
+        const bool perform_accuracy_sweep) override {
+        calls.push_back(
+            perform_accuracy_sweep ? "enrich" : "containment-only");
         ReferenceEpochCandidateObservation result;
+        result.accuracy_sweep_performed = perform_accuracy_sweep;
         result.eta_eq_c = 1.0;
-        result.marked_c = {0};
+        if (perform_accuracy_sweep) result.marked_c = {0};
         return result;
     }
 
@@ -551,6 +554,34 @@ void verify_moving_reference_promotes_every_nonterminal_step() {
             "moving-reference backend call order includes dual work");
 }
 
+void verify_candidate_accuracy_batching_preserves_containment_steps() {
+    ScriptedBackend backend;
+    backend.corrector_bounds = {0.1, 0.1, 0.1};
+    backend.error_bounds = {0.2, 0.19, 0.18};
+    backend.structural = {false, false};
+    ReferenceEpochDriverConfig config = base_config();
+    config.candidate_update_stride = 2;
+    config.candidate_force_level_gap = 4;
+    config.m_dual = 8;
+    config.limits.maximum_H_steps = 3;
+    ReferenceEpochPracticalDriver driver(backend, config);
+    const ReferenceEpochDriverResult result = driver.run();
+    require(result.state == ReferenceEpochDriverState::WorkLimitReached,
+            "batched candidate trajectory did not reach its solve horizon");
+    require(std::count(backend.calls.begin(), backend.calls.end(), "enrich") == 1,
+            "candidate stride did not retain the first accuracy sweep");
+    require(std::count(
+                backend.calls.begin(), backend.calls.end(), "containment-only") == 1,
+            "candidate stride did not replace the intermediate RT2 sweep");
+    const auto candidate_records = std::count_if(
+        result.journal.begin(), result.journal.end(),
+        [](const ReferenceEpochDriverRecord &record) {
+            return record.action == ReferenceEpochDriverAction::EnrichCandidate;
+        });
+    require(candidate_records == 2,
+            "batched candidate trajectory lost a transactional candidate step");
+}
+
 } // namespace
 
 int main() {
@@ -570,6 +601,7 @@ int main() {
         verify_internal_refresh_limit_is_structured();
         verify_unavailable_reserve_is_structured();
         verify_moving_reference_promotes_every_nonterminal_step();
+        verify_candidate_accuracy_batching_preserves_containment_steps();
         std::cout << "Reference-epoch practical state machine passed\n";
         return 0;
     } catch (const std::exception &error) {

@@ -334,6 +334,10 @@ struct ReferenceEpochPaperConfig {
     double C_rel_usr = 1.0;
     double theta_H = 0.5;
     double theta_c = 0.5;
+    std::size_t candidate_update_stride = 1;
+    int candidate_force_level_gap = 0;
+    bool candidate_closure_cost_aware_marking = false;
+    std::size_t candidate_closure_cost_pool_factor = 2;
     // Corrector patch solver policy is part of the reference-epoch run
     // identity.  DirectSchur with identical-support reuse is intended for
     // standard PALOD once reference patches become large; moving PALOD keeps

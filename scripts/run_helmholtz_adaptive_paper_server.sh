@@ -148,6 +148,18 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=50
     MODE_TIMEOUT_SECONDS=15300
     ;;
+  e1-candidate-optimized-gate)
+    # Medium PALOD-only gate for the candidate batching and closure-cost-aware
+    # marker.  It must pass before either policy is copied to the 36-step main
+    # configuration.  The 96 GiB availability guard prevents accidental
+    # overlap with a memory-heavy E2 trajectory.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-gap6-schur-thetaH01-thetaC03-stride2-closurecost-step16-gate-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=96
+    MODE_MIN_FREE_DISK_GIB=50
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
   e1-revised-h6-main)
     # Short/low-memory methods precede uniform standard LOD and the two
     # expensive adaptive LOD trajectories.  Runs remain serial so peak-memory

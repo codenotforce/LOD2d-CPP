@@ -65,6 +65,8 @@ ReferenceEpochPracticalDriver::ReferenceEpochPracticalDriver(
         || config_.m_dual == 0 || !(config_.tau_ep > 0.0)
         || config_.reference_refresh_level_gap < 0
         || config_.reference_refresh_target_gap < 0
+        || config_.candidate_update_stride == 0
+        || config_.candidate_force_level_gap < 0
         || (config_.reference_refresh_target_gap > 0
             && config_.reference_refresh_target_gap
                 <= config_.reference_refresh_level_gap)
@@ -420,16 +422,43 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
             }
 
             case ReferenceEpochDriverState::CandidateEnrich: {
+                const bool structural_force =
+                    !backend_.proposal_contained_in_reference();
+                const int prospective_gap =
+                    backend_.minimum_reference_level_gap();
+                const bool level_gap_force =
+                    config_.reference_refresh_level_gap > 0
+                    && prospective_gap
+                        <= config_.reference_refresh_level_gap;
+                const bool candidate_gap_force =
+                    config_.candidate_force_level_gap > 0
+                    && prospective_gap
+                        <= config_.candidate_force_level_gap;
+                const bool termination_force =
+                    U_practical <= config_.tolerance_reference;
+                const bool decrease_force = last_dual_U.has_value()
+                    && U_practical <= config_.q_dual * *last_dual_U;
+                const bool interval_force =
+                    H_steps - last_dual_H_step >= config_.m_dual;
+                const bool stride_force =
+                    H_steps % config_.candidate_update_stride == 0;
+                const bool perform_accuracy_sweep = config_.moving_reference
+                    || structural_force || level_gap_force
+                    || candidate_gap_force || termination_force
+                    || decrease_force || interval_force || stride_force;
                 const ReferenceEpochCandidateObservation observation =
-                    backend_.enrich_candidate();
-                if (!(observation.eta_eq_c >= 0.0)
-                    || !std::isfinite(observation.eta_eq_c))
+                    backend_.enrich_candidate(perform_accuracy_sweep);
+                if (observation.accuracy_sweep_performed
+                    && (!(observation.eta_eq_c >= 0.0)
+                        || !std::isfinite(observation.eta_eq_c)))
                     throw std::runtime_error("candidate enrichment returned invalid eta_eq_c");
                 state = config_.moving_reference
                     ? ReferenceEpochDriverState::ReferenceRefresh
                     : ReferenceEpochDriverState::LazyDualDecision;
                 record.state_after = state;
                 record.action = ReferenceEpochDriverAction::EnrichCandidate;
+                record.candidate_accuracy_sweep_performed =
+                    observation.accuracy_sweep_performed;
                 record.eta_eq_c = observation.eta_eq_c;
                 record.eta_eq_c_f = observation.eta_eq_c_f;
                 record.eta_eq_c_r = observation.eta_eq_c_r;
@@ -440,6 +469,28 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 record.marked_c = observation.marked_c.size();
                 record.marked_c_f = observation.marked_c_f;
                 record.marked_c_r = observation.marked_c_r;
+                record.candidate_elements_before =
+                    observation.candidate_elements_before;
+                record.candidate_containment_requested_marks =
+                    observation.containment_requested_marks;
+                record.candidate_containment_added_elements =
+                    observation.containment_added_elements;
+                record.candidate_containment_closure_added_elements =
+                    observation.containment_closure_added_elements;
+                record.candidate_accuracy_requested_marks =
+                    observation.accuracy_requested_marks;
+                record.candidate_accuracy_added_elements =
+                    observation.accuracy_added_elements;
+                record.candidate_accuracy_closure_added_elements =
+                    observation.accuracy_closure_added_elements;
+                record.candidate_elements_after =
+                    observation.candidate_elements_after;
+                record.time_candidate_marking =
+                    observation.time_candidate_marking;
+                record.candidate_marking_pool =
+                    observation.candidate_marking_pool;
+                record.candidate_estimated_selected_closure_cost =
+                    observation.candidate_estimated_selected_closure_cost;
                 record.candidate_cells_f = observation.candidate_cells_f;
                 record.candidate_cells_r = observation.candidate_cells_r;
                 record.time_candidate_flux = observation.time_candidate_flux;
@@ -475,6 +526,9 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
                 if (config_.moving_reference) {
                     record.detail =
                         "frozen candidate scheduled for immediate moving-reference promotion; candidate dual skipped";
+                } else if (!observation.accuracy_sweep_performed) {
+                    record.detail =
+                        "candidate RT2 accuracy sweep batched; hierarchy containment preserved";
                 }
                 append(std::move(record));
                 continue;

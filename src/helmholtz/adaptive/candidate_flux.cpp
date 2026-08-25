@@ -222,6 +222,75 @@ std::vector<int> doerfler_mark(
     return result;
 }
 
+std::vector<int> closure_cost_aware_doerfler_mark(
+    const TriMesh &mesh,
+    const std::vector<double> &indicators,
+    const double theta,
+    const std::size_t pool_factor,
+    double &relative_error,
+    std::size_t &pool_size,
+    std::size_t &selected_closure_cost) {
+    if (pool_factor < 1)
+        throw std::invalid_argument(
+            "candidate closure-cost pool factor must be positive");
+    double standard_relative_error = 0.0;
+    const std::vector<int> standard = doerfler_mark(
+        indicators, theta, standard_relative_error);
+    if (standard.empty()) {
+        relative_error = standard_relative_error;
+        pool_size = 0;
+        selected_closure_cost = 0;
+        return {};
+    }
+
+    std::vector<int> order(indicators.size());
+    std::iota(order.begin(), order.end(), 0);
+    std::stable_sort(order.begin(), order.end(), [&](int left, int right) {
+        return indicators[left] > indicators[right];
+    });
+    const std::size_t scaled_pool = standard.size() > order.size() / pool_factor
+        ? order.size() : pool_factor * standard.size();
+    pool_size = std::min(order.size(), scaled_pool);
+    order.resize(pool_size);
+    const std::vector<std::size_t> costs =
+        estimate_nvb_single_mark_closure_costs(mesh, order);
+    std::vector<std::size_t> ranked(pool_size);
+    std::iota(ranked.begin(), ranked.end(), 0);
+    std::stable_sort(
+        ranked.begin(), ranked.end(), [&](std::size_t left, std::size_t right) {
+            const double left_score = indicators[order[left]]
+                / static_cast<double>(std::max<std::size_t>(1, costs[left]));
+            const double right_score = indicators[order[right]]
+                / static_cast<double>(std::max<std::size_t>(1, costs[right]));
+            if (left_score != right_score) return left_score > right_score;
+            if (indicators[order[left]] != indicators[order[right]])
+                return indicators[order[left]] > indicators[order[right]];
+            return order[left] < order[right];
+        });
+
+    const double total = std::accumulate(
+        indicators.begin(), indicators.end(), 0.0);
+    const double target = theta * total;
+    double accumulated = 0.0;
+    std::vector<int> result;
+    selected_closure_cost = 0;
+    for (const std::size_t index : ranked) {
+        const int element = order[index];
+        if (!(indicators[element] > 0.0)) continue;
+        result.push_back(element);
+        accumulated += indicators[element];
+        selected_closure_cost += costs[index];
+        if (accumulated >= target) break;
+    }
+    if (accumulated < target) {
+        throw std::runtime_error(
+            "closure-cost candidate pool cannot meet the Doerfler target");
+    }
+    relative_error = std::max(0.0, target - accumulated)
+        / std::max(1.0, total);
+    return result;
+}
+
 double discrete_residual_dual_norm(
     const TriMesh &mesh,
     const HelmholtzOperators &operators,
@@ -698,9 +767,21 @@ CandidateFluxResult reconstruct_candidate_flux_rt0(
         result.element_eta_squared.begin(),
         result.element_eta_squared.end(), 0.0);
     result.eta_eq = std::sqrt(std::max(0.0, total_squared));
-    result.marked_elements = doerfler_mark(
-        result.element_eta_squared, config.doerfler_theta,
-        result.doerfler_relative_error);
+    const auto marking_begin = std::chrono::steady_clock::now();
+    if (config.closure_cost_aware_marking) {
+        result.marked_elements = closure_cost_aware_doerfler_mark(
+            mesh, result.element_eta_squared, config.doerfler_theta,
+            config.closure_cost_candidate_pool_factor,
+            result.doerfler_relative_error, result.marking_candidate_pool,
+            result.estimated_selected_closure_cost);
+    } else {
+        result.marked_elements = doerfler_mark(
+            result.element_eta_squared, config.doerfler_theta,
+            result.doerfler_relative_error);
+        result.marking_candidate_pool = result.marked_elements.size();
+    }
+    result.time_marking = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - marking_begin).count();
     if (config.compute_discrete_residual_audit) {
         result.discrete_residual_dual_norm = discrete_residual_dual_norm(
             mesh, operators, source, values, config);
@@ -1407,9 +1488,21 @@ CandidateFluxRT2Result reconstruct_candidate_flux_rt2(
         result.element_eta_squared.begin(),
         result.element_eta_squared.end(), 0.0);
     result.eta_eq = std::sqrt(std::max(0.0, total_squared));
-    result.marked_elements = doerfler_mark(
-        result.element_eta_squared, config.doerfler_theta,
-        result.doerfler_relative_error);
+    const auto marking_begin = std::chrono::steady_clock::now();
+    if (config.closure_cost_aware_marking) {
+        result.marked_elements = closure_cost_aware_doerfler_mark(
+            mesh, result.element_eta_squared, config.doerfler_theta,
+            config.closure_cost_candidate_pool_factor,
+            result.doerfler_relative_error, result.marking_candidate_pool,
+            result.estimated_selected_closure_cost);
+    } else {
+        result.marked_elements = doerfler_mark(
+            result.element_eta_squared, config.doerfler_theta,
+            result.doerfler_relative_error);
+        result.marking_candidate_pool = result.marked_elements.size();
+    }
+    result.time_marking = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - marking_begin).count();
     if (config.compute_discrete_residual_audit) {
         result.discrete_residual_dual_norm = discrete_residual_dual_norm(
             mesh, operators, source, values, config);

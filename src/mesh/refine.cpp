@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <deque>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -326,22 +327,38 @@ std::unordered_set<Edge, EdgeHash> edge_set_from_vector(const std::vector<Edge> 
 }
 
 std::vector<Edge> newest_vertex_closure(const TriMesh &mesh, std::vector<Edge> marked_edges) {
+    // Build the edge incidence once and propagate only through triangles that
+    // are reached by a newly marked edge.  The former fixed-point scan visited
+    // every triangle once per propagation wave, which made isolated NVB chains
+    // on large adaptive candidate meshes unnecessarily quadratic in their
+    // graph distance.
+    std::unordered_map<Edge, std::vector<int>, EdgeHash> incident;
+    incident.reserve(3 * mesh.elems.size() + 8);
+    for (int element = 0; element < static_cast<int>(mesh.elems.size()); ++element) {
+        for (const Edge &edge : triangle_edges(mesh.elems[element]))
+            incident[edge].push_back(element);
+    }
+
     std::unordered_set<Edge, EdgeHash> marked = edge_set_from_vector(marked_edges);
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        const size_t before = marked.size();
-        for (const auto &tri : mesh.elems) {
-            bool touched = false;
-            for (const auto &edge : triangle_edges(tri)) {
-                if (marked.count(edge) != 0) {
-                    touched = true;
-                    break;
-                }
+    std::deque<int> pending;
+    std::vector<char> queued(mesh.elems.size(), false);
+    auto enqueue_incident = [&](const Edge &edge) {
+        const auto found = incident.find(edge);
+        if (found == incident.end()) return;
+        for (const int element : found->second) {
+            if (!queued[element]) {
+                queued[element] = true;
+                pending.push_back(element);
             }
-            if (touched) marked.insert(reference_edge(tri));
         }
-        changed = marked.size() != before;
+    };
+    for (const Edge &edge : marked_edges) enqueue_incident(edge);
+
+    while (!pending.empty()) {
+        const int element = pending.front();
+        pending.pop_front();
+        const Edge edge = reference_edge(mesh.elems[element]);
+        if (marked.insert(edge).second) enqueue_incident(edge);
     }
     return sorted_edges_from_set(marked);
 }
@@ -519,6 +536,62 @@ RefineOutput bisect_newest_vertex(const TriMesh &coarse, const std::vector<int> 
     merge_coincident_nodes(total);
     helmholtz::propagate_boundary_tags(coarse, total.mesh);
     return total;
+}
+
+std::vector<std::size_t> estimate_nvb_single_mark_closure_costs(
+    const TriMesh &mesh, const std::vector<int> &candidate_elements) {
+    std::unordered_map<Edge, std::vector<int>, EdgeHash> incident;
+    incident.reserve(3 * mesh.elems.size() + 8);
+    std::unordered_map<Edge, std::size_t, EdgeHash> reference_owners;
+    reference_owners.reserve(mesh.elems.size() + 8);
+    for (int element = 0; element < static_cast<int>(mesh.elems.size()); ++element) {
+        const Triangle &triangle = mesh.elems[element];
+        for (const Edge &edge : triangle_edges(triangle))
+            incident[edge].push_back(element);
+        ++reference_owners[reference_edge(triangle)];
+    }
+
+    std::unordered_map<Edge, std::size_t, EdgeHash> cached;
+    cached.reserve(candidate_elements.size() + 8);
+    std::vector<std::size_t> costs;
+    costs.reserve(candidate_elements.size());
+    for (const int element : candidate_elements) {
+        if (element < 0 || element >= static_cast<int>(mesh.elems.size()))
+            throw std::out_of_range(
+                "NVB closure-cost candidate element is out of range");
+        const Edge seed = reference_edge(mesh.elems[element]);
+        const auto known = cached.find(seed);
+        if (known != cached.end()) {
+            costs.push_back(known->second);
+            continue;
+        }
+
+        std::unordered_set<Edge, EdgeHash> closure;
+        closure.reserve(16);
+        std::deque<Edge> pending;
+        closure.insert(seed);
+        pending.push_back(seed);
+        while (!pending.empty()) {
+            const Edge edge = pending.front();
+            pending.pop_front();
+            const auto found = incident.find(edge);
+            if (found == incident.end()) continue;
+            for (const int touched : found->second) {
+                const Edge propagated = reference_edge(mesh.elems[touched]);
+                if (closure.insert(propagated).second)
+                    pending.push_back(propagated);
+            }
+        }
+        std::size_t cost = 0;
+        for (const Edge &edge : closure) {
+            const auto owners = reference_owners.find(edge);
+            if (owners != reference_owners.end()) cost += owners->second;
+        }
+        cost = std::max<std::size_t>(1, cost);
+        cached.emplace(seed, cost);
+        costs.push_back(cost);
+    }
+    return costs;
 }
 
 RefineOutput refine_nvb(const TriMesh &coarse) {

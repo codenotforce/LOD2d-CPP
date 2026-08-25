@@ -1811,6 +1811,12 @@ ReferenceEpochRefinementResult ReferenceEpochHierarchy::enrich_candidate(
         marked_candidate_elements,
         static_cast<int>(candidate_mesh().elems.size()),
         "marked candidate element");
+    std::vector<int> distinct_marked = marked_candidate_elements;
+    std::sort(distinct_marked.begin(), distinct_marked.end());
+    distinct_marked.erase(
+        std::unique(distinct_marked.begin(), distinct_marked.end()),
+        distinct_marked.end());
+    result.requested_marked_elements = distinct_marked.size();
     if (resource_guard) {
         resource_guard(
             ReferenceEpochRefinementGuardPoint::BeforeNvb,
@@ -1820,7 +1826,7 @@ ReferenceEpochRefinementResult ReferenceEpochHierarchy::enrich_candidate(
     const std::vector<int> parent_levels = ambient_element_levels_;
     const auto nvb_begin = std::chrono::steady_clock::now();
     RefineOutput refined = bisect_newest_vertex(
-        parent, marked_candidate_elements);
+        parent, distinct_marked);
     if (resource_guard) {
         resource_guard(
             ReferenceEpochRefinementGuardPoint::AfterNvb, refined.mesh);
@@ -1829,6 +1835,10 @@ ReferenceEpochRefinementResult ReferenceEpochHierarchy::enrich_candidate(
         parent, parent_levels, refined);
     result.time_nvb_refine = std::chrono::duration<double>(
         std::chrono::steady_clock::now() - nvb_begin).count();
+    result.added_elements = refined.mesh.elems.size() - parent.elems.size();
+    result.closure_added_elements = result.added_elements
+        > result.requested_marked_elements
+        ? result.added_elements - result.requested_marked_elements : 0;
 
     const auto parent_begin = std::chrono::steady_clock::now();
     const std::vector<int> step_parents = fine_element_parents(
@@ -2205,6 +2215,10 @@ ReferenceEpochHierarchy::close_candidate_over_proposed_coarse(
         }
         const ReferenceEpochRefinementResult enriched =
             enrich_candidate(marked, resource_guard);
+        result.requested_marked_elements +=
+            enriched.requested_marked_elements;
+        result.added_elements += enriched.added_elements;
+        result.closure_added_elements += enriched.closure_added_elements;
         result.time_nvb_refine += enriched.time_nvb_refine;
         result.time_embedding_composition +=
             enriched.time_embedding_composition;
@@ -2422,6 +2436,10 @@ ReferenceEpochHierarchy::deepen_candidate_over_proposed_coarse(
         }
         const ReferenceEpochRefinementResult enriched =
             enrich_candidate(marked, resource_guard);
+        result.requested_marked_elements +=
+            enriched.requested_marked_elements;
+        result.added_elements += enriched.added_elements;
+        result.closure_added_elements += enriched.closure_added_elements;
         result.status = ReferenceEpochRefinementStatus::Refined;
         result.current_element_count = enriched.current_element_count;
         result.time_nvb_refine += enriched.time_nvb_refine;

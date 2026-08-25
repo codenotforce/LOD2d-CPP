@@ -83,6 +83,39 @@ The gate requires zero swap, a valid three-or-more-point post-initial PALOD
 epoch, exact-error decay, corrector accounting, ell inheritance and a fixed
 epoch-0 reference mesh.
 
+## Candidate-optimized medium gate
+
+Before applying candidate batching or closure-cost-aware marking to the long
+PALOD trajectory, run their PALOD-only 16-step gate.  This uses stride 2,
+forces a full RT2 sweep before every dual/refresh/termination decision, retains
+the original global Dörfler mass with `theta_c=0.3`, and uses an NVB closure-cost
+candidate pool of size `2m`.
+
+Do not run it concurrently with E2 moving-reference PALOD.  The server mode
+requires at least 96 GiB available memory and zero configured experiment swap.
+
+```bash
+cd /home/sutai/code/LOD2d-CPP
+RESULT_DIR="$PWD/results/E1-candidate-optimized-gate-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)"
+MODE=e1-candidate-optimized-gate VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
+RESULT_DIR="$RESULT_DIR" \
+  bash scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
+Promotion to the 36-step main configuration requires all of:
+
+- zero swap and peak RSS within the server gate;
+- at least one post-initial epoch with three or more solved points;
+- no cross-refresh rate fit;
+- final exact error within 1% of the stride-1 policy at a comparable coarse
+  DoF;
+- candidate closure additions at least 20% below the stride-1 policy;
+- no failed localization, reference stability, nestedness or Dörfler audit.
+
+The implementation and ten-step ablation evidence are recorded in
+`E1_CANDIDATE_CLOSURE_ABLATION_2026-08-25.md`.  Promotion-time candidate rebuild
+and active-region gap reserve are not part of this gate.
+
 ## Main experiment
 
 The production runner is deliberately serial and ordered as AFEM, UFEM, SLOD,

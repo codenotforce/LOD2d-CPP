@@ -146,6 +146,14 @@ struct ReferenceEpochRefinementResult {
         ReferenceEpochRefinementStatus::NoChange;
     std::size_t previous_element_count = 0;
     std::size_t current_element_count = 0;
+    // NVB work accounting.  `added_elements` includes conformity closure;
+    // `closure_added_elements` is the excess over the distinct elements
+    // explicitly requested by the caller.  The latter is a diagnostic rather
+    // than a lineage label when a closure wave bisects a requested element
+    // more than once.
+    std::size_t requested_marked_elements = 0;
+    std::size_t added_elements = 0;
+    std::size_t closure_added_elements = 0;
     std::string detail;
     // Incremental-refinement phase timings. They remain zero for operations
     // that do not use the corresponding path.

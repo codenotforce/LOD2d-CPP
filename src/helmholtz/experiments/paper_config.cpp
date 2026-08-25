@@ -2102,6 +2102,9 @@ void validate_reference_epoch_paper_config(
         || !(config.C_rel_usr > 0.0)
         || !(config.theta_H > 0.0 && config.theta_H <= 1.0)
         || !(config.theta_c > 0.0 && config.theta_c <= 1.0)
+        || config.candidate_update_stride == 0
+        || config.candidate_force_level_gap < 0
+        || config.candidate_closure_cost_pool_factor == 0
         || config.patch_symbolic_cache_slots <= 0
         || config.maximum_patch_threads < 0
         || !(config.q_dual > 0.0 && config.q_dual < 1.0)
@@ -2186,6 +2189,8 @@ adaptive::ReferenceEpochDriverConfig make_reference_epoch_driver_config(
         config.reference_refresh_level_gap;
     result.reference_refresh_target_gap =
         config.reference_refresh_target_gap;
+    result.candidate_update_stride = config.candidate_update_stride;
+    result.candidate_force_level_gap = config.candidate_force_level_gap;
     result.minimum_H_steps_per_epoch =
         config.minimum_H_steps_per_epoch;
     result.minimum_solved_points_per_new_epoch =
@@ -2201,6 +2206,14 @@ std::string canonical_json(const ReferenceEpochPaperConfig &config) {
     out << "{\"C_rel_usr\":" << number(config.C_rel_usr)
         << ",\"build_hash\":" << json_string(config.build_hash)
         << ",\"case\":" << json_string(to_string(config.case_id))
+        << ",\"candidate_closure_cost_aware_marking\":"
+        << (config.candidate_closure_cost_aware_marking ? "true" : "false")
+        << ",\"candidate_closure_cost_pool_factor\":"
+        << config.candidate_closure_cost_pool_factor
+        << ",\"candidate_force_level_gap\":"
+        << config.candidate_force_level_gap
+        << ",\"candidate_update_stride\":"
+        << config.candidate_update_stride
         << ",\"continuity_constant\":" << number(config.continuity_constant)
         << ",\"ell0\":" << config.ell0
         << ",\"ell_max\":" << config.ell_max
@@ -2285,8 +2298,29 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     const bool has_patch_solver = root.contains("patch_solver_kind");
     const bool has_singular_solution_profile =
         root.contains("singular_solution_profile");
+    const bool has_candidate_update_stride =
+        root.contains("candidate_update_stride");
+    const bool has_candidate_force_level_gap =
+        root.contains("candidate_force_level_gap");
+    if (has_candidate_update_stride != has_candidate_force_level_gap) {
+        throw std::invalid_argument(
+            "candidate batching config requires both stride and force gap");
+    }
+    const bool has_candidate_closure_cost_aware_marking =
+        root.contains("candidate_closure_cost_aware_marking");
+    const bool has_candidate_closure_cost_pool_factor =
+        root.contains("candidate_closure_cost_pool_factor");
+    if (has_candidate_closure_cost_aware_marking
+        != has_candidate_closure_cost_pool_factor) {
+        throw std::invalid_argument(
+            "candidate closure-cost config requires policy and pool factor");
+    }
     JsonObject contract_root = root;
     contract_root.erase("singular_solution_profile");
+    contract_root.erase("candidate_update_stride");
+    contract_root.erase("candidate_force_level_gap");
+    contract_root.erase("candidate_closure_cost_aware_marking");
+    contract_root.erase("candidate_closure_cost_pool_factor");
     if (has_patch_solver) {
         require_keys(contract_root,
         {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
@@ -2374,6 +2408,23 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     config.C_rel_usr = as_number(get(root, "C_rel_usr"), "C_rel_usr");
     config.theta_H = as_number(get(root, "theta_H"), "theta_H");
     config.theta_c = as_number(get(root, "theta_c"), "theta_c");
+    if (has_candidate_update_stride) {
+        config.candidate_update_stride = static_cast<std::size_t>(as_uint64(
+            get(root, "candidate_update_stride"),
+            "candidate_update_stride"));
+        config.candidate_force_level_gap = as_integer(
+            get(root, "candidate_force_level_gap"),
+            "candidate_force_level_gap");
+    }
+    if (has_candidate_closure_cost_aware_marking) {
+        config.candidate_closure_cost_aware_marking = as_bool(
+            get(root, "candidate_closure_cost_aware_marking"),
+            "candidate_closure_cost_aware_marking");
+        config.candidate_closure_cost_pool_factor =
+            static_cast<std::size_t>(as_uint64(
+                get(root, "candidate_closure_cost_pool_factor"),
+                "candidate_closure_cost_pool_factor"));
+    }
     if (has_patch_solver) {
         config.patch_solver_kind = parse_patch_solver_kind(
             as_string(get(root, "patch_solver_kind"), "patch_solver_kind"));

@@ -997,11 +997,40 @@ public:
             << std::endl;
     }
 
-    ReferenceEpochCandidateObservation enrich_candidate() override {
+    ReferenceEpochCandidateObservation enrich_candidate(
+        const bool perform_accuracy_sweep) override {
         if (!solution_) throw std::logic_error("candidate enrichment has no LOD value");
         const Clock::time_point total_start = Clock::now();
         const ReferenceEpochRefinementGuard candidate_guard =
             candidate_refinement_resource_guard();
+        ReferenceEpochCandidateObservation result;
+        result.accuracy_sweep_performed = perform_accuracy_sweep;
+        result.candidate_elements_before =
+            hierarchy_.candidate_mesh().elems.size();
+        if (!perform_accuracy_sweep) {
+            const Clock::time_point close_start = Clock::now();
+            const ReferenceEpochRefinementResult close_result =
+                hierarchy_.close_candidate_over_proposed_coarse(candidate_guard);
+            result.time_candidate_close = seconds_since(close_start);
+            result.containment_requested_marks =
+                close_result.requested_marked_elements;
+            result.containment_added_elements = close_result.added_elements;
+            result.containment_closure_added_elements =
+                close_result.closure_added_elements;
+            result.time_candidate_nvb_refine = close_result.time_nvb_refine;
+            result.time_candidate_embedding_composition =
+                close_result.time_embedding_composition;
+            result.time_candidate_parent_map_update =
+                close_result.time_parent_map_update;
+            result.time_candidate_quasi_interpolation =
+                close_result.time_candidate_quasi_interpolation;
+            result.time_candidate_embedding_validation =
+                close_result.time_embedding_validation;
+            result.candidate_elements_after =
+                hierarchy_.candidate_mesh().elems.size();
+            result.time_candidate_flux = seconds_since(total_start);
+            return result;
+        }
         const Clock::time_point operator_start = Clock::now();
         HelmholtzOperators operators = assemble_helmholtz_operators(
             hierarchy_.candidate_mesh(), config_.wavenumber);
@@ -1012,6 +1041,10 @@ public:
         const double time_prolongation = seconds_since(prolongation_start);
         CandidateFluxConfig flux_config;
         flux_config.doerfler_theta = config_.theta_c;
+        flux_config.closure_cost_aware_marking =
+            config_.candidate_closure_cost_aware_marking;
+        flux_config.closure_cost_candidate_pool_factor =
+            config_.candidate_closure_cost_pool_factor;
         flux_config.quadrature = config_.quadrature;
         flux_config.quadrature_context = data_.quadrature_context;
         const Clock::time_point flux_start = Clock::now();
@@ -1019,7 +1052,6 @@ public:
             hierarchy_.candidate_mesh(), operators, data_.source,
             on_candidate, flux_config);
         const double time_flux = seconds_since(flux_start);
-        ReferenceEpochCandidateObservation result;
         result.eta_eq_c = flux.eta_eq;
         std::vector<int> marked_candidate = flux.marked_elements;
         if (config_.singularity_hybrid) {
@@ -1123,6 +1155,18 @@ public:
             hierarchy_.close_candidate_over_proposed_coarse(candidate_guard);
         const double time_close = seconds_since(close_start);
         result.time_candidate_close = time_close;
+        result.accuracy_requested_marks =
+            enrich_result.requested_marked_elements;
+        result.accuracy_added_elements = enrich_result.added_elements;
+        result.accuracy_closure_added_elements =
+            enrich_result.closure_added_elements;
+        result.containment_requested_marks =
+            close_result.requested_marked_elements;
+        result.containment_added_elements = close_result.added_elements;
+        result.containment_closure_added_elements =
+            close_result.closure_added_elements;
+        result.candidate_elements_after =
+            hierarchy_.candidate_mesh().elems.size();
         result.time_candidate_operator_assembly = time_operator;
         result.time_candidate_prolongation = time_prolongation;
         result.time_candidate_flux_reconstruction = time_flux;
@@ -1130,6 +1174,10 @@ public:
         result.time_candidate_flux_patch_solve = flux.time_patch_solve;
         result.time_candidate_flux_merge = flux.time_deterministic_merge;
         result.time_candidate_flux_audit = flux.time_estimator_and_audit;
+        result.time_candidate_marking = flux.time_marking;
+        result.candidate_marking_pool = flux.marking_candidate_pool;
+        result.candidate_estimated_selected_closure_cost =
+            flux.estimated_selected_closure_cost;
         result.candidate_flux_parallel_threads = flux.parallel_threads;
         result.time_candidate_nvb_refine = close_result.time_nvb_refine
             + enrich_result.time_nvb_refine;
@@ -1926,6 +1974,16 @@ void write_iterations(
            "hybrid_coarse_preview_attempts,hybrid_coarse_preview_cached,"
            "marked_c,"
            "marked_c_F,marked_c_R,candidate_cells_F,candidate_cells_R,"
+           "candidate_accuracy_sweep_performed,candidate_elements_before,"
+           "candidate_containment_requested_marks,"
+           "candidate_containment_added_elements,"
+           "candidate_containment_closure_added_elements,"
+           "candidate_accuracy_requested_marks,"
+           "candidate_accuracy_added_elements,"
+           "candidate_accuracy_closure_added_elements,"
+           "candidate_elements_after,time_candidate_marking,"
+           "candidate_marking_pool,"
+           "candidate_estimated_selected_closure_cost,"
            "active_correctors,rebuilt_correctors,reused_correctors,"
            "corrector_cache_oversized_misses,corrector_cache_budget_rejections,"
            "corrector_cache_entries,corrector_cache_current_bytes,"
@@ -2025,7 +2083,20 @@ void write_iterations(
             << ','
             << row.marked_c << ',' << row.marked_c_f << ','
             << row.marked_c_r << ',' << row.candidate_cells_f << ','
-            << row.candidate_cells_r << ',' << row.active_correctors << ','
+            << row.candidate_cells_r << ','
+            << (row.candidate_accuracy_sweep_performed ? "true" : "false")
+            << ',' << row.candidate_elements_before
+            << ',' << row.candidate_containment_requested_marks
+            << ',' << row.candidate_containment_added_elements
+            << ',' << row.candidate_containment_closure_added_elements
+            << ',' << row.candidate_accuracy_requested_marks
+            << ',' << row.candidate_accuracy_added_elements
+            << ',' << row.candidate_accuracy_closure_added_elements
+            << ',' << row.candidate_elements_after
+            << ',' << number(row.time_candidate_marking)
+            << ',' << row.candidate_marking_pool
+            << ',' << row.candidate_estimated_selected_closure_cost
+            << ',' << row.active_correctors << ','
             << row.rebuilt_correctors << ',' << row.reused_correctors << ','
             << row.corrector_cache_oversized_misses << ','
             << row.corrector_cache_budget_rejections << ','

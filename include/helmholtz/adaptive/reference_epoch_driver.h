@@ -151,6 +151,7 @@ struct ReferenceEpochSolveObservation {
 };
 
 struct ReferenceEpochCandidateObservation {
+    bool accuracy_sweep_performed = true;
     double eta_eq_c = 0.0;
     double eta_eq_c_f = std::numeric_limits<double>::quiet_NaN();
     double eta_eq_c_r = std::numeric_limits<double>::quiet_NaN();
@@ -163,6 +164,17 @@ struct ReferenceEpochCandidateObservation {
     std::size_t candidate_cells_f = 0;
     std::size_t candidate_cells_r = 0;
     std::vector<int> marked_c;
+    std::size_t candidate_elements_before = 0;
+    std::size_t containment_requested_marks = 0;
+    std::size_t containment_added_elements = 0;
+    std::size_t containment_closure_added_elements = 0;
+    std::size_t accuracy_requested_marks = 0;
+    std::size_t accuracy_added_elements = 0;
+    std::size_t accuracy_closure_added_elements = 0;
+    std::size_t candidate_elements_after = 0;
+    double time_candidate_marking = 0.0;
+    std::size_t candidate_marking_pool = 0;
+    std::size_t candidate_estimated_selected_closure_cost = 0;
     double time_candidate_flux = 0.0;
     double time_candidate_close = 0.0;
     double time_candidate_operator_assembly = 0.0;
@@ -216,7 +228,12 @@ public:
     virtual ReferenceEpochSolveObservation solve_and_estimate() = 0;
     virtual void propose_coarse_refinement(
         const std::vector<int> &marked_H) = 0;
-    virtual ReferenceEpochCandidateObservation enrich_candidate() = 0;
+    // A false accuracy flag still requires hierarchy containment closure, but
+    // skips the expensive RT2 estimator/reconstruction and its persistent
+    // accuracy refinement.  The driver forces a sweep before every numerical
+    // or structural refresh decision.
+    virtual ReferenceEpochCandidateObservation enrich_candidate(
+        bool perform_accuracy_sweep) = 0;
     virtual bool proposal_contained_in_reference() const = 0;
     virtual int minimum_reference_level_gap() const = 0;
     virtual ReferenceEpochDualObservation candidate_dual_check(
@@ -258,6 +275,13 @@ struct ReferenceEpochDriverConfig {
     // prospective coarse/candidate gap reaches this value.  This prevents a
     // new epoch from starting with an already exhausted reference.
     int reference_refresh_target_gap = 0;
+    // Perform the candidate accuracy/RT2 sweep only every N committed H
+    // refinements.  Containment closure still runs every step.  One preserves
+    // the historical production trajectory.
+    std::size_t candidate_update_stride = 1;
+    // Force an accuracy sweep once the prospective reference reserve reaches
+    // this value.  Zero disables the additional force condition.
+    int candidate_force_level_gap = 0;
     // Deprecated experimental provenance field.  The refinement-reserve
     // trigger is mandatory in Algorithms 1--2 and is therefore never delayed
     // by this value.  Production configurations must set it to zero.
@@ -317,6 +341,18 @@ struct ReferenceEpochDriverRecord {
     std::size_t marked_c = 0;
     std::size_t marked_c_f = 0;
     std::size_t marked_c_r = 0;
+    bool candidate_accuracy_sweep_performed = false;
+    std::size_t candidate_elements_before = 0;
+    std::size_t candidate_containment_requested_marks = 0;
+    std::size_t candidate_containment_added_elements = 0;
+    std::size_t candidate_containment_closure_added_elements = 0;
+    std::size_t candidate_accuracy_requested_marks = 0;
+    std::size_t candidate_accuracy_added_elements = 0;
+    std::size_t candidate_accuracy_closure_added_elements = 0;
+    std::size_t candidate_elements_after = 0;
+    double time_candidate_marking = 0.0;
+    std::size_t candidate_marking_pool = 0;
+    std::size_t candidate_estimated_selected_closure_cost = 0;
     std::size_t active_correctors = 0;
     std::size_t rebuilt_correctors = 0;
     std::size_t reused_correctors = 0;

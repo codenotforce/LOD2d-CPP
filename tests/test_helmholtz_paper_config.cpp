@@ -857,6 +857,31 @@ void verify_reference_epoch_v6_S_contract() {
                     == lod2d::helmholtz::HelmholtzPatchSolverKind::DirectSchur,
             "reference-epoch v6 identity ignores the patch solver policy");
     changed = config;
+    changed.candidate_update_stride = 2;
+    changed.candidate_force_level_gap = 3;
+    changed.candidate_closure_cost_aware_marking = true;
+    changed.candidate_closure_cost_pool_factor = 4;
+    const ReferenceEpochPaperConfig decoded_candidate_policy =
+        parse_reference_epoch_paper_config(canonical_json(changed));
+    require(canonical_config_hash(changed) != canonical_config_hash(config)
+                && decoded_candidate_policy.candidate_update_stride == 2
+                && decoded_candidate_policy.candidate_force_level_gap == 3
+                && decoded_candidate_policy.candidate_closure_cost_aware_marking
+                && decoded_candidate_policy.candidate_closure_cost_pool_factor == 4,
+            "reference-epoch v6 identity ignores the candidate update policy");
+    changed = config;
+    changed.candidate_update_stride = 0;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "reference-epoch v6 accepted a zero candidate update stride");
+    changed = config;
+    changed.candidate_force_level_gap = -1;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "reference-epoch v6 accepted a negative candidate force gap");
+    changed = config;
+    changed.candidate_closure_cost_pool_factor = 0;
+    require_invalid([&] { (void)canonical_json(changed); },
+                    "reference-epoch v6 accepted an empty closure-cost pool");
+    changed = config;
     changed.minimum_H_steps_per_epoch = 1;
     require_invalid([&] { (void)canonical_json(changed); },
                     "reference-epoch v6 accepted an epoch cooldown");
