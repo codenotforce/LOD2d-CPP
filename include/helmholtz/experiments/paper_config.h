@@ -347,6 +347,14 @@ struct ReferenceEpochPaperConfig {
     int patch_symbolic_cache_slots = 1;
     bool patch_reuse_identical_factorization = false;
     int maximum_patch_threads = 0;
+    // Global reference validation solve. UMFPACK is optional at build time;
+    // sparse_lu preserves the historical Eigen backend.
+    HelmholtzFemSolverKind reference_solver_kind =
+        HelmholtzFemSolverKind::SparseLu;
+    // Moving-reference implementation-study policy. One validates every
+    // promoted reference; larger values retain exact-error observations but
+    // perform the expensive reference solve only at periodic checkpoints.
+    std::size_t reference_validation_stride = 1;
     double q_dual = 0.5;
     std::size_t m_dual = 3;
     double tau_ep = 0.5;

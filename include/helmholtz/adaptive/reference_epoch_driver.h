@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cstddef>
 #include <limits>
+#include <functional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -215,6 +216,12 @@ struct ReferenceEpochResourceSnapshot {
     std::size_t candidate_unknowns = 0;
     double kappa_H_max = std::numeric_limits<double>::quiet_NaN();
     double artifact_capture_seconds = 0.0;
+    double last_reference_operator_assembly_seconds = 0.0;
+    double last_reference_load_assembly_seconds = 0.0;
+    double last_reference_reduction_seconds = 0.0;
+    double last_reference_analysis_seconds = 0.0;
+    double last_reference_factorization_seconds = 0.0;
+    double last_reference_solve_seconds = 0.0;
 };
 
 // The production contract intentionally has no candidate Helmholtz solve.
@@ -439,6 +446,12 @@ struct ReferenceEpochDriverRecord {
     std::size_t candidate_dual_patch_factorizations = 0;
     int candidate_dual_parallel_threads = 1;
     double time_mesh = 0.0;
+    double time_reference_operator_assembly = 0.0;
+    double time_reference_load_assembly = 0.0;
+    double time_reference_reduction = 0.0;
+    double time_reference_analysis = 0.0;
+    double time_reference_factorization = 0.0;
+    double time_reference_solve = 0.0;
     double time_validation_cumulative = 0.0;
     double time_artifact_capture_cumulative = 0.0;
     double time_method_cumulative = 0.0;
@@ -465,15 +478,19 @@ struct ReferenceEpochDriverResult {
 
 class ReferenceEpochPracticalDriver {
 public:
+    using JournalCallback =
+        std::function<void(const ReferenceEpochDriverResult &)>;
     ReferenceEpochPracticalDriver(
         ReferenceEpochDriverBackend &backend,
-        ReferenceEpochDriverConfig config);
+        ReferenceEpochDriverConfig config,
+        JournalCallback journal_callback = {});
 
     ReferenceEpochDriverResult run();
 
 private:
     ReferenceEpochDriverBackend &backend_;
     ReferenceEpochDriverConfig config_;
+    JournalCallback journal_callback_;
 };
 
 const char *reference_epoch_driver_state_name(ReferenceEpochDriverState state);

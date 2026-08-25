@@ -57,15 +57,61 @@ void verify_parallel_exact_error_exception_order() {
         "parallel exact-error evaluation swallowed callback exception");
 }
 
+void verify_parallel_load_exception_order() {
+    TriMesh mesh;
+    constexpr int element_count = 64;
+    for (int element = 0; element < element_count; ++element) {
+        const double x = 10.0 * element;
+        const int node = static_cast<int>(mesh.nodes.size());
+        mesh.nodes.emplace_back(x, 0.0);
+        mesh.nodes.emplace_back(x + 1.0, 0.0);
+        mesh.nodes.emplace_back(x, 1.0);
+        mesh.elems.push_back({node, node + 1, node + 2});
+    }
+    const ComplexFunction throwing_source = [](const Point2 &point) -> Complex {
+        const int element = static_cast<int>(std::floor(point.x() / 10.0));
+        throw std::runtime_error("load-element-" + std::to_string(element));
+    };
+    try {
+        (void)assemble_helmholtz_load(mesh, throwing_source);
+    } catch (const std::runtime_error &error) {
+        require(std::string(error.what()) == "load-element-0",
+                "parallel load assembly changed exception order");
+        return;
+    }
+    throw std::runtime_error("parallel load assembly swallowed callback exception");
+}
+
 } // namespace
 
 int main() {
     try {
         verify_parallel_exact_error_exception_order();
+        verify_parallel_load_exception_order();
         const double k = 2.0;
         const TriMesh initial = make_helmholtz_unit_square_mesh();
         const TriMesh boundary_mesh = refine_mesh_nvb(initial, 3).mesh;
         const HelmholtzOperators boundary_operators = assemble_helmholtz_operators(boundary_mesh, k);
+
+        if (helmholtz_fem_solver_available(HelmholtzFemSolverKind::Umfpack)) {
+            const ComplexVector probe_load = ComplexVector::Ones(
+                boundary_mesh.nodes.size());
+            HelmholtzFemSolveTimings sparse_timings;
+            HelmholtzFemSolveTimings umfpack_timings;
+            const ComplexVector sparse_solution = solve_helmholtz_fem(
+                boundary_operators, probe_load,
+                HelmholtzFemSolverKind::SparseLu, &sparse_timings);
+            const ComplexVector umfpack_solution = solve_helmholtz_fem(
+                boundary_operators, probe_load,
+                HelmholtzFemSolverKind::Umfpack, &umfpack_timings);
+            require(
+                (sparse_solution - umfpack_solution).norm()
+                    <= 1e-10 * std::max(1.0, sparse_solution.norm()),
+                "UMFPACK and SparseLU Helmholtz solutions disagree");
+            require(sparse_timings.total_seconds >= 0.0
+                        && umfpack_timings.total_seconds >= 0.0,
+                    "Helmholtz solver timings are invalid");
+        }
 
         const Eigen::VectorXd ones = Eigen::VectorXd::Ones(boundary_mesh.nodes.size());
         const double boundary_measure = ones.dot(boundary_operators.boundary_mass * ones);

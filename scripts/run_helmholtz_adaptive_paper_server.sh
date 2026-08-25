@@ -290,6 +290,30 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=100
     MODE_TIMEOUT_SECONDS=87300
     ;;
+  e2-cutofffree-revised-optimized-gate)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-closure-saddle-umfpack-stride2-step8-gate-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=16
+    MODE_MIN_FREE_DISK_GIB=20
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
+  e2-cutofffree-revised-optimized-medium)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-optimized-step16-gate-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=64
+    MODE_MIN_FREE_DISK_GIB=40
+    MODE_TIMEOUT_SECONDS=44100
+    ;;
+  e2-cutofffree-revised-optimized-main)
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E2-S-palod-moving-cutofffree-k16-H6-h10-optimized-step24-main-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=240
+    MODE_MIN_FREE_DISK_GIB=80
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   custom)
     DEFAULT_CONFIGS=()
     ;;
@@ -495,6 +519,8 @@ if schema == 6:
         manifest.get("stop_reason", "").startswith(reason)
         for reason in (
             "maximum_H_steps reached",
+            "maximum_reference_unknowns reached",
+            "maximum_candidate_unknowns reached",
             "insufficient remaining H-step budget for a new reference epoch",
         )
     ):

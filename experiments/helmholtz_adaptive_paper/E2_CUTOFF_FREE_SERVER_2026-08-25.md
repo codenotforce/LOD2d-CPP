@@ -40,7 +40,7 @@ the observed asymptotic slope.
 | Method | Reference policy | ell | Candidate marking | Main horizon |
 |---|---|---:|---:|---:|
 | AFEM | none; exact manufactured error | n/a | n/a | up to local level 24 |
-| Moving PALOD | H6/h10, immediate promotion, `R_star=0.125` | 2 | global Dörfler, `theta_c=0.2` | 36 H-steps |
+| Moving PALOD | H6/h10, immediate promotion, `R_star=0.125` | 2 | global Dörfler, `theta_c=0.2` | resource-capped, at most 24 H-steps |
 | Standard LOD (SLOD) | uniform gap 4 | 2 | uniform H/h refinement | resource-limited, at most 10 H-steps |
 | Standard PALOD | H6/h12, refresh gap 2, target gap 6 | inherited, starts at 2 | global Dörfler, `theta_c=0.2` | 24 H-steps |
 
@@ -64,6 +64,71 @@ Standard PALOD remains dominated by candidate RT2 flux reconstruction.  It is
 placed last.  The production code already uses patch OpenMP, summary audit,
 direct Schur patch solves, reduced quadrature and ell 2; no mathematical
 shortcut is enabled.
+
+## Resource-safe moving-PALOD continuation
+
+The original 36-step moving-PALOD horizon is superseded.  Its reference mesh
+reached about 2.08 million elements at H-step 33, consumed about 351 GiB, and
+spent most late-stage time in a serial global reference factorization.  The
+optimized continuation therefore uses:
+
+- a pre-factorization guard at 900,000 reference and 1,100,000 candidate
+  unconstrained unknowns;
+- atomic `iterations.partial.csv` and `progress.json` checkpoints after every
+  solved point, reference promotion, and terminal transition;
+- deterministic OpenMP load quadrature followed by an element-order scatter;
+- UMFPACK for the periodic global reference solve;
+- `reference_validation_stride=2`: every exact PALOD error is retained, while
+  the independent reference solution/error is evaluated every second H-step;
+- closure-cost-aware global candidate Dörfler marking with pool factor 3;
+- the original direct-saddle corrector backend, because the local 8-step
+  direct-Schur ablation was slower and used more memory.
+
+On the 12-GiB WSL gate, deterministic parallel load assembly reduced the
+selected 8-step trajectory from 20.15 s to 17.06 s (about 15%), with zero swap
+and a final exact relative energy error change below `2e-16`.  UMFPACK roughly
+halved numeric factorization time at this small scale; its intended benefit is
+the much larger late reference systems.
+
+Run the moving method alone in three gates; do not launch the next gate until
+the preceding tail fit is accepted:
+
+```bash
+MODE=e2-cutofffree-revised-optimized-gate \
+RESULT_DIR="$PWD/results/E2-cutofffree-optimized-gate-$(git rev-parse --short HEAD)" \
+JOBS=16 PATCH_THREADS=16 \
+bash scripts/run_helmholtz_adaptive_paper_server.sh
+
+MODE=e2-cutofffree-revised-optimized-medium \
+RESULT_DIR="$PWD/results/E2-cutofffree-optimized-medium-$(git rev-parse --short HEAD)" \
+JOBS=16 PATCH_THREADS=16 \
+bash scripts/run_helmholtz_adaptive_paper_server.sh
+
+MODE=e2-cutofffree-revised-optimized-main \
+RESULT_DIR="$PWD/results/E2-cutofffree-optimized-main-$(git rev-parse --short HEAD)" \
+JOBS=16 PATCH_THREADS=16 \
+bash scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
+For the 16-step gate, fit the final 6 and 8 exact-error points against `N_H`.
+Proceed to 24 steps only when both fits decay, the final-six Pearson
+correlation is at most `-0.98`, no late point increases by more than 2%, and
+swap use is zero.  The 24-step paper fit is accepted when the final 8 and 12
+point exponents are stable to within 0.15 and the final-8 exponent is at least
+0.45.  A configured unknown limit is a valid censored stop, not permission to
+extrapolate beyond the available data.
+
+```bash
+python3 tools/analysis/analyze_e2_tail.py \
+  --run-dir results/E2-cutofffree-optimized-medium-$(git rev-parse --short HEAD) \
+  --gate medium \
+  --output results/E2-cutofffree-optimized-medium-tail.json
+
+python3 tools/analysis/analyze_e2_tail.py \
+  --run-dir results/E2-cutofffree-optimized-main-$(git rev-parse --short HEAD) \
+  --gate main \
+  --output results/E2-cutofffree-optimized-main-tail.json
+```
 
 ## Server checkout and pilot
 

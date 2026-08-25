@@ -28,6 +28,22 @@ struct HelmholtzError {
     double l2 = 0.0;
 };
 
+enum class HelmholtzFemSolverKind {
+    SparseLu,
+    Umfpack,
+};
+
+struct HelmholtzFemSolveTimings {
+    double reduction_seconds = 0.0;
+    double analysis_seconds = 0.0;
+    double factorization_seconds = 0.0;
+    double solve_seconds = 0.0;
+    double total_seconds = 0.0;
+};
+
+const char *helmholtz_fem_solver_kind_name(HelmholtzFemSolverKind kind);
+bool helmholtz_fem_solver_available(HelmholtzFemSolverKind kind);
+
 HelmholtzOperators assemble_helmholtz_operators(
     const TriMesh &mesh,
     double wavenumber,
@@ -43,7 +59,9 @@ ComplexVector assemble_helmholtz_load(
 
 ComplexVector solve_helmholtz_fem(
     const HelmholtzOperators &operators,
-    const ComplexVector &load);
+    const ComplexVector &load,
+    HelmholtzFemSolverKind solver_kind = HelmholtzFemSolverKind::SparseLu,
+    HelmholtzFemSolveTimings *timings = nullptr);
 
 HelmholtzError compute_helmholtz_error(
     const TriMesh &mesh,

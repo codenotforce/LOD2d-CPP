@@ -34,6 +34,11 @@
 #include <stdexcept>
 #include <thread>
 
+#if defined(_WIN32)
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/resource.h>
 #endif
@@ -592,6 +597,11 @@ public:
         epoch_start_snapshot_pending_ = true;
     }
 
+    bool reference_validation_due() const {
+        return !config_.singularity_hybrid
+            || committed_H_steps_ % config_.reference_validation_stride == 0;
+    }
+
     ReferenceEpochCorrectorObservation corrector_check(int ell) override {
         current_ell_ = ell;
         const Clock::time_point total_start = Clock::now();
@@ -676,11 +686,13 @@ public:
                     model_config, hierarchy_, &corrector_cache_));
         }
         double time_reference_stability = 0.0;
-        if (!reference_solution_) {
-            const Clock::time_point stability_start = Clock::now();
+        if (!reference_load_) {
             reference_load_ = assemble_helmholtz_load(
                 hierarchy_.reference_mesh(), data_.source,
                 config_.quadrature, data_.quadrature_context);
+        }
+        if (!reference_solution_ && reference_validation_due()) {
+            const Clock::time_point stability_start = Clock::now();
             ensure_reference_solution(*reference_load_);
             time_reference_stability = seconds_since(stability_start);
             std::cerr
@@ -902,23 +914,25 @@ public:
             result.marked_H = estimate.marked_elements;
         }
 
-        const Clock::time_point reference_validation_start = Clock::now();
-        ensure_reference_solution(load);
-        if (!reference_discrete_norm_) {
-            reference_discrete_norm_ = compute_discrete_helmholtz_error(
+        if (reference_validation_due()) {
+            const Clock::time_point reference_validation_start = Clock::now();
+            ensure_reference_solution(load);
+            if (!reference_discrete_norm_) {
+                reference_discrete_norm_ = compute_discrete_helmholtz_error(
+                    hierarchy_.reference_mesh(), model_->operators(),
+                    *reference_solution_,
+                    ComplexVector::Zero(reference_solution_->size()));
+            }
+            const HelmholtzError reference_error = compute_discrete_helmholtz_error(
                 hierarchy_.reference_mesh(), model_->operators(),
-                *reference_solution_,
-                ComplexVector::Zero(reference_solution_->size()));
+                *reference_solution_, solution_->fine_values);
+            result.relative_reference_energy = reference_error.energy
+                / std::max(
+                    reference_discrete_norm_->energy,
+                    std::numeric_limits<double>::min());
+            result.time_reference_validation =
+                seconds_since(reference_validation_start);
         }
-        const HelmholtzError reference_error = compute_discrete_helmholtz_error(
-            hierarchy_.reference_mesh(), model_->operators(),
-            *reference_solution_, solution_->fine_values);
-        result.relative_reference_energy = reference_error.energy
-            / std::max(
-                reference_discrete_norm_->energy,
-                std::numeric_limits<double>::min());
-        result.time_reference_validation =
-            seconds_since(reference_validation_start);
         const Clock::time_point exact_validation_start = Clock::now();
         if (data_.exact && data_.exact_gradient) {
             const HelmholtzError exact_error = compute_helmholtz_error(
@@ -936,7 +950,7 @@ public:
                 exact_error.energy / reference_exact_norm_->energy;
             result.relative_exact_L2 =
                 exact_error.l2 / reference_exact_norm_->l2;
-            if (!reference_exact_relative_energy_) {
+            if (reference_solution_ && !reference_exact_relative_energy_) {
                 const HelmholtzError exact_reference_error =
                     compute_helmholtz_error(
                         hierarchy_.reference_mesh(), *reference_solution_,
@@ -945,8 +959,9 @@ public:
                 reference_exact_relative_energy_ =
                     exact_reference_error.energy / reference_exact_norm_->energy;
             }
-            result.relative_exact_reference_energy =
-                *reference_exact_relative_energy_;
+            if (reference_exact_relative_energy_)
+                result.relative_exact_reference_energy =
+                    *reference_exact_relative_energy_;
         }
         result.time_exact_validation = seconds_since(exact_validation_start);
         {
@@ -1377,19 +1392,41 @@ public:
             const double matching_seconds = seconds_since(matching_start);
             proposed_regions_ = matching.regions;
 
-            const Clock::time_point wellposedness_start = Clock::now();
-            const HelmholtzOperators candidate_operators =
-                assemble_helmholtz_operators(
-                    hierarchy_.candidate_mesh(), config_.wavenumber);
+            // The frozen candidate becomes the next reference. Guard its
+            // unconstrained dimension before assembling or factorizing the
+            // global Helmholtz system; a post-solve check cannot protect peak
+            // memory from sparse fill-in.
+            enforce_reference_promotion_work_limit();
+
+            last_reference_operator_assembly_seconds_ = 0.0;
+            last_reference_load_assembly_seconds_ = 0.0;
+            last_reference_solve_timings_ = {};
+            const Clock::time_point load_start = Clock::now();
             reference_load_ = assemble_helmholtz_load(
                 hierarchy_.candidate_mesh(), data_.source,
                 config_.quadrature, data_.quadrature_context);
-            reference_solution_ = solve_helmholtz_fem(
-                candidate_operators, *reference_load_);
+            last_reference_load_assembly_seconds_ = seconds_since(load_start);
+            const bool validate_promoted_reference =
+                (committed_H_steps_ + 1)
+                    % config_.reference_validation_stride == 0;
+            if (validate_promoted_reference) {
+                const Clock::time_point operator_start = Clock::now();
+                const HelmholtzOperators candidate_operators =
+                    assemble_helmholtz_operators(
+                        hierarchy_.candidate_mesh(), config_.wavenumber);
+                last_reference_operator_assembly_seconds_ =
+                    seconds_since(operator_start);
+                reference_solution_ = solve_helmholtz_fem(
+                    candidate_operators, *reference_load_,
+                    config_.reference_solver_kind,
+                    &last_reference_solve_timings_);
+            } else {
+                reference_solution_.reset();
+            }
             const double wellposedness_seconds =
-                seconds_since(wellposedness_start);
-
-            enforce_reference_promotion_work_limit();
+                last_reference_operator_assembly_seconds_
+                + last_reference_load_assembly_seconds_
+                + last_reference_solve_timings_.total_seconds;
             const Clock::time_point artifact_start = Clock::now();
             ReferenceEpochMeshSnapshot pending_snapshot;
             pending_snapshot.epoch = epoch_index_;
@@ -1405,7 +1442,8 @@ public:
             artifact_capture_seconds_ += seconds_since(artifact_start);
 
             hierarchy_.refresh_reference_from_candidate();
-            promoted_reference_solution_ready_ = true;
+            promoted_reference_solution_ready_ =
+                validate_promoted_reference;
             std::size_t matching_spill = 0;
             for (const int element : proposed_regions_->omega_f_elements) {
                 if (embedding_children(
@@ -1457,7 +1495,12 @@ public:
             std::cerr
                 << "[hybrid-moving-reference] matching_seconds="
                 << matching_seconds
-                << " wellposedness_seconds=" << wellposedness_seconds
+                 << " wellposedness_seconds=" << wellposedness_seconds
+                 << " solver="
+                 << helmholtz_fem_solver_kind_name(
+                        config_.reference_solver_kind)
+                 << " validated="
+                 << (validate_promoted_reference ? "true" : "false")
                 << " matching_rounds=" << matching.refinement_rounds
                 << " candidate_elements="
                 << hierarchy_.candidate_mesh().elems.size()
@@ -1818,6 +1861,18 @@ public:
         result.kappa_H_max = config_.wavenumber
             * max_element_diameter(hierarchy_.coarse_mesh());
         result.artifact_capture_seconds = artifact_capture_seconds_;
+        result.last_reference_operator_assembly_seconds =
+            last_reference_operator_assembly_seconds_;
+        result.last_reference_load_assembly_seconds =
+            last_reference_load_assembly_seconds_;
+        result.last_reference_reduction_seconds =
+            last_reference_solve_timings_.reduction_seconds;
+        result.last_reference_analysis_seconds =
+            last_reference_solve_timings_.analysis_seconds;
+        result.last_reference_factorization_seconds =
+            last_reference_solve_timings_.factorization_seconds;
+        result.last_reference_solve_seconds =
+            last_reference_solve_timings_.solve_seconds;
         return result;
     }
 
@@ -1905,7 +1960,8 @@ private:
 
     void ensure_reference_solution(const ComplexVector &load) {
         if (!reference_solution_)
-            reference_solution_ = solve_helmholtz_fem(model_->operators(), load);
+            reference_solution_ = solve_helmholtz_fem(
+                model_->operators(), load, config_.reference_solver_kind);
     }
 
     ReferenceEpochPaperConfig config_;
@@ -1948,6 +2004,9 @@ private:
     std::vector<ReferenceEpochMeshSnapshot> snapshots_;
     std::vector<HybridReserveDiagnostic> hybrid_reserve_diagnostics_;
     double artifact_capture_seconds_ = 0.0;
+    double last_reference_operator_assembly_seconds_ = 0.0;
+    double last_reference_load_assembly_seconds_ = 0.0;
+    HelmholtzFemSolveTimings last_reference_solve_timings_;
 };
 
 void write_iterations(
@@ -2024,7 +2083,10 @@ void write_iterations(
            "time_candidate_dual_solve,time_candidate_dual_prepare,"
            "time_candidate_dual_patch_solve,time_candidate_dual_reduction,"
            "candidate_dual_patch_factorizations,candidate_dual_parallel_threads,"
-           "time_mesh,time_validation_cumulative,"
+           "time_mesh,time_reference_operator_assembly,time_reference_load_assembly,"
+           "time_reference_reduction,time_reference_analysis,"
+           "time_reference_factorization,time_reference_solve,"
+           "time_validation_cumulative,"
            "time_artifact_capture_cumulative,time_method_cumulative,"
            "time_total_cumulative,peak_memory_mb\n";
     for (const ReferenceEpochDriverRecord &row : result.journal) {
@@ -2175,12 +2237,80 @@ void write_iterations(
             << row.candidate_dual_patch_factorizations << ','
             << row.candidate_dual_parallel_threads << ','
             << number(row.time_mesh) << ','
+            << number(row.time_reference_operator_assembly) << ','
+            << number(row.time_reference_load_assembly) << ','
+            << number(row.time_reference_reduction) << ','
+            << number(row.time_reference_analysis) << ','
+            << number(row.time_reference_factorization) << ','
+            << number(row.time_reference_solve) << ','
             << number(row.time_validation_cumulative) << ','
             << number(row.time_artifact_capture_cumulative) << ','
             << number(row.time_method_cumulative)
             << ',' << number(row.time_total_cumulative) << ','
             << number(peak_memory_mb()) << '\n';
     }
+}
+
+void replace_file_atomically(
+    const std::filesystem::path &temporary,
+    const std::filesystem::path &destination) {
+#if defined(_WIN32)
+    if (!MoveFileExW(
+            temporary.c_str(), destination.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        throw std::runtime_error(
+            "cannot atomically replace " + destination.string());
+    }
+#else
+    std::filesystem::rename(temporary, destination);
+#endif
+}
+
+void write_iterations_atomically(
+    const std::filesystem::path &path,
+    const ReferenceEpochPaperConfig &config,
+    const std::string &run_id,
+    const ReferenceEpochDriverResult &result) {
+    std::filesystem::path temporary = path;
+    temporary += ".tmp";
+    write_iterations(temporary, config, run_id, result);
+    replace_file_atomically(temporary, path);
+}
+
+void write_progress_atomically(
+    const std::filesystem::path &path,
+    const ReferenceEpochDriverResult &result) {
+    std::filesystem::path temporary = path;
+    temporary += ".tmp";
+    {
+        std::ofstream out(temporary);
+        if (!out) throw std::runtime_error("cannot write " + temporary.string());
+        const bool terminal_checkpoint = !result.journal.empty()
+            && (result.journal.back().action
+                    == ReferenceEpochDriverAction::Complete
+                || result.journal.back().action
+                    == ReferenceEpochDriverAction::StopWorkLimit
+                || result.journal.back().action
+                    == ReferenceEpochDriverAction::Fail);
+        const std::string status = terminal_checkpoint
+            ? reference_epoch_driver_state_name(
+                  result.journal.back().state_after)
+            : "Running";
+        out << "{\n  \"status\": " << json_string(status) << ",\n"
+            << "  \"journal_records\": " << result.journal.size();
+        if (!result.journal.empty()) {
+            const ReferenceEpochDriverRecord &last = result.journal.back();
+            out << ",\n  \"last_sequence\": " << last.sequence
+                << ",\n  \"last_epoch\": " << last.epoch
+                << ",\n  \"last_H_step\": " << last.H_step
+                << ",\n  \"last_action\": "
+                << json_string(reference_epoch_driver_action_name(last.action))
+                << ",\n  \"last_state\": "
+                << json_string(reference_epoch_driver_state_name(last.state_after));
+        }
+        out << "\n}\n";
+    }
+    replace_file_atomically(temporary, path);
 }
 
 void write_auxiliary_outputs(
@@ -2631,9 +2761,30 @@ int run_reference_epoch_paper(
         config.singular_solution_profile);
     NumericalReferenceEpochBackend backend(config, std::move(data));
     ReferenceEpochPracticalDriver driver(
-        backend, make_reference_epoch_driver_config(config));
+        backend, make_reference_epoch_driver_config(config),
+        [&](const ReferenceEpochDriverResult &partial) {
+            if (partial.journal.empty()) return;
+            const ReferenceEpochDriverAction action =
+                partial.journal.back().action;
+            // Persist every completed numerical observation and every refresh
+            // or terminal transition. Avoid rewriting the growing CSV for
+            // cheap internal state transitions; on network filesystems that
+            // bookkeeping otherwise becomes visible in short pilots.
+            if (action != ReferenceEpochDriverAction::SolveAndEstimate
+                && action != ReferenceEpochDriverAction::RefreshReference
+                && action != ReferenceEpochDriverAction::Complete
+                && action != ReferenceEpochDriverAction::StopWorkLimit
+                && action != ReferenceEpochDriverAction::Fail) {
+                return;
+            }
+            write_iterations_atomically(
+                run_directory / "iterations.partial.csv",
+                config, run_id, partial);
+            write_progress_atomically(
+                run_directory / "progress.json", partial);
+        });
     const ReferenceEpochDriverResult result = driver.run();
-    write_iterations(
+    write_iterations_atomically(
         run_directory / "iterations.csv", config, run_id, result);
     write_auxiliary_outputs(
         run_directory, config, run_id, result, backend.hierarchy(),

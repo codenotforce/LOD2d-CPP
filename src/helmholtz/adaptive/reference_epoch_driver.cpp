@@ -57,8 +57,10 @@ const char *reference_epoch_driver_action_name(ReferenceEpochDriverAction action
 
 ReferenceEpochPracticalDriver::ReferenceEpochPracticalDriver(
     ReferenceEpochDriverBackend &backend,
-    ReferenceEpochDriverConfig config)
-    : backend_(backend), config_(std::move(config)) {
+    ReferenceEpochDriverConfig config,
+    JournalCallback journal_callback)
+    : backend_(backend), config_(std::move(config)),
+      journal_callback_(std::move(journal_callback)) {
     if (config_.ell0 < 0 || config_.ell_max < config_.ell0
         || !(config_.tau_loc >= 0.0)
         || !(config_.q_dual > 0.0 && config_.q_dual < 1.0)
@@ -124,10 +126,25 @@ ReferenceEpochDriverResult ReferenceEpochPracticalDriver::run() {
         record.time_validation_cumulative = validation_time_cumulative;
         record.time_artifact_capture_cumulative =
             snapshot.artifact_capture_seconds;
+        if (record.action == ReferenceEpochDriverAction::RefreshReference) {
+            record.time_reference_operator_assembly =
+                snapshot.last_reference_operator_assembly_seconds;
+            record.time_reference_load_assembly =
+                snapshot.last_reference_load_assembly_seconds;
+            record.time_reference_reduction =
+                snapshot.last_reference_reduction_seconds;
+            record.time_reference_analysis =
+                snapshot.last_reference_analysis_seconds;
+            record.time_reference_factorization =
+                snapshot.last_reference_factorization_seconds;
+            record.time_reference_solve =
+                snapshot.last_reference_solve_seconds;
+        }
         record.time_method_cumulative = std::max(
             0.0, record.time_total_cumulative - validation_time_cumulative
                 - snapshot.artifact_capture_seconds);
         result.journal.push_back(std::move(record));
+        if (journal_callback_) journal_callback_(result);
     };
     const auto stop_limit = [&](const std::string &reason) {
         ReferenceEpochDriverRecord record;

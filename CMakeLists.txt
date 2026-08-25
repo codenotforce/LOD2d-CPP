@@ -16,6 +16,8 @@ option(LOD_ENABLE_VERIFIED_CERTIFICATES
 find_package(Eigen3 REQUIRED NO_MODULE)
 find_package(OpenMP)
 find_package(SuiteSparse QUIET)
+find_library(UMFPACK_LIBRARY NAMES umfpack)
+find_path(UMFPACK_INCLUDE_DIR umfpack.h PATH_SUFFIXES suitesparse)
 if(NOT SuiteSparse_FOUND)
     # Fallback: find CHOLMOD directly
     find_library(CHOLMOD_LIB cholmod)
@@ -108,6 +110,11 @@ add_library(lod2d_core STATIC
 )
 target_include_directories(lod2d_core PUBLIC include)
 target_link_libraries(lod2d_core PUBLIC Eigen3::Eigen)
+if(UMFPACK_LIBRARY AND UMFPACK_INCLUDE_DIR)
+    target_compile_definitions(lod2d_core PUBLIC LOD2D_HAVE_UMFPACK=1)
+    target_include_directories(lod2d_core PUBLIC ${UMFPACK_INCLUDE_DIR})
+    target_link_libraries(lod2d_core PUBLIC ${UMFPACK_LIBRARY})
+endif()
 if(LOD_ENABLE_VERIFIED_CERTIFICATES)
     target_compile_definitions(lod2d_core PUBLIC LOD_ENABLE_VERIFIED_CERTIFICATES=1)
     target_include_directories(lod2d_core PRIVATE

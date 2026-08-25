@@ -2071,6 +2071,13 @@ bool operator==(const PaperConfig &lhs, const PaperConfig &rhs) {
         && lhs.git_commit == rhs.git_commit && lhs.build_hash == rhs.build_hash;
 }
 
+HelmholtzFemSolverKind parse_reference_solver_kind(
+    const std::string_view value) {
+    if (value == "sparse_lu") return HelmholtzFemSolverKind::SparseLu;
+    if (value == "umfpack") return HelmholtzFemSolverKind::Umfpack;
+    throw std::invalid_argument("unknown reference_solver_kind");
+}
+
 void validate_reference_epoch_paper_config(
     const ReferenceEpochPaperConfig &config) {
     if (config.schema_version != reference_epoch_paper_schema_version)
@@ -2107,6 +2114,7 @@ void validate_reference_epoch_paper_config(
         || config.candidate_closure_cost_pool_factor == 0
         || config.patch_symbolic_cache_slots <= 0
         || config.maximum_patch_threads < 0
+        || config.reference_validation_stride == 0
         || !(config.q_dual > 0.0 && config.q_dual < 1.0)
         || config.m_dual == 0 || !(config.tau_ep > 0.0)
         || config.reference_refresh_level_gap < 0
@@ -2130,6 +2138,10 @@ void validate_reference_epoch_paper_config(
         || config.quadrature.max_recursive_subdivisions < 0
         || config.repeat_index < 0)
         throw std::invalid_argument("reference-epoch numerical inputs are invalid");
+    if (!config.singularity_hybrid
+        && config.reference_validation_stride != 1)
+        throw std::invalid_argument(
+            "reference_validation_stride may exceed one only for moving-reference runs");
     if (config.singular_solution_profile != "radial-cutoff"
         && config.singular_solution_profile != "boundary-weight-gaussian")
         throw std::invalid_argument("unknown singular_solution_profile");
@@ -2244,6 +2256,11 @@ std::string canonical_json(const ReferenceEpochPaperConfig &config) {
         << json_string(patch_solver_kind_name(config.patch_solver_kind))
         << ",\"patch_symbolic_cache_slots\":"
         << config.patch_symbolic_cache_slots
+        << ",\"reference_solver_kind\":"
+        << json_string(helmholtz_fem_solver_kind_name(
+               config.reference_solver_kind))
+        << ",\"reference_validation_stride\":"
+        << config.reference_validation_stride
         << ",\"quadrature\":{\"base_triangle_order\":"
         << config.quadrature.base_triangle_order
         << ",\"gaussian_triangle_order\":"
@@ -2302,6 +2319,10 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
         root.contains("candidate_update_stride");
     const bool has_candidate_force_level_gap =
         root.contains("candidate_force_level_gap");
+    const bool has_reference_solver_kind =
+        root.contains("reference_solver_kind");
+    const bool has_reference_validation_stride =
+        root.contains("reference_validation_stride");
     if (has_candidate_update_stride != has_candidate_force_level_gap) {
         throw std::invalid_argument(
             "candidate batching config requires both stride and force gap");
@@ -2321,6 +2342,8 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
     contract_root.erase("candidate_force_level_gap");
     contract_root.erase("candidate_closure_cost_aware_marking");
     contract_root.erase("candidate_closure_cost_pool_factor");
+    contract_root.erase("reference_solver_kind");
+    contract_root.erase("reference_validation_stride");
     if (has_patch_solver) {
         require_keys(contract_root,
         {"C_rel_usr", "build_hash", "case", "continuity_constant", "ell0",
@@ -2436,6 +2459,16 @@ ReferenceEpochPaperConfig parse_reference_epoch_paper_config(
             "patch_reuse_identical_factorization");
         config.maximum_patch_threads = as_integer(
             get(root, "maximum_patch_threads"), "maximum_patch_threads");
+    }
+    if (has_reference_solver_kind) {
+        config.reference_solver_kind = parse_reference_solver_kind(
+            as_string(get(root, "reference_solver_kind"),
+                      "reference_solver_kind"));
+    }
+    if (has_reference_validation_stride) {
+        config.reference_validation_stride = static_cast<std::size_t>(
+            as_uint64(get(root, "reference_validation_stride"),
+                      "reference_validation_stride"));
     }
     config.q_dual = as_number(get(root, "q_dual"), "q_dual");
     config.reference_refresh_level_gap = as_integer(

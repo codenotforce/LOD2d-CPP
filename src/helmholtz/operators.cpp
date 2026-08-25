@@ -2,6 +2,11 @@
 #include "helmholtz/boundary.h"
 
 #include <Eigen/SparseLU>
+#if defined(LOD2D_HAVE_UMFPACK)
+#include <Eigen/UmfPackSupport>
+#endif
+
+#include <chrono>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -12,6 +17,29 @@
 #include <vector>
 
 namespace lod2d::helmholtz {
+
+namespace {
+using FemSolveClock = std::chrono::steady_clock;
+double fem_seconds_since(const FemSolveClock::time_point start) {
+    return std::chrono::duration<double>(FemSolveClock::now() - start).count();
+}
+} // namespace
+
+const char *helmholtz_fem_solver_kind_name(const HelmholtzFemSolverKind kind) {
+    switch (kind) {
+    case HelmholtzFemSolverKind::SparseLu: return "sparse_lu";
+    case HelmholtzFemSolverKind::Umfpack: return "umfpack";
+    }
+    throw std::invalid_argument("unknown Helmholtz FEM solver kind");
+}
+
+bool helmholtz_fem_solver_available(const HelmholtzFemSolverKind kind) {
+    if (kind == HelmholtzFemSolverKind::SparseLu) return true;
+#if defined(LOD2D_HAVE_UMFPACK)
+    if (kind == HelmholtzFemSolverKind::Umfpack) return true;
+#endif
+    return false;
+}
 namespace {
 
 std::uint64_t edge_key(int a, int b) {
@@ -159,24 +187,53 @@ ComplexVector assemble_helmholtz_load(
     const QuadraturePolicy &quadrature,
     const QuadratureContext &quadrature_context) {
     if (!source) throw std::invalid_argument("Helmholtz source function is empty");
-    ComplexVector load = ComplexVector::Zero(static_cast<int>(mesh.nodes.size()));
-
-    for (int element = 0; element < static_cast<int>(mesh.elems.size()); ++element) {
-        const Triangle &tri = mesh.elems[element];
-        for (const auto &point : triangle_quadrature_points(
-                 mesh, element, quadrature, quadrature_context)) {
-            const Complex value = source(point.point);
-            for (int i = 0; i < 3; ++i) {
-                load(tri[i]) += point.weight * value * point.barycentric[i];
+    const int element_count = static_cast<int>(mesh.elems.size());
+    std::vector<std::array<Complex, 3>> element_loads(
+        element_count, std::array<Complex, 3>{});
+    std::vector<std::exception_ptr> element_errors(element_count);
+#if defined(_OPENMP)
+#pragma omp parallel for schedule(static) if(element_count >= 64)
+#endif
+    for (int element = 0; element < element_count; ++element) {
+        try {
+            for (const auto &point : triangle_quadrature_points(
+                     mesh, element, quadrature, quadrature_context)) {
+                const Complex value = source(point.point);
+                for (int i = 0; i < 3; ++i) {
+                    element_loads[element][i] +=
+                        point.weight * value * point.barycentric[i];
+                }
             }
+        } catch (...) {
+            element_errors[element] = std::current_exception();
         }
+    }
+    for (const std::exception_ptr &error : element_errors)
+        if (error) std::rethrow_exception(error);
+
+    // Scatter in element order. This preserves bitwise reproducibility across
+    // OpenMP thread counts while parallelizing the expensive quadrature and
+    // manufactured-source evaluation.
+    ComplexVector load = ComplexVector::Zero(static_cast<int>(mesh.nodes.size()));
+    for (int element = 0; element < element_count; ++element) {
+        const Triangle &tri = mesh.elems[element];
+        for (int i = 0; i < 3; ++i)
+            load(tri[i]) += element_loads[element][i];
     }
     return load;
 }
 
 ComplexVector solve_helmholtz_fem(
     const HelmholtzOperators &operators,
-    const ComplexVector &load) {
+    const ComplexVector &load,
+    const HelmholtzFemSolverKind solver_kind,
+    HelmholtzFemSolveTimings *timings) {
+    const FemSolveClock::time_point total_start = FemSolveClock::now();
+    if (timings) *timings = {};
+    if (!helmholtz_fem_solver_available(solver_kind))
+        throw std::runtime_error(
+            std::string("requested Helmholtz FEM solver is unavailable: ")
+            + helmholtz_fem_solver_kind_name(solver_kind));
     if (operators.system.rows() != load.size())
         throw std::invalid_argument("Helmholtz load size does not match the system matrix");
     std::vector<char> is_dirichlet(load.size(), false);
@@ -195,6 +252,7 @@ ComplexVector solve_helmholtz_fem(
     if (free_nodes.empty())
         throw std::invalid_argument("Helmholtz FEM has no unconstrained degrees of freedom");
 
+    const FemSolveClock::time_point reduction_start = FemSolveClock::now();
     std::vector<ComplexTriplet> triplets;
     for (int global_col : free_nodes) {
         const int local_col = global_to_free[global_col];
@@ -208,18 +266,53 @@ ComplexVector solve_helmholtz_fem(
     ComplexVector reduced_load(free_nodes.size());
     for (int local = 0; local < static_cast<int>(free_nodes.size()); ++local)
         reduced_load(local) = load(free_nodes[local]);
+    reduced.makeCompressed();
+    if (timings) timings->reduction_seconds = fem_seconds_since(reduction_start);
 
-    Eigen::SparseLU<ComplexSparseMatrix> solver;
-    solver.analyzePattern(reduced);
-    solver.factorize(reduced);
-    if (solver.info() != Eigen::Success)
-        throw std::runtime_error("Helmholtz sparse LU factorization failed");
-    const ComplexVector reduced_solution = solver.solve(reduced_load);
-    if (solver.info() != Eigen::Success || !reduced_solution.allFinite())
-        throw std::runtime_error("Helmholtz sparse LU solve failed");
+    ComplexVector reduced_solution;
+    if (solver_kind == HelmholtzFemSolverKind::SparseLu) {
+        Eigen::SparseLU<ComplexSparseMatrix> solver;
+        const FemSolveClock::time_point analysis_start = FemSolveClock::now();
+        solver.analyzePattern(reduced);
+        if (timings) timings->analysis_seconds = fem_seconds_since(analysis_start);
+        const FemSolveClock::time_point factorization_start = FemSolveClock::now();
+        solver.factorize(reduced);
+        if (timings)
+            timings->factorization_seconds = fem_seconds_since(factorization_start);
+        if (solver.info() != Eigen::Success)
+            throw std::runtime_error("Helmholtz sparse LU factorization failed");
+        const FemSolveClock::time_point solve_start = FemSolveClock::now();
+        reduced_solution = solver.solve(reduced_load);
+        if (timings) timings->solve_seconds = fem_seconds_since(solve_start);
+        if (solver.info() != Eigen::Success || !reduced_solution.allFinite())
+            throw std::runtime_error("Helmholtz sparse LU solve failed");
+    } else if (solver_kind == HelmholtzFemSolverKind::Umfpack) {
+#if defined(LOD2D_HAVE_UMFPACK)
+        Eigen::UmfPackLU<ComplexSparseMatrix> solver;
+        const FemSolveClock::time_point analysis_start = FemSolveClock::now();
+        solver.analyzePattern(reduced);
+        if (timings) timings->analysis_seconds = fem_seconds_since(analysis_start);
+        const FemSolveClock::time_point factorization_start = FemSolveClock::now();
+        solver.factorize(reduced);
+        if (timings)
+            timings->factorization_seconds = fem_seconds_since(factorization_start);
+        if (solver.info() != Eigen::Success)
+            throw std::runtime_error("Helmholtz UMFPACK factorization failed");
+        const FemSolveClock::time_point solve_start = FemSolveClock::now();
+        reduced_solution = solver.solve(reduced_load);
+        if (timings) timings->solve_seconds = fem_seconds_since(solve_start);
+        if (solver.info() != Eigen::Success || !reduced_solution.allFinite())
+            throw std::runtime_error("Helmholtz UMFPACK solve failed");
+#else
+        throw std::runtime_error("Helmholtz UMFPACK support was not compiled");
+#endif
+    } else {
+        throw std::invalid_argument("unknown Helmholtz FEM solver kind");
+    }
     ComplexVector solution = ComplexVector::Zero(load.size());
     for (int local = 0; local < static_cast<int>(free_nodes.size()); ++local)
         solution(free_nodes[local]) = reduced_solution(local);
+    if (timings) timings->total_seconds = fem_seconds_since(total_start);
     return solution;
 }
 
