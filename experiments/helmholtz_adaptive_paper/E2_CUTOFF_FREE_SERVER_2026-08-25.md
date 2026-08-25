@@ -17,8 +17,12 @@ marked_mass_c_F >= theta_c * indicator_mass_c_F
 marked_mass_c_R >= theta_c * indicator_mass_c_R
 ```
 
-and require the 24-point tail audit to pass. The initial corrected 16-step
-gate gave final-8/final-6 exponents about `0.603/0.616` with zero swap.
+and require the 24-point tail audit to pass. The corrected 24-step run at
+commit `ba745d6` passed with final-4/final-6/final-8/final-12 exponents
+`0.521/0.501/0.514/0.575`, final relative energy error `0.0148296`, peak
+RSS about `36.2 GiB`, zero swap, and wall time about `18:02`. Its server
+result root is
+`results/E2-cutofffree-split-regional-main-ba745d6`.
 
 This runbook reproduces the revised E2 manufactured-solution experiment from
 `helmholtz_lod_certified_amsart_revised.tex`.  The frozen manuscript SHA-256 is
