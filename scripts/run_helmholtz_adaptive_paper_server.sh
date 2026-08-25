@@ -192,6 +192,17 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=100
     MODE_TIMEOUT_SECONDS=87300
     ;;
+  e1-revised-candidate-optimized-tail44)
+    # The 38-step tail reached 0.0102132 but its reserve guard stopped before
+    # opening epoch 9. Six extra slots preserve the four-point epoch reserve
+    # while leaving the numerical parameters and deterministic prefix intact.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-gap6-schur-thetaH01-thetaC03-stride2-closurecost-step44-tail-target001-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=240
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   e1-revised-h6-main)
     # Short/low-memory methods precede uniform standard LOD and the two
     # expensive adaptive LOD trajectories.  Runs remain serial so peak-memory
@@ -777,7 +788,8 @@ if schema == 6:
                 raise SystemExit(
                     "standard regional candidate run performed no checked sweep")
 
-        if mode == "e1-revised-candidate-optimized-tail":
+        if mode in {"e1-revised-candidate-optimized-tail",
+                    "e1-revised-candidate-optimized-tail44"}:
             if not solved:
                 raise SystemExit("E1 tail produced no solved points")
             final_exact = number(solved[-1].get("relative_exact_energy"))

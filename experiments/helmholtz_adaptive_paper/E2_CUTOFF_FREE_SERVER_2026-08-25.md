@@ -349,3 +349,21 @@ replays the existing deterministic prefix; it does not pretend to resume a
 serialized numerical state.  Accept it only if the final
 `relative_exact_energy <= 0.01` and the overlapping prefix agrees with the
 previous run to roundoff.
+
+The 38-step follow-up completed normally but stopped at H-step 34 because only
+three solve slots remained before a required reference refresh. Its terminal
+exact relative energy was `0.01021321747680051`. The unchanged 44-step
+follow-up leaves enough reserve to open the next epoch:
+
+```bash
+HEAD7=$(git rev-parse --short HEAD)
+tmux new-session -d -s e1-tail44 \
+  "cd /home/sutai/code/LOD2d-CPP && \
+   MODE=e1-revised-candidate-optimized-tail44 \
+   RESULT_DIR=/home/sutai/code/LOD2d-CPP/results/E1-optimized-tail44-${HEAD7}-20260825 \
+   JOBS=16 PATCH_THREADS=16 \
+   bash scripts/run_helmholtz_adaptive_paper_server.sh \
+   > results/E1-optimized-tail44-${HEAD7}-launch.log 2>&1"
+```
+
+Do not overlap this high-memory PALOD job with the E2 moving-PALOD main run.
