@@ -170,6 +170,16 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=50
     MODE_TIMEOUT_SECONDS=22500
     ;;
+  e1-candidate-optimized-main)
+    # PALOD-only production rerun.  All comparison curves are reused from the
+    # unchanged unified-H6 E1 experiment.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-gap6-schur-thetaH01-thetaC03-stride2-closurecost-step36-main-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=192
+    MODE_MIN_FREE_DISK_GIB=100
+    MODE_TIMEOUT_SECONDS=87300
+    ;;
   e1-revised-h6-main)
     # Short/low-memory methods precede uniform standard LOD and the two
     # expensive adaptive LOD trajectories.  Runs remain serial so peak-memory

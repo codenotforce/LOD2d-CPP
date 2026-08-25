@@ -121,6 +121,17 @@ RESULT_DIR="$PWD/results/E1-candidate-optimized-deep-gate-$(git rev-parse --shor
   bash scripts/run_helmholtz_adaptive_paper_server.sh
 ```
 
+After the deep gate confirms a post-refresh exact-error exponent of at least
+0.4, run only the optimized PALOD main curve.  Reuse the existing AFEM, UFEM,
+standard-LOD and fixed-LOD runs because their algorithms and configurations are
+unchanged:
+
+```bash
+MODE=e1-candidate-optimized-main VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
+RESULT_DIR="$PWD/results/E1-candidate-optimized-main-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
+  bash scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
 The implementation and ten-step ablation evidence are recorded in
 `E1_CANDIDATE_CLOSURE_ABLATION_2026-08-25.md`.  Promotion-time candidate rebuild
 and active-region gap reserve are not part of this gate.
