@@ -112,6 +112,15 @@ Promotion to the 36-step main configuration requires all of:
 - candidate closure additions at least 20% below the stride-1 policy;
 - no failed localization, reference stability, nestedness or Dörfler audit.
 
+If the 16-step gate ends immediately before the delayed refresh, continue with
+the reproducible 24-step deep gate rather than fitting across that refresh:
+
+```bash
+MODE=e1-candidate-optimized-deep-gate VALIDATE=1 JOBS=16 PATCH_THREADS=16 \
+RESULT_DIR="$PWD/results/E1-candidate-optimized-deep-gate-$(git rev-parse --short HEAD)-$(date +%Y%m%d-%H%M%S)" \
+  bash scripts/run_helmholtz_adaptive_paper_server.sh
+```
+
 The implementation and ten-step ablation evidence are recorded in
 `E1_CANDIDATE_CLOSURE_ABLATION_2026-08-25.md`.  Promotion-time candidate rebuild
 and active-region gap reserve are not part of this gate.

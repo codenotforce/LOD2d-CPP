@@ -160,6 +160,16 @@ case "$MODE" in
     MODE_MIN_FREE_DISK_GIB=50
     MODE_TIMEOUT_SECONDS=22500
     ;;
+  e1-candidate-optimized-deep-gate)
+    # Follow the 16-step gate far enough to observe the delayed candidate
+    # promotion and the next post-refresh error segment.
+    DEFAULT_CONFIGS=(
+      experiments/helmholtz_adaptive_paper/configs/E1-R1-palod-k16-H6-h12-gap6-schur-thetaH01-thetaC03-stride2-closurecost-step24-deep-gate-v6.json
+    )
+    MODE_MIN_AVAILABLE_GIB=160
+    MODE_MIN_FREE_DISK_GIB=50
+    MODE_TIMEOUT_SECONDS=22500
+    ;;
   e1-revised-h6-main)
     # Short/low-memory methods precede uniform standard LOD and the two
     # expensive adaptive LOD trajectories.  Runs remain serial so peak-memory
